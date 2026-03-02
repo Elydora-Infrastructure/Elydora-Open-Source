@@ -10,12 +10,6 @@ export const MIN_TTL_MS = 1_000;
 /** Maximum nonce length in characters */
 export const MAX_NONCE_LENGTH = 64;
 
-/** Maximum number of agents on the Starter plan */
-export const STARTER_MAX_AGENTS = 10;
-
-/** Default data retention period in days */
-export const DEFAULT_RETENTION_DAYS = 30;
-
 /** Default epoch interval in milliseconds (5 minutes) */
 export const DEFAULT_EPOCH_INTERVAL_MS = 300_000;
 
