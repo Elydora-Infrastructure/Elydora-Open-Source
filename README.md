@@ -10,8 +10,9 @@ Tamper-evident audit trails with cryptographic proof for every AI agent action.
 [![Node SDK](https://img.shields.io/badge/node%20sdk-v1.1.0-green.svg)](sdks/node/)
 [![Python SDK](https://img.shields.io/badge/python%20sdk-v1.1.0-green.svg)](sdks/python/)
 [![Go SDK](https://img.shields.io/badge/go%20sdk-v0.1.0-green.svg)](sdks/go/)
+[![Website](https://img.shields.io/badge/website-elydora.com-purple.svg)](https://elydora.com)
 
-[Quick Start](#quick-start) · [Documentation](#documentation) · [API Reference](#api-reference) · [SDKs](#sdks) · [Contributing](#contributing)
+[Website](https://elydora.com) · [Quick Start](#quick-start) · [Documentation](#documentation) · [API Reference](#api-reference) · [SDKs](#sdks) · [Contributing](#contributing)
 
 ---
 

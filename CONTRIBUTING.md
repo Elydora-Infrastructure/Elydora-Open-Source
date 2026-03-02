@@ -1,6 +1,6 @@
 # Contributing to Elydora
 
-Thank you for your interest in contributing to Elydora — the open-source responsibility layer for AI agents. This document explains how to get a development environment running, our code style expectations, and how to submit changes.
+Thank you for your interest in contributing to [Elydora](https://elydora.com) — the open-source responsibility layer for AI agents. This document explains how to get a development environment running, our code style expectations, and how to submit changes.
 
 ---
 
@@ -42,8 +42,8 @@ This project follows the [Contributor Covenant](https://www.contributor-covenant
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/elydora/elydora.git
-   cd elydora
+   git clone https://github.com/Elydora-Infrastructure/Elydora-Open-Source.git
+   cd Elydora-Open-Source
    ```
 
 2. **Configure environment variables**
@@ -75,10 +75,10 @@ This project follows the [Contributor Covenant](https://www.contributor-covenant
 
 ### Running the Console
 
-The web console is a Next.js application located in `console/`.
+The web console is a Next.js application located in `packages/console/`.
 
 ```bash
-cd console
+cd packages/console
 npm install
 npm run dev
 ```
@@ -238,6 +238,6 @@ Elydora welcomes official and community SDKs. A conformant SDK must implement th
 
 ## Reporting Issues
 
-- Use [GitHub Issues](https://github.com/elydora/elydora/issues) for bug reports and feature requests.
+- Use [GitHub Issues](https://github.com/Elydora-Infrastructure/Elydora-Open-Source/issues) for bug reports and feature requests.
 - For security vulnerabilities, **do not open a public issue**. Email the maintainers directly so the issue can be addressed before public disclosure.
 - Include as much context as possible: Elydora version, SDK version, OS, steps to reproduce, and expected vs. actual behavior.
