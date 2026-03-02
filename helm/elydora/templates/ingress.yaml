@@ -1,0 +1,51 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elydora-ingress
+  namespace: {{ include "elydora.namespace" . }}
+  labels:
+    {{- include "elydora.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.api.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8787
+    - host: {{ .Values.ingress.console.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: console
+                port:
+                  number: 3000
+  {{- if or .Values.ingress.api.tls .Values.ingress.console.tls }}
+  tls:
+    {{- if .Values.ingress.api.tls }}
+    - hosts:
+        - {{ .Values.ingress.api.host }}
+      secretName: {{ .Values.ingress.api.tlsSecret }}
+    {{- end }}
+    {{- if .Values.ingress.console.tls }}
+    - hosts:
+        - {{ .Values.ingress.console.host }}
+      secretName: {{ .Values.ingress.console.tlsSecret }}
+    {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: {{ include "elydora.namespace" . }}
+  labels:
+    {{- include "elydora.labels" . | nindent 4 }}
+    app: worker
+spec:
+  replicas: {{ .Values.replicaCount.worker }}
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.api.repository }}:{{ .Values.image.api.tag }}"
+          imagePullPolicy: {{ .Values.image.api.pullPolicy }}
+          command: ["node", "dist/worker.js"]
+          envFrom:
+            - configMapRef:
+                name: elydora-config
+            - secretRef:
+                name: elydora-secret
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}

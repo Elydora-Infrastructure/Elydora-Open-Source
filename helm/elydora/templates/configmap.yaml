@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elydora-config
+  namespace: {{ include "elydora.namespace" . }}
+  labels:
+    {{- include "elydora.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.api.port | quote }}
+  ENVIRONMENT: {{ .Values.api.environment | quote }}
+  REDIS_URL: {{ include "elydora.redisUrl" . | quote }}
+  MINIO_ENDPOINT: {{ include "elydora.minioEndpoint" . | quote }}
+  MINIO_BUCKET: {{ .Values.minio.bucket | quote }}
+  MINIO_ACCESS_KEY: {{ .Values.minio.rootUser | quote }}
+  ALLOWED_ORIGINS: {{ .Values.api.allowedOrigins | quote }}
+  TSA_URL: {{ .Values.api.tsaUrl | quote }}
+  NEXT_PUBLIC_API_BASE_URL: {{ .Values.console.apiBaseUrl | quote }}

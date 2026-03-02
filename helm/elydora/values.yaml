@@ -1,0 +1,102 @@
+global:
+  imageRegistry: ""
+
+image:
+  api:
+    repository: elydora/api
+    tag: latest
+    pullPolicy: IfNotPresent
+  console:
+    repository: elydora/console
+    tag: latest
+    pullPolicy: IfNotPresent
+
+namespace: elydora
+
+replicaCount:
+  api: 2
+  worker: 2
+  scheduler: 1
+  console: 2
+
+resources:
+  api:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  worker:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  scheduler:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  console:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# PostgreSQL
+postgres:
+  host: postgres
+  port: 5432
+  user: elydora
+  password: elydora-secret-change-me
+  database: elydora
+  storage: 10Gi
+
+# Redis
+redis:
+  host: redis
+  port: 6379
+  storage: 2Gi
+
+# MinIO
+minio:
+  host: minio
+  port: 9000
+  rootUser: elydora
+  rootPassword: elydora-minio-secret-change-me
+  bucket: elydora-evidence
+  storage: 50Gi
+
+# Elydora API config
+api:
+  port: 8787
+  environment: production
+  jwtSecret: change-me-to-a-random-string-at-least-32-chars
+  signingKey: change-me-base64url-ed25519-private-key
+  allowedOrigins: "https://console.example.com"
+  tsaUrl: "http://timestamp.sectigo.com"
+
+# Console
+console:
+  port: 3000
+  apiBaseUrl: "https://api.example.com"
+
+# Ingress
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  api:
+    host: api.example.com
+    tls: true
+    tlsSecret: elydora-api-tls
+  console:
+    host: console.example.com
+    tls: true
+    tlsSecret: elydora-console-tls

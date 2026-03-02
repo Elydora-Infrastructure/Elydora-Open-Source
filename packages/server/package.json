@@ -1,0 +1,33 @@
+{
+  "name": "@elydora/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "dev:scheduler": "tsx watch src/scheduler.ts",
+    "start": "node dist/index.js",
+    "start:worker": "node dist/worker.js",
+    "start:scheduler": "node dist/scheduler.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@hono/node-server": "^1.13.0",
+    "bullmq": "^5.0.0",
+    "dotenv": "^16.0.0",
+    "hono": "^4.7.0",
+    "ioredis": "^5.3.0",
+    "node-cron": "^3.0.0",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.7.0"
+  }
+}

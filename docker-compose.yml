@@ -1,0 +1,297 @@
+version: '3.9'
+
+services:
+  # ============================================================
+  # PostgreSQL
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-elydora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-elydora-secret-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-elydora}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elydora} -d ${POSTGRES_DB:-elydora}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ============================================================
+  # Redis
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ============================================================
+  # MinIO (S3-compatible object storage)
+  # ============================================================
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-elydora}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-elydora-minio-secret-change-me}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ============================================================
+  # MinIO init — creates the evidence bucket
+  # ============================================================
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-elydora}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-elydora-minio-secret-change-me}
+      MINIO_BUCKET: ${MINIO_BUCKET:-elydora-evidence}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+        mc mb --ignore-existing local/$${MINIO_BUCKET};
+        echo 'MinIO bucket initialized.';
+      "
+    restart: on-failure
+
+  # ============================================================
+  # DB migrate — runs PostgreSQL migrations
+  # ============================================================
+  db-migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-elydora-secret-change-me}
+    command: >
+      psql -h postgres -U ${POSTGRES_USER:-elydora} -d ${POSTGRES_DB:-elydora} -c "
+        CREATE TABLE IF NOT EXISTS schema_versions (
+          version     BIGINT PRIMARY KEY,
+          applied_at  BIGINT NOT NULL,
+          description TEXT   NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS organizations (
+          org_id     TEXT   NOT NULL PRIMARY KEY,
+          name       TEXT   NOT NULL,
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+          user_id       TEXT   NOT NULL PRIMARY KEY,
+          org_id        TEXT   NOT NULL REFERENCES organizations (org_id),
+          email         TEXT   NOT NULL UNIQUE,
+          password_hash TEXT   NOT NULL,
+          display_name  TEXT   NOT NULL,
+          role          TEXT   NOT NULL DEFAULT 'org_owner'
+                        CHECK (role IN ('org_owner', 'security_admin', 'compliance_auditor', 'readonly_investigator', 'integration_engineer')),
+          status        TEXT   NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'suspended')),
+          created_at    BIGINT NOT NULL,
+          updated_at    BIGINT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_users_org_id ON users (org_id);
+        CREATE INDEX IF NOT EXISTS idx_users_email  ON users (email);
+
+        CREATE TABLE IF NOT EXISTS agents (
+          agent_id           TEXT   NOT NULL PRIMARY KEY,
+          org_id             TEXT   NOT NULL REFERENCES organizations (org_id),
+          display_name       TEXT   NOT NULL,
+          responsible_entity TEXT   NOT NULL,
+          integration_type   TEXT   NOT NULL DEFAULT 'sdk',
+          status             TEXT   NOT NULL DEFAULT 'active'
+                             CHECK (status IN ('active', 'frozen', 'revoked')),
+          created_at         BIGINT NOT NULL,
+          updated_at         BIGINT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agents_org_id ON agents (org_id);
+
+        CREATE TABLE IF NOT EXISTS agent_keys (
+          kid        TEXT   NOT NULL PRIMARY KEY,
+          agent_id   TEXT   NOT NULL REFERENCES agents (agent_id),
+          public_key TEXT   NOT NULL,
+          algorithm  TEXT   NOT NULL DEFAULT 'ed25519'
+                     CHECK (algorithm = 'ed25519'),
+          status     TEXT   NOT NULL DEFAULT 'active'
+                     CHECK (status IN ('active', 'retired', 'revoked')),
+          created_at BIGINT NOT NULL,
+          retired_at BIGINT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_keys_agent_id ON agent_keys (agent_id);
+
+        CREATE TABLE IF NOT EXISTS operations (
+          operation_id     TEXT   NOT NULL PRIMARY KEY,
+          org_id           TEXT   NOT NULL,
+          agent_id         TEXT   NOT NULL REFERENCES agents (agent_id),
+          seq_no           BIGINT NOT NULL,
+          operation_type   TEXT   NOT NULL,
+          issued_at        BIGINT NOT NULL,
+          ttl_ms           BIGINT NOT NULL,
+          nonce            TEXT   NOT NULL,
+          subject          TEXT   NOT NULL,
+          action           TEXT   NOT NULL,
+          payload_hash     TEXT   NOT NULL,
+          prev_chain_hash  TEXT   NOT NULL,
+          chain_hash       TEXT   NOT NULL,
+          agent_pubkey_kid TEXT   NOT NULL,
+          signature        TEXT   NOT NULL,
+          r2_payload_key   TEXT,
+          created_at       BIGINT NOT NULL,
+          UNIQUE (agent_id, seq_no)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_operations_org_created ON operations (org_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_operations_agent_seq   ON operations (agent_id, seq_no);
+        CREATE INDEX IF NOT EXISTS idx_operations_type        ON operations (operation_type);
+
+        CREATE TABLE IF NOT EXISTS receipts (
+          receipt_id     TEXT   NOT NULL PRIMARY KEY,
+          operation_id   TEXT   NOT NULL UNIQUE REFERENCES operations (operation_id),
+          r2_receipt_key TEXT   NOT NULL,
+          created_at     BIGINT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS epochs (
+          epoch_id     TEXT   NOT NULL PRIMARY KEY,
+          org_id       TEXT   NOT NULL,
+          start_time   BIGINT NOT NULL,
+          end_time     BIGINT NOT NULL,
+          root_hash    TEXT   NOT NULL,
+          leaf_count   BIGINT NOT NULL,
+          r2_epoch_key TEXT   NOT NULL,
+          created_at   BIGINT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS admin_events (
+          event_id    TEXT   NOT NULL PRIMARY KEY,
+          org_id      TEXT   NOT NULL,
+          actor       TEXT   NOT NULL,
+          action      TEXT   NOT NULL,
+          target_type TEXT   NOT NULL,
+          target_id   TEXT   NOT NULL,
+          details     TEXT,
+          created_at  BIGINT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_admin_events_org_created ON admin_events (org_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS exports (
+          export_id     TEXT   NOT NULL PRIMARY KEY,
+          org_id        TEXT   NOT NULL,
+          status        TEXT   NOT NULL DEFAULT 'queued'
+                        CHECK (status IN ('queued', 'running', 'done', 'failed')),
+          query_params  TEXT   NOT NULL,
+          r2_export_key TEXT,
+          created_at    BIGINT NOT NULL,
+          completed_at  BIGINT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_exports_org_status ON exports (org_id, status);
+
+        INSERT INTO schema_versions (version, applied_at, description)
+        VALUES (1, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Initial schema')
+        ON CONFLICT DO NOTHING;
+      "
+    restart: on-failure
+
+  # ============================================================
+  # API server
+  # ============================================================
+  api:
+    build:
+      context: ./packages/server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${PORT:-8787}:8787"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8787/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ============================================================
+  # Worker (queue consumer)
+  # ============================================================
+  worker:
+    build:
+      context: ./packages/server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    env_file: .env
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ============================================================
+  # Scheduler (epoch scheduler)
+  # ============================================================
+  scheduler:
+    build:
+      context: ./packages/server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["node", "dist/scheduler.js"]
+    env_file: .env
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ============================================================
+  # Console (Next.js frontend)
+  # ============================================================
+  console:
+    build:
+      context: ./packages/console
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8787}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8787}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

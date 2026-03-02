@@ -1,0 +1,26 @@
+{
+  "name": "@elydora/sdk",
+  "version": "1.1.0",
+  "description": "Node.js/TypeScript SDK for the Elydora tamper-evident audit platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "elydora": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "scripts"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/postbuild.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
