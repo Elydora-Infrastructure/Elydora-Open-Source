@@ -85,18 +85,26 @@ The result is a complete, verifiable history of everything your AI agents have e
 git clone https://github.com/Elydora-Infrastructure/Elydora-Open-Source.git
 cd Elydora-Open-Source
 
-# Copy and edit environment configuration
-cp .env.example .env
-
-# Generate Ed25519 signing keys for the server and initial admin
-./scripts/generate-keys.sh
-
-# Start all services (API, PostgreSQL, MinIO, Redis)
-docker compose up -d
-
-# Verify the server is healthy
-curl http://localhost:8787/v1/health
+# One-click install — generates all secrets and starts every service
+./scripts/install.sh
 ```
+
+The install script automatically:
+
+1. Checks prerequisites (Docker, Docker Compose, OpenSSL, curl)
+2. Generates a `.env` with fresh cryptographic secrets (Ed25519 signing key, JWT secret, database and object-store passwords)
+3. Starts all services via `docker compose up -d`
+4. Waits for the API to become healthy
+
+Once complete, open:
+
+| Service | URL |
+|---------|-----|
+| Console | http://localhost:3000 |
+| API | http://localhost:8787 |
+| MinIO Console | http://localhost:9001 |
+
+> **Re-running is safe.** If `.env` already exists, the script skips secret generation and only restarts services.
 
 ### Kubernetes Deploy
 

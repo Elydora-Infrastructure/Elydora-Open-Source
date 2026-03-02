@@ -64,6 +64,14 @@ async function request<T>(
   });
 
   if (!response.ok) {
+    // On 401, clear stored tokens and redirect to login
+    if (response.status === 401 && typeof window !== 'undefined') {
+      localStorage.removeItem('elydora_token');
+      localStorage.removeItem('elydora_display_name');
+      localStorage.removeItem('elydora_email');
+      window.location.href = '/login';
+    }
+
     let errorBody: ErrorResponse | null = null;
     try {
       errorBody = await response.json() as ErrorResponse;

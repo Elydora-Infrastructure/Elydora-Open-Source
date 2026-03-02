@@ -44,6 +44,21 @@ const queue = new BullMQAdapter({
 });
 
 // ---------------------------------------------------------------------------
+// Validate required secrets at startup
+// ---------------------------------------------------------------------------
+
+const requiredSecrets = [
+  { name: 'JWT_SECRET', value: process.env.JWT_SECRET },
+  { name: 'ELYDORA_SIGNING_KEY', value: process.env.ELYDORA_SIGNING_KEY },
+];
+for (const { name, value } of requiredSecrets) {
+  if (!value || value.startsWith('change-me')) {
+    console.error(`FATAL: ${name} is not configured. Run ./scripts/install.sh to generate secrets.`);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Build the env bindings object
 // ---------------------------------------------------------------------------
 
