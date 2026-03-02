@@ -1,0 +1,10 @@
+.git
+*.md
+packages/console/node_modules
+packages/console/.next
+packages/console/out
+packages/server/node_modules
+packages/server/dist
+sdks/
+helm/
+scripts/
