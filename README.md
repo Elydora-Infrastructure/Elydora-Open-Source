@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" alt="Elydora Logo" width="128" height="128" />
+
 # Elydora
 
 **The Responsibility Layer for AI Agents**
