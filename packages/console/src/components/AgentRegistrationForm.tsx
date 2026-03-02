@@ -183,11 +183,12 @@ export default function AgentRegistrationForm({ onSuccess, onCancel }: AgentRegi
   // ─── Success Screen ───────────────────────────────────────────────────
   if (credentials) {
     const creds = credentials; // narrowed non-null for closures
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
     // CLI install commands for supported integrations
     const buildCliCommands = (integration: Integration) => ({
-      node: `npx @elydora/sdk install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}"`,
-      python: `pip install elydora && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}"`,
-      go: `go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}"`,
+      node: `npx @elydora/sdk install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}" --base_url "${apiBaseUrl}"`,
+      python: `pip install elydora && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}" --base_url "${apiBaseUrl}"`,
+      go: `go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}" --base-url "${apiBaseUrl}"`,
     });
 
     // SDK step-by-step tutorial (used for unsupported / SDK integrations)
@@ -398,6 +399,7 @@ export const client = new ElydoraClient({
   agentId: AGENT_ID,
   privateKey: '${creds.privateKey}',
   kid: '${creds.kid}',
+  baseUrl: '${apiBaseUrl}',
 });
 client.setToken('${apiToken ?? authToken ?? ''}');
 client.prevChainHash = readChainState();
@@ -521,7 +523,7 @@ console.log('Chain:',     result.checks.chain);`,
         code: `# Verify via the Elydora console UI, or use urllib to call the API:
 import urllib.request, json
 
-url = f"https://api.elydora.com/v1/operations/{operation_id}/verify"
+url = f"${apiBaseUrl}/v1/operations/{operation_id}/verify"
 req = urllib.request.Request(url, headers={"Authorization": "Bearer YOUR_TOKEN"})
 result = json.loads(urllib.request.urlopen(req).read())
 print("Signature:", result["checks"]["signature"])
@@ -788,6 +790,7 @@ export const client = new ElydoraClient({
   agentId: AGENT_ID,
   privateKey: '${creds.privateKey}',
   kid: '${creds.kid}',
+  baseUrl: '${apiBaseUrl}',
 });
 client.setToken('${apiToken ?? authToken ?? ''}');
 client.prevChainHash = readChainState();
@@ -955,7 +958,7 @@ os.WriteFile(filepath.Join(queueDir, filename), []byte(payload), 0644)`,
 # Windows:         Get-Content "${agentDirWin}\\daemon.pid"
 
 # Check processed operations appear in ${agentDir}/processed/
-# You can also verify in the Elydora console at https://console.elydora.com/operations`;
+# You can also verify in the Elydora console at ${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/operations`;
 
         return `${preamble}
 
