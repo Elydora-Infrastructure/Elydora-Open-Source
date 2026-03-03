@@ -18,6 +18,12 @@ export type AdminAction =
   | 'key.revoke'
   | 'export.create';
 
+/** Supported agent integration types */
+export type IntegrationType =
+  | 'claudecode' | 'cursor' | 'gemini' | 'kirocli' | 'kiroide'
+  | 'opencode' | 'copilot' | 'letta' | 'codex' | 'kimi'
+  | 'enterprise' | 'gui' | 'sdk' | 'other';
+
 /** RBAC roles for console access */
 export type RbacRole =
   | 'org_owner'
