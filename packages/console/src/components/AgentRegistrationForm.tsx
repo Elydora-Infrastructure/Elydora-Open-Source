@@ -76,7 +76,7 @@ const INTEGRATIONS: Integration[] = [
 
 export default function AgentRegistrationForm({ onSuccess, onCancel }: AgentRegistrationFormProps) {
   const { t } = useTranslation();
-  const { user, token: authToken } = useAuth();
+  const { user } = useAuth();
   const [displayName, setDisplayName] = useState('');
   const [responsibleEntity, setResponsibleEntity] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -186,9 +186,9 @@ export default function AgentRegistrationForm({ onSuccess, onCancel }: AgentRegi
     const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
     // CLI install commands for supported integrations
     const buildCliCommands = (integration: Integration) => ({
-      node: `npx @elydora/sdk install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}" --base_url "${apiBaseUrl}"`,
-      python: `pip install elydora && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}" --base_url "${apiBaseUrl}"`,
-      go: `go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? authToken ?? ''}" --base-url "${apiBaseUrl}"`,
+      node: `npx @elydora/sdk install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base_url "${apiBaseUrl}"`,
+      python: `pip install elydora && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base_url "${apiBaseUrl}"`,
+      go: `go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base-url "${apiBaseUrl}"`,
     });
 
     // SDK step-by-step tutorial (used for unsupported / SDK integrations)
@@ -401,7 +401,7 @@ export const client = new ElydoraClient({
   kid: '${creds.kid}',
   baseUrl: '${apiBaseUrl}',
 });
-client.setToken('${apiToken ?? authToken ?? ''}');
+client.setToken('${apiToken ?? ''}');
 client.prevChainHash = readChainState();
 
 export async function recordOperation({ operationType, subject, action, payload, verify = false }) {
@@ -792,7 +792,7 @@ export const client = new ElydoraClient({
   kid: '${creds.kid}',
   baseUrl: '${apiBaseUrl}',
 });
-client.setToken('${apiToken ?? authToken ?? ''}');
+client.setToken('${apiToken ?? ''}');
 client.prevChainHash = readChainState();
 
 export async function recordOperation({ operationType, subject, action, payload, verify = false }) {

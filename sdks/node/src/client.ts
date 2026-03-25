@@ -65,7 +65,7 @@ export class ElydoraClient {
   }
 
   /**
-   * Set the JWT token used for authenticated API calls.
+   * Set the session token used for authenticated API calls.
    */
   setToken(token: string): void {
     this.token = token;
@@ -89,6 +89,9 @@ export class ElydoraClient {
   // Auth (static methods — no instance needed)
   // -------------------------------------------------------------------------
 
+  /**
+   * @deprecated Use Better Auth endpoints directly. See docs.
+   */
   static async register(
     baseUrl: string,
     email: string,
@@ -110,6 +113,9 @@ export class ElydoraClient {
     return handleResponse<AuthRegisterResponse>(res);
   }
 
+  /**
+   * @deprecated Use Better Auth endpoints directly. See docs.
+   */
   static async login(
     baseUrl: string,
     email: string,

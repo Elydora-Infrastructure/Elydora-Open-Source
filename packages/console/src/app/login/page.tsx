@@ -3,14 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { signIn } from '@/lib/auth-client';
 import { useTranslation } from 'react-i18next';
 
 export default function LoginPage() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -21,8 +19,10 @@ export default function LoginPage() {
     setError('');
     setIsSubmitting(true);
     try {
-      const result = await api.auth.login(email, password);
-      login(result.token, { display_name: result.user.display_name, email: result.user.email });
+      const result = await signIn.email({ email, password });
+      if (result.error) {
+        throw new Error(result.error.message ?? t('login.loginFailed'));
+      }
       router.push('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : t('login.loginFailed'));

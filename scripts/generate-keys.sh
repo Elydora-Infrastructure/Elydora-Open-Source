@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generates an Ed25519 signing key and a random JWT secret for initial setup.
+# Generates an Ed25519 signing key and a random Better Auth secret for initial setup.
 # Requires: openssl
 set -e
 
@@ -14,12 +14,12 @@ SIGNING_KEY=$(openssl genpkey -algorithm ed25519 2>/dev/null \
   | tr '+/' '-_' \
   | tr -d '=\n')
 
-# Generate 32-byte random JWT secret as hex
-JWT_SECRET=$(openssl rand -hex 32)
+# Generate 32-byte random Better Auth secret as hex
+BETTER_AUTH_SECRET=$(openssl rand -hex 32)
 
 echo "Add these to your .env file:"
 echo ""
 echo "ELYDORA_SIGNING_KEY=${SIGNING_KEY}"
-echo "JWT_SECRET=${JWT_SECRET}"
+echo "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}"
 echo ""
 echo "WARNING: Store these values securely. Do not commit them to version control."

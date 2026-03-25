@@ -23,18 +23,15 @@ import (
 )
 
 func main() {
-	// Authenticate
-	auth, err := elydora.Login("https://api.elydora.com", "user@example.com", "password")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Create client
+	// Initialize the client with your API token.
+	// Obtain an API token by signing in via the Elydora console or:
+	//   POST /api/auth/sign-in/email  ->  get session token
+	//   POST /v1/auth/token           ->  exchange for long-lived API token
 	client, err := elydora.NewClient(&elydora.Config{
-		OrgID:      auth.User.OrgID,
+		OrgID:      "org-123",
 		AgentID:    "my-agent-id",
 		PrivateKey: "<base64url-encoded-ed25519-seed>",
-		Token:      auth.Token,
+		Token:      "your-api-token",
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -108,36 +105,35 @@ client, err := elydora.NewClient(&elydora.Config{
 	BaseURL:    "https://...",   // API base URL (default: https://api.elydora.com)
 	TTLMs:      30000,           // Operation TTL in ms (default: 30000)
 	MaxRetries: 3,               // Max retries on transient failures (default: 3)
-	Token:      "<jwt>",         // JWT token for authenticated requests
+	Token:      "<token>",        // API token for authenticated requests
 })
 ```
 
 ### Client Methods
 
 ```go
-// Update the JWT token at runtime
-client.SetToken("new-jwt-token")
+// Update the API token at runtime
+client.SetToken("new-api-token")
 ```
 
 ### Authentication
 
+Authentication uses Better Auth. Register and sign in via the Elydora console or the Better Auth endpoints, then issue a long-lived API token for SDK use:
+
 ```go
-// Register a new user and organization
-reg, err := elydora.Register(baseURL, email, password,
-	elydora.WithDisplayName("Alice"),
-	elydora.WithOrgName("Acme Corp"),
-)
-
-// Login and receive a JWT
-auth, err := elydora.Login(baseURL, email, password)
-
-// Get current authenticated user profile
-me, err := client.GetMe()
-
-// Issue a new API token (with optional TTL)
+// Sign up (Better Auth) — use the console or call directly:
+//   POST /api/auth/sign-up/email  { email, password, name }
+//
+// Sign in (Better Auth) — get a session token:
+//   POST /api/auth/sign-in/email  { email, password }
+//
+// Issue a long-lived API token from an active session:
 tokenResp, err := client.IssueApiToken(&elydora.IssueApiTokenRequest{
 	TTLSeconds: &ttlSeconds,
 })
+
+// Update the token on an existing client instance at runtime
+client.SetToken("new-api-token")
 ```
 
 ### Operations

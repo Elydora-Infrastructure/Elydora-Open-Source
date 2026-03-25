@@ -18,10 +18,6 @@ import type {
   CreateExportRequest,
   CreateExportResponse,
   GetExportResponse,
-  AuthLoginResponse,
-  AuthRegisterResponse,
-  AuthMeResponse,
-  AuthRefreshResponse,
   IssueTokenResponse,
   JWKSResponse,
   ErrorResponse,
@@ -42,34 +38,26 @@ class ApiError extends Error {
   }
 }
 
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('elydora_token');
-}
-
 async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = getAuthToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string> ?? {}),
   };
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers,
+    credentials: 'include',
   });
 
   if (!response.ok) {
-    // On 401, clear stored tokens and redirect to login
+    // On 401, redirect to login (session expired or not authenticated)
     if (response.status === 401 && typeof window !== 'undefined') {
-      localStorage.removeItem('elydora_token');
-      localStorage.removeItem('elydora_display_name');
-      localStorage.removeItem('elydora_email');
       window.location.href = '/login';
+      return undefined as T;
     }
 
     let errorBody: ErrorResponse | null = null;
@@ -213,11 +201,10 @@ export const api = {
     },
 
     async download(exportId: string): Promise<Blob> {
-      const token = getAuthToken();
       const response = await fetch(
         `${API_BASE_URL}/v1/exports/${encodeURIComponent(exportId)}/download`,
         {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: 'include',
         },
       );
       if (!response.ok) {
@@ -234,30 +221,6 @@ export const api = {
   },
 
   auth: {
-    login(email: string, password: string): Promise<AuthLoginResponse> {
-      return request<AuthLoginResponse>('/v1/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      });
-    },
-
-    register(email: string, password: string, displayName: string, orgName: string): Promise<AuthRegisterResponse> {
-      return request<AuthRegisterResponse>('/v1/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ email, password, display_name: displayName, org_name: orgName }),
-      });
-    },
-
-    me(): Promise<AuthMeResponse> {
-      return request<AuthMeResponse>('/v1/auth/me');
-    },
-
-    refresh(): Promise<AuthRefreshResponse> {
-      return request<AuthRefreshResponse>('/v1/auth/refresh', {
-        method: 'POST',
-      });
-    },
-
     issueToken(ttlSeconds: number | null): Promise<IssueTokenResponse> {
       return request<IssueTokenResponse>('/v1/auth/token', {
         method: 'POST',

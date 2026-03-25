@@ -30,8 +30,11 @@ export interface Env {
   /** Current Elydora protocol version (e.g. "1.0") */
   PROTOCOL_VERSION: string;
 
-  /** HMAC secret used for JWT verification */
-  JWT_SECRET: string;
+  /** Secret used by Better Auth for session signing and encryption */
+  BETTER_AUTH_SECRET: string;
+
+  /** Base URL for Better Auth (e.g. "http://localhost:8787") */
+  BETTER_AUTH_URL: string;
 
   /** Base64url-encoded Ed25519 private key used by the server to sign receipts */
   ELYDORA_SIGNING_KEY: string;
@@ -50,13 +53,13 @@ export interface AppVariables {
   /** UUIDv7 request identifier injected by the request-id middleware */
   request_id: string;
 
-  /** Organization identifier extracted from the verified JWT */
+  /** Organization identifier extracted from the verified session */
   org_id: string;
 
-  /** RBAC role extracted from the verified JWT */
+  /** RBAC role extracted from the verified session */
   role: import('./shared/index.js').RbacRole;
 
-  /** Actor identifier (sub claim) extracted from the verified JWT */
+  /** Actor identifier extracted from the verified session */
   actor: string;
 
   /** Detected language from Accept-Language header (set by i18n middleware) */

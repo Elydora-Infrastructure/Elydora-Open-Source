@@ -16,7 +16,7 @@ const operations = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 // POST /v1/operations — Submit a signed EOR
 // ---------------------------------------------------------------------------
 // Operation submission uses the EOR's embedded signature for authentication
-// rather than a Bearer JWT. The agent authenticates via its Ed25519 signature.
+// rather than a Bearer token. The agent authenticates via its Ed25519 signature.
 // We still apply auth middleware to get the org context.
 operations.post(
   '/',

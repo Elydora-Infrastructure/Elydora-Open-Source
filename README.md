@@ -94,7 +94,7 @@ cd Elydora-Open-Source
 The install script automatically:
 
 1. Checks prerequisites (Docker, Docker Compose, OpenSSL, curl)
-2. Generates a `.env` with fresh cryptographic secrets (Ed25519 signing key, JWT secret, database and object-store passwords)
+2. Generates a `.env` with fresh cryptographic secrets (Ed25519 signing key, Better Auth secret, database and object-store passwords)
 3. Starts all services via `docker compose up -d`
 4. Waits for the API to become healthy
 
@@ -154,14 +154,15 @@ Elydora-Open-Source/
 ### Registration and Authentication Flow
 
 ```
-1. Register organization and first user
-   POST /v1/auth/register  →  { user, organization, token }
+1. Register organization and first user (Better Auth)
+   POST /api/auth/sign-up/email  →  { user, session }
 
-2. Log in to retrieve a JWT
-   POST /v1/auth/login  →  { user, token }
+2. Log in to retrieve a session token (Better Auth)
+   POST /api/auth/sign-in/email  →  { user, session }
 
-3. Issue a long-lived API token (optional)
+3. Issue a long-lived API token for SDK use
    POST /v1/auth/token  →  { token, expires_at }
+   Header: Authorization: Bearer <session-token>
 
 4. Register an agent (as integration_engineer)
    POST /v1/agents/register  →  { agent, keys }
@@ -220,9 +221,11 @@ Errors are returned as:
 
 ### Authentication
 
-#### `POST /v1/auth/register`
+Authentication is handled by Better Auth. Use the `/api/auth/` endpoints for session management, then issue API tokens for SDK use via `/v1/auth/token`.
 
-Register a new user and create an organization. Returns a JWT for immediate use.
+#### `POST /api/auth/sign-up/email`
+
+Register a new user. Organization setup is completed during onboarding after registration.
 
 **Request body:**
 
@@ -230,36 +233,27 @@ Register a new user and create an organization. Returns a JWT for immediate use.
 |-------|------|----------|-------------|
 | `email` | string | yes | User email address |
 | `password` | string | yes | User password |
-| `display_name` | string | no | Human-readable name for the user |
-| `org_name` | string | no | Name for the new organization |
+| `name` | string | no | Human-readable display name |
 
-**Response:**
-
-```json
-{
-  "user": { "user_id": "...", "email": "...", "role": "org_owner", ... },
-  "organization": { "org_id": "...", "name": "..." },
-  "token": "<jwt>"
-}
-```
+**Response:** `{ "user": { ... }, "session": { ... } }`
 
 ---
 
-#### `POST /v1/auth/login`
+#### `POST /api/auth/sign-in/email`
 
-Authenticate an existing user.
+Authenticate an existing user and receive a session token.
 
 **Request body:** `{ "email": "...", "password": "..." }`
 
-**Response:** `{ "user": { ... }, "token": "<jwt>" }`
+**Response:** `{ "user": { ... }, "session": { "token": "<session-token>", ... } }`
 
 ---
 
-#### `GET /v1/auth/me`
+#### `GET /api/auth/session`
 
-Return the authenticated user's profile. Requires a valid JWT.
+Return the current session and user profile. Requires a valid session token or cookie.
 
-**Response:** `{ "user": { "user_id": "...", "email": "...", "role": "...", ... } }`
+**Response:** `{ "user": { ... }, "session": { ... } }`
 
 ---
 
@@ -865,7 +859,8 @@ Elydora is configured via environment variables. Copy `.env.example` to `.env` a
 | `STORAGE_BUCKET` | Bucket name for payloads, receipts, and exports |
 | `STORAGE_ACCESS_KEY_ID` | Object storage access key |
 | `STORAGE_SECRET_ACCESS_KEY` | Object storage secret key |
-| `JWT_SECRET` | HMAC-SHA256 secret for signing user JWTs |
+| `BETTER_AUTH_SECRET` | Better Auth secret for session management |
+| `BETTER_AUTH_URL` | Better Auth base URL (e.g. `http://localhost:8787`) |
 | `SERVER_PRIVATE_KEY` | Base64url-encoded Ed25519 seed for signing EARs and JWKS |
 
 ### Optional
@@ -892,7 +887,7 @@ Elydora is configured via environment variables. Copy `.env.example` to `.env` a
 
 **PBKDF2-SHA256 password hashing** — User passwords are hashed with PBKDF2-SHA256 before storage.
 
-**HMAC-SHA256 JWT signing** — User sessions are signed with a server-side HMAC secret. Tokens cannot be forged without the secret.
+**Better Auth session-based authentication** — User sessions are managed by Better Auth with secure server-side session storage. Session tokens cannot be forged without the secret.
 
 **RFC 3161 TSA anchoring** — Epoch Merkle roots are submitted to a public timestamp authority, providing independent third-party attestation of when records existed. This prevents retroactive alteration of historical data even by the platform operator.
 

@@ -48,7 +48,7 @@ const queue = new BullMQAdapter({
 // ---------------------------------------------------------------------------
 
 const requiredSecrets = [
-  { name: 'JWT_SECRET', value: process.env.JWT_SECRET },
+  { name: 'BETTER_AUTH_SECRET', value: process.env.BETTER_AUTH_SECRET },
   { name: 'ELYDORA_SIGNING_KEY', value: process.env.ELYDORA_SIGNING_KEY },
 ];
 for (const { name, value } of requiredSecrets) {
@@ -70,7 +70,8 @@ const env: Env = {
   ENVIRONMENT: process.env.ENVIRONMENT ?? 'production',
   API_VERSION: process.env.API_VERSION ?? 'v1',
   PROTOCOL_VERSION: process.env.PROTOCOL_VERSION ?? '1.0',
-  JWT_SECRET: process.env.JWT_SECRET!,
+  BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET!,
+  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? 'http://localhost:8787',
   ELYDORA_SIGNING_KEY: process.env.ELYDORA_SIGNING_KEY!,
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS ?? '',
   TSA_URL: process.env.TSA_URL,
@@ -89,17 +90,14 @@ app.use('/*', async (c, next) => {
   await next();
 });
 
-// CORS
+// CORS — always restrict to the configured allowlist
 app.use(
   '/*',
   cors({
     origin: (origin, c) => {
-      if (c.env.ENVIRONMENT === 'production') {
-        const raw = c.env.ALLOWED_ORIGINS ?? '';
-        const allowedOrigins = raw.split(',').map((s: string) => s.trim()).filter(Boolean);
-        return allowedOrigins.includes(origin) ? origin : '';
-      }
-      return origin;
+      const raw = c.env.ALLOWED_ORIGINS ?? 'http://localhost:3000,http://localhost:8787';
+      const allowedOrigins = raw.split(',').map((s: string) => s.trim()).filter(Boolean);
+      return allowedOrigins.includes(origin) ? origin : '';
     },
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: [

@@ -15,17 +15,17 @@ Requires Node.js 18+ (uses built-in `crypto` module with Ed25519 support).
 ```typescript
 import { ElydoraClient } from '@elydora/sdk';
 
-// Authenticate
-const auth = await ElydoraClient.login('https://api.elydora.com', 'user@example.com', 'password');
-
-// Create client
+// Initialize the client with your API token.
+// Obtain an API token by signing in via the Elydora console or:
+//   POST /api/auth/sign-in/email  →  get session token
+//   POST /v1/auth/token           →  exchange for long-lived API token
 const client = new ElydoraClient({
-  orgId: auth.user.org_id,
+  orgId: 'org-123',
   agentId: 'my-agent-id',
   privateKey: '<base64url-encoded-32-byte-ed25519-seed>',
   baseUrl: 'https://api.elydora.com',
+  token: 'your-api-token',
 });
-client.setToken(auth.token);
 
 // Create and submit an operation
 const eor = client.createOperation({
@@ -96,7 +96,7 @@ const client = new ElydoraClient({
 // Register a new user and organization
 const reg = await ElydoraClient.register(baseUrl, email, password, displayName?, orgName?);
 
-// Login and receive a JWT
+// Login and receive a session token
 const auth = await ElydoraClient.login(baseUrl, email, password);
 
 // Set token on client

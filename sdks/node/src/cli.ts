@@ -41,7 +41,7 @@ function printUsage(): void {
   console.log(`Elydora CLI — Tamper-evident audit for AI coding agents
 
 Usage:
-  elydora install   --agent <name> --org_id <id> --agent_id <id> --private_key <key> --kid <kid> [--token <jwt>] [--base_url <url>]
+  elydora install   --agent <name> --org_id <id> --agent_id <id> --private_key <key> --kid <kid> [--token <token>] [--base_url <url>]
   elydora uninstall --agent <name> [--agent_id <id>]
   elydora status
   elydora agents

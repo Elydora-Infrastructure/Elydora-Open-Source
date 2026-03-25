@@ -69,7 +69,7 @@ func cmdInstall(args []string) {
 	agentID := fs.String("agent-id", "", "Agent ID (required)")
 	privateKey := fs.String("private-key", "", "Base64url-encoded Ed25519 private key seed (required)")
 	kid := fs.String("kid", "", "Key ID (defaults to <agent-id>-key-1)")
-	token := fs.String("token", "", "JWT token for authenticated requests (optional)")
+	token := fs.String("token", "", "API token for authenticated requests (optional)")
 	baseURL := fs.String("base-url", "https://api.elydora.com", "Elydora API base URL")
 
 	fs.Parse(args)

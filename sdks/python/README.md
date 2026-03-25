@@ -15,16 +15,16 @@ Requires Python 3.9+.
 ```python
 from elydora import ElydoraClient
 
-# Authenticate
-auth = ElydoraClient.login("https://api.elydora.com", "user@example.com", "password")
-
-# Create client
+# Initialize the client with your API token.
+# Obtain an API token by signing in via the Elydora console or:
+#   POST /api/auth/sign-in/email  ->  get session token
+#   POST /v1/auth/token           ->  exchange for long-lived API token
 client = ElydoraClient(
-    org_id=auth["user"]["org_id"],
+    org_id="org-123",
     agent_id="my-agent-id",
     private_key="<base64url-encoded-ed25519-seed>",
     base_url="https://api.elydora.com",
-    token=auth["token"],
+    token="your-api-token",
 )
 
 # Create and submit an operation
@@ -48,7 +48,7 @@ async def main():
         org_id="org-123",
         agent_id="agent-456",
         private_key="<base64url-encoded-ed25519-seed>",
-        token="<jwt-token>",
+        token="<api-token>",
     )
 
     eor = client.create_operation(
@@ -107,24 +107,26 @@ client = ElydoraClient(
     base_url="https://...",     # API base URL (default: https://api.elydora.com)
     ttl_ms=30000,               # Operation TTL in ms (default: 30000)
     max_retries=3,              # Max retries on transient failures (default: 3)
-    token="<jwt>",              # Optional JWT bearer token
+    token="<api-token>",         # Optional API token
 )
 ```
 
 ### Authentication
 
+Authentication uses Better Auth. Register and sign in via the Elydora console or the Better Auth endpoints, then issue a long-lived API token for SDK use:
+
 ```python
-# Register a new user and organization
-reg = ElydoraClient.register(base_url, email, password, display_name=None, org_name=None)
-
-# Login and receive a JWT
-auth = ElydoraClient.login(base_url, email, password)
-
-# Get current authenticated user profile
-me = client.get_me()
-
-# Issue a new API token (with optional TTL in seconds)
+# Sign up (Better Auth) — use the console or call directly:
+#   POST /api/auth/sign-up/email  { email, password, name }
+#
+# Sign in (Better Auth) — get a session token:
+#   POST /api/auth/sign-in/email  { email, password }
+#
+# Issue a long-lived API token from an active session:
 token_resp = client.issue_token(ttl_seconds=3600)
+
+# Update the token on an existing client instance
+client.set_token("new-api-token")
 ```
 
 ### Operations

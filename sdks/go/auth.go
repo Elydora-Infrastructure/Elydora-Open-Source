@@ -28,6 +28,8 @@ func WithOrgName(name string) RegisterOption {
 }
 
 // Register creates a new user and organization.
+//
+// Deprecated: Use Better Auth endpoints directly. See docs.
 func Register(baseURL, email, password string, opts ...RegisterOption) (*AuthRegisterResponse, error) {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -49,7 +51,9 @@ func Register(baseURL, email, password string, opts ...RegisterOption) (*AuthReg
 	return &result, nil
 }
 
-// Login authenticates a user and returns a JWT token.
+// Login authenticates a user and returns a session token.
+//
+// Deprecated: Use Better Auth endpoints directly. See docs.
 func Login(baseURL, email, password string) (*AuthLoginResponse, error) {
 	if baseURL == "" {
 		baseURL = defaultBaseURL

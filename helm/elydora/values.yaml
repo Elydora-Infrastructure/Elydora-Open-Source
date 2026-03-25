@@ -77,7 +77,7 @@ minio:
 api:
   port: 8787
   environment: production
-  jwtSecret: change-me-to-a-random-string-at-least-32-chars
+  betterAuthSecret: change-me-to-a-random-string-at-least-32-chars
   signingKey: change-me-base64url-ed25519-private-key
   allowedOrigins: "https://console.example.com"
   tsaUrl: "http://timestamp.sectigo.com"

@@ -24,7 +24,7 @@ type Config struct {
 	BaseURL    string // defaults to "https://api.elydora.com"
 	TTLMs      int    // defaults to 30000
 	MaxRetries int    // defaults to 3
-	Token      string // JWT token for authenticated requests
+	Token      string // API token for authenticated requests
 }
 
 // Client is the Elydora SDK client.
@@ -172,7 +172,7 @@ func (c *Client) doPost(path string, body interface{}, result interface{}) error
 	return c.doRequest(http.MethodPost, path, body, result)
 }
 
-// SetToken sets the JWT token used for authenticated API requests.
+// SetToken sets the API token used for authenticated API requests.
 func (c *Client) SetToken(token string) {
 	c.token = token
 }

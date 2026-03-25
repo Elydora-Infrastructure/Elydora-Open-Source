@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import asyncio
+import warnings
 from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
@@ -50,7 +51,7 @@ class AsyncElydoraClient:
         base_url: API base URL.
         ttl_ms: Time-to-live for operations in milliseconds.
         max_retries: Maximum number of retries on transient failures.
-        token: Optional JWT bearer token for authenticated endpoints.
+        token: Optional bearer token for authenticated endpoints.
     """
 
     def __init__(
@@ -171,7 +172,16 @@ class AsyncElydoraClient:
         display_name: Optional[str] = None,
         org_name: Optional[str] = None,
     ) -> AuthRegisterResponse:
-        """Register a new user and organization."""
+        """Register a new user and organization.
+
+        .. deprecated::
+            Use Better Auth endpoints directly. See docs.
+        """
+        warnings.warn(
+            "AsyncElydoraClient.register() is deprecated. Use Better Auth endpoints directly. See docs.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         url = f"{base_url.rstrip('/')}/v1/auth/register"
         body: Dict[str, Any] = {"email": email, "password": password}
         if display_name is not None:
@@ -186,7 +196,16 @@ class AsyncElydoraClient:
 
     @staticmethod
     async def login(base_url: str, email: str, password: str) -> AuthLoginResponse:
-        """Authenticate and receive a JWT."""
+        """Authenticate and receive a session token.
+
+        .. deprecated::
+            Use Better Auth endpoints directly. See docs.
+        """
+        warnings.warn(
+            "AsyncElydoraClient.login() is deprecated. Use Better Auth endpoints directly. See docs.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         url = f"{base_url.rstrip('/')}/v1/auth/login"
         body = {"email": email, "password": password}
         async with aiohttp.ClientSession() as session:

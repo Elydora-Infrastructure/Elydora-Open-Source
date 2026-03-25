@@ -3,14 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { signUp } from '@/lib/auth-client';
 import { useTranslation } from 'react-i18next';
 
 export default function RegisterPage() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -23,8 +21,10 @@ export default function RegisterPage() {
     setError('');
     setIsSubmitting(true);
     try {
-      const result = await api.auth.register(email, password, displayName, orgName);
-      login(result.token, { display_name: result.user.display_name, email: result.user.email });
+      const result = await signUp.email({ email, password, name: displayName });
+      if (result.error) {
+        throw new Error(result.error.message ?? t('register.registrationFailed'));
+      }
       router.push('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : t('register.registrationFailed'));

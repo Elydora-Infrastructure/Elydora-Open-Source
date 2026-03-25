@@ -61,7 +61,7 @@ else
   # Generate secrets
   PG_PASS=$(openssl rand -hex 24)
   MINIO_PASS=$(openssl rand -hex 24)
-  JWT=$(openssl rand -hex 32)
+  BETTER_AUTH_SECRET=$(openssl rand -hex 32)
   SIGNING_KEY=$(openssl genpkey -algorithm ed25519 2>/dev/null \
     | openssl pkcs8 -topk8 -nocrypt -outform DER 2>/dev/null \
     | tail -c 32 \
@@ -71,7 +71,7 @@ else
 
   [ -n "$PG_PASS" ]      || fail "Failed to generate Postgres password."
   [ -n "$MINIO_PASS" ]    || fail "Failed to generate MinIO password."
-  [ -n "$JWT" ]           || fail "Failed to generate JWT secret."
+  [ -n "$BETTER_AUTH_SECRET" ] || fail "Failed to generate Better Auth secret."
   [ -n "$SIGNING_KEY" ]   || fail "Failed to generate Ed25519 signing key."
 
   # Replace placeholders
@@ -79,7 +79,7 @@ else
   sedi "s|elydora:GENERATE_ME@postgres|elydora:${PG_PASS}@postgres|" .env
   sedi "s|MINIO_ROOT_PASSWORD=GENERATE_ME|MINIO_ROOT_PASSWORD=${MINIO_PASS}|" .env
   sedi "s|MINIO_SECRET_KEY=GENERATE_ME|MINIO_SECRET_KEY=${MINIO_PASS}|" .env
-  sedi "s|JWT_SECRET=GENERATE_ME|JWT_SECRET=${JWT}|" .env
+  sedi "s|BETTER_AUTH_SECRET=GENERATE_ME|BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}|" .env
   sedi "s|ELYDORA_SIGNING_KEY=GENERATE_ME|ELYDORA_SIGNING_KEY=${SIGNING_KEY}|" .env
 
   chmod 600 .env

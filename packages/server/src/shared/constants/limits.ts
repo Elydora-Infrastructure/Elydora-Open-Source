@@ -19,5 +19,5 @@ export const MAX_QUERY_LIMIT = 1000;
 /** Default number of results per query */
 export const DEFAULT_QUERY_LIMIT = 100;
 
-/** Default JWT token lifetime in seconds (24 hours) */
-export const DEFAULT_JWT_TTL_SECONDS = 86400;
+/** Default session token lifetime in seconds (24 hours) */
+export const DEFAULT_SESSION_TTL_SECONDS = 86400;

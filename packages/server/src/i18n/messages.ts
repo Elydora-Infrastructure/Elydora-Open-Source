@@ -89,42 +89,6 @@ const messages: Record<string, Record<Lang, string>> = {
     en: 'Empty Bearer token',
     zh: 'Bearer \u4ee4\u724c\u4e3a\u7a7a',
   },
-  'auth.malformedJwt': {
-    en: 'Malformed JWT: expected 3 parts',
-    zh: 'JWT \u683c\u5f0f\u9519\u8bef\uff1a\u5e94\u5305\u542b 3 \u4e2a\u90e8\u5206',
-  },
-  'auth.invalidSignature': {
-    en: 'Invalid JWT signature',
-    zh: 'JWT \u7b7e\u540d\u65e0\u6548',
-  },
-  'auth.malformedPayload': {
-    en: 'Malformed JWT payload',
-    zh: 'JWT \u8d1f\u8f7d\u683c\u5f0f\u9519\u8bef',
-  },
-  'auth.missingSub': {
-    en: 'JWT missing required "sub" claim',
-    zh: 'JWT \u7f3a\u5c11\u5fc5\u9700\u7684 "sub" \u58f0\u660e',
-  },
-  'auth.missingOrgId': {
-    en: 'JWT missing required "org_id" claim',
-    zh: 'JWT \u7f3a\u5c11\u5fc5\u9700\u7684 "org_id" \u58f0\u660e',
-  },
-  'auth.missingRole': {
-    en: 'JWT missing required "role" claim',
-    zh: 'JWT \u7f3a\u5c11\u5fc5\u9700\u7684 "role" \u58f0\u660e',
-  },
-  'auth.missingExp': {
-    en: 'JWT missing required "exp" claim',
-    zh: 'JWT \u7f3a\u5c11\u5fc5\u9700\u7684 "exp" \u58f0\u660e',
-  },
-  'auth.expired': {
-    en: 'JWT has expired',
-    zh: 'JWT \u5df2\u8fc7\u671f',
-  },
-  'auth.unsupportedAlgorithm': {
-    en: 'Unsupported JWT algorithm. Only HS256 is accepted.',
-    zh: '\u4e0d\u652f\u6301\u7684 JWT \u7b97\u6cd5\u3002\u4ec5\u63a5\u53d7 HS256\u3002',
-  },
   'auth.ttlMustBePositive': {
     en: 'ttl_seconds must be a positive number',
     zh: 'ttl_seconds \u5fc5\u987b\u4e3a\u6b63\u6570',
