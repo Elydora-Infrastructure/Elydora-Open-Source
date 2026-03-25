@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck-server:
+    name: Typecheck Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/server/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+
+  typecheck-console:
+    name: Typecheck Console
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/console/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+
+  build-server:
+    name: Build Server
+    runs-on: ubuntu-latest
+    needs: typecheck-server
+    defaults:
+      run:
+        working-directory: packages/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/server/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  build-console:
+    name: Build Console
+    runs-on: ubuntu-latest
+    needs: typecheck-console
+    defaults:
+      run:
+        working-directory: packages/console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/console/package-lock.json
+      - run: npm ci
+      - run: npm run build

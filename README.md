@@ -8,10 +8,12 @@
 
 Tamper-evident audit trails with cryptographic proof for every AI agent action.
 
+[![GitHub Stars](https://img.shields.io/github/stars/Elydora-Infrastructure/Elydora-Open-Source?style=social)](https://github.com/Elydora-Infrastructure/Elydora-Open-Source)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Node SDK](https://img.shields.io/badge/node%20sdk-v1.1.0-green.svg)](sdks/node/)
-[![Python SDK](https://img.shields.io/badge/python%20sdk-v1.1.0-green.svg)](sdks/python/)
+[![Node SDK](https://img.shields.io/badge/node%20sdk-v1.2.0-green.svg)](sdks/node/)
+[![Python SDK](https://img.shields.io/badge/python%20sdk-v1.2.0-green.svg)](sdks/python/)
 [![Go SDK](https://img.shields.io/badge/go%20sdk-v0.1.0-green.svg)](sdks/go/)
+[![CI](https://img.shields.io/github/actions/workflow/status/Elydora-Infrastructure/Elydora-Open-Source/ci.yml?branch=main&label=CI)](https://github.com/Elydora-Infrastructure/Elydora-Open-Source/actions)
 [![Website](https://img.shields.io/badge/website-elydora.com-purple.svg)](https://elydora.com)
 
 [Website](https://elydora.com) · [Quick Start](#quick-start) · [Documentation](#documentation) · [API Reference](#api-reference) · [SDKs](#sdks) · [Contributing](#contributing)
@@ -908,6 +910,14 @@ Elydora is configured via environment variables. Copy `.env.example` to `.env` a
 - Each EOR includes a cryptographically random 16-byte nonce.
 - The server maintains a nonce cache in Redis to detect and reject replayed operations within the TTL window.
 - The `ttl_ms` field defines the validity window; operations submitted after `issued_at + ttl_ms` are rejected.
+
+---
+
+## Star This Repo
+
+If Elydora is useful to you, please consider giving it a star on GitHub. It helps others discover the project and motivates continued development.
+
+[![Star on GitHub](https://img.shields.io/github/stars/Elydora-Infrastructure/Elydora-Open-Source?style=social)](https://github.com/Elydora-Infrastructure/Elydora-Open-Source)
 
 ---
 

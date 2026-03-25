@@ -1,0 +1,32 @@
+{
+  "name": "elydora-open-source",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open-source responsibility layer for AI agents — tamper-evident audit trails with cryptographic proof for every action.",
+  "keywords": [
+    "ai",
+    "agents",
+    "audit-trail",
+    "cryptography",
+    "ed25519",
+    "compliance",
+    "observability",
+    "merkle-tree",
+    "tamper-evident",
+    "responsible-ai"
+  ],
+  "homepage": "https://elydora.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Elydora-Infrastructure/Elydora-Open-Source.git"
+  },
+  "license": "Apache-2.0",
+  "scripts": {
+    "build:server": "cd packages/server && npm run build",
+    "build:console": "cd packages/console && npm run build",
+    "build": "npm run build:server && npm run build:console",
+    "typecheck:server": "cd packages/server && npm run typecheck",
+    "typecheck:console": "cd packages/console && npm run typecheck",
+    "typecheck": "npm run typecheck:server && npm run typecheck:console"
+  }
+}
