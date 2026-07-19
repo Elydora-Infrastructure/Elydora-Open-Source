@@ -8,7 +8,7 @@ Official Go SDK for the [Elydora](https://elydora.com) tamper-evident audit plat
 go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
 ```
 
-Requires Go 1.21+. Zero third-party dependencies (stdlib only).
+Requires Go 1.21+. The CLI uses focused TOML and JSONC parsers to preserve user-owned agent configuration.
 
 ## Quick Start
 
@@ -83,6 +83,8 @@ Grok Build installation writes native global hooks to `$GROK_HOME/hooks/elydora-
 
 Auggie installation writes user-level hooks to `~/.augment/settings.json` and creates the `.cmd` or `.sh` wrappers required by its command runner. System and workspace settings remain unchanged. Sessions started with `--augment-cache-dir` load settings from that alternate directory.
 
+Factory Droid installation selects `PreToolUse` and `PostToolUse` independently across `~/.factory/hooks.json`, the legacy `~/.factory/hooks/hooks.json`, and `~/.factory/settings.json`. Elydora preserves JSONC comments and formatting, commits runtime and hook changes as one transaction, and reports disabled hooks as unhealthy. Run `/hooks` in Droid after installation to review the effective hooks.
+
 ### Commands
 
 | Command | Description |
@@ -102,6 +104,7 @@ Auggie installation writes user-level hooks to `~/.augment/settings.json` and cr
 | Cline | `cline` |
 | Copilot CLI | `copilot` |
 | Cursor | `cursor` |
+| Factory Droid | `droid` |
 | Gemini CLI | `gemini` |
 | Grok Build | `grok` |
 | Kiro CLI | `kirocli` |
