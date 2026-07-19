@@ -64,6 +64,8 @@ async def main():
 
 The SDK includes a CLI for installing audit hooks into AI coding agents.
 
+Agent IDs map to one physical directory directly under `~/.elydora`; portable filename rules and physical directory/config checks apply before writes or recursive removal. Ambiguous uninstall discovery requires an explicit agent ID.
+
 ```bash
 elydora install \
   --agent claudecode \
