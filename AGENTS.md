@@ -22,6 +22,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Use each provider's documented blocking mechanism and failure mode.
 - Report installation as healthy only when a complete contract references all required runtime files.
 - Keep stable, legacy, and early-access contracts explicit, including their activation commands.
+- Select Kimi Code and legacy kimi-cli config targets from existing runtime evidence; a fresh installation targets current Kimi Code and keeps migration markers isolated to active runtimes.
 
 ## Mirror Workflow
 

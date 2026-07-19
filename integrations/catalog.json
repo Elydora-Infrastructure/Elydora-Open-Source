@@ -289,11 +289,11 @@
         "failure_mode": "fail_open"
       },
       "adapters": {
-        "node": false,
+        "node": true,
         "python": false,
         "go": false
       },
-      "delivery_state": "planned",
+      "delivery_state": "partial",
       "source_url": "https://moonshotai.github.io/kimi-code/en/customization/hooks",
       "contract_variants": [
         {

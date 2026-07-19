@@ -14,4 +14,5 @@ export const SUPPORTED_AGENTS: ReadonlyMap<string, AgentRegistryEntry> = new Map
   ['copilot', { name: 'Copilot CLI', configDir: '.github/hooks', configFile: 'hooks.json' }],
   ['letta', { name: 'Letta Code', configDir: '~/.letta', configFile: 'settings.json' }],
   ['codex', { name: 'OpenAI Codex', configDir: '~/.codex', configFile: 'hooks.json' }],
+  ['kimi', { name: 'Kimi Code', configDir: '~/.kimi-code', configFile: 'config.toml' }],
 ]);
