@@ -178,6 +178,26 @@ test('high-drift providers retain their verified hook contracts', async () => {
   const catalog = await readJson('integrations/catalog.json');
   const providers = new Map(catalog.providers.map((provider) => [provider.id, provider]));
 
+  assert.deepEqual(providers.get('augment').config_paths, [
+    '/etc/augment/settings.json',
+    'C:\\ProgramData\\Augment\\settings.json',
+    '.augment/settings.local.json',
+    '.augment/settings.json',
+    '~/.augment/settings.json',
+  ]);
+  assert.deepEqual(providers.get('augment').events, {
+    before_tool: 'PreToolUse',
+    after_tool: 'PostToolUse',
+  });
+  assert.deepEqual(providers.get('augment').event_fields, {
+    name: 'tool_name',
+    input: 'tool_input',
+    session: 'conversation_id',
+  });
+  assert.deepEqual(providers.get('augment').blocking, {
+    mechanism: 'exit_code_2',
+    failure_mode: 'fail_open',
+  });
   assert.deepEqual(providers.get('codex').config_paths, [
     '~/.codex/hooks.json',
     '.codex/hooks.json',

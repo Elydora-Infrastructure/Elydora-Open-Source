@@ -25,6 +25,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Select Kimi Code and legacy `kimi-cli` contracts from runtime evidence. An empty `KIMI_CODE_HOME` uses `~/.kimi-code`; create no cross-runtime migration marker.
 - Preserve Kimi TOML comments and unrelated formatting through range-based edits, then parse the complete rendered document before writing it.
 - Write Grok Build integrations to a native user hook file under non-empty `GROK_HOME` or `~/.grok`; keep Claude Code and Cursor compatibility sources read-only.
+- Write Auggie hooks only to `~/.augment/settings.json`; keep system and workspace settings read-only. Generate `.cmd` wrappers on Windows and `.sh` wrappers on Unix because Auggie dispatches supported script paths, and express hook timeouts in milliseconds.
 
 ## Mirror Workflow
 
