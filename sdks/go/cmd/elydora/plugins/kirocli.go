@@ -24,11 +24,11 @@ func (p *KiroCliPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	v2Settings, _, err := readKiroObject(v2Path, "Kiro CLI v2 agent config")
+	v2Settings, _, err := readHookJSONObject(v2Path, "Kiro CLI v2 agent config")
 	if err != nil {
 		return err
 	}
-	v3Settings, _, err := readKiroObject(v3Path, "Kiro CLI v3 hooks config")
+	v3Settings, _, err := readHookJSONObject(v3Path, "Kiro CLI v3 hooks config")
 	if err != nil {
 		return err
 	}
@@ -109,10 +109,10 @@ func (p *KiroCliPlugin) Install(config InstallConfig) error {
 	if err := GenerateHookScript(scriptPath, config); err != nil {
 		return fmt.Errorf("generate hook script: %w", err)
 	}
-	if err := writeKiroObjectAtomic(v2Path, nextV2); err != nil {
+	if err := writeHookJSONObjectAtomic(v2Path, nextV2); err != nil {
 		return err
 	}
-	if err := writeKiroObjectAtomic(v3Path, nextV3); err != nil {
+	if err := writeHookJSONObjectAtomic(v3Path, nextV3); err != nil {
 		return err
 	}
 
@@ -126,11 +126,11 @@ func (p *KiroCliPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	v2Settings, v2Exists, err := readKiroObject(v2Path, "Kiro CLI v2 agent config")
+	v2Settings, v2Exists, err := readHookJSONObject(v2Path, "Kiro CLI v2 agent config")
 	if err != nil {
 		return err
 	}
-	v3Settings, v3Exists, err := readKiroObject(v3Path, "Kiro CLI v3 hooks config")
+	v3Settings, v3Exists, err := readHookJSONObject(v3Path, "Kiro CLI v3 hooks config")
 	if err != nil {
 		return err
 	}
@@ -164,11 +164,11 @@ func (p *KiroCliPlugin) Status() (PluginStatus, error) {
 		DisplayName: "Kiro CLI",
 		ConfigPath:  v3Path,
 	}
-	v2Settings, v2Exists, err := readKiroObject(v2Path, "Kiro CLI v2 agent config")
+	v2Settings, v2Exists, err := readHookJSONObject(v2Path, "Kiro CLI v2 agent config")
 	if err != nil {
 		return status, err
 	}
-	v3Settings, v3Exists, err := readKiroObject(v3Path, "Kiro CLI v3 hooks config")
+	v3Settings, v3Exists, err := readHookJSONObject(v3Path, "Kiro CLI v3 hooks config")
 	if err != nil {
 		return status, err
 	}

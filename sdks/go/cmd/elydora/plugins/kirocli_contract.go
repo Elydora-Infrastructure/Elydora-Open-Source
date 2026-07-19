@@ -269,9 +269,9 @@ func applyKiroMutation(mutation kiroConfigMutation) error {
 		return nil
 	}
 	if mutation.remove {
-		return removeKiroFile(mutation.path, "Kiro CLI config")
+		return removeHookFile(mutation.path, "Kiro CLI config")
 	}
-	return writeKiroObjectAtomic(mutation.path, mutation.value)
+	return writeHookJSONObjectAtomic(mutation.path, mutation.value)
 }
 
 func configuredKiroContracts(
@@ -378,7 +378,7 @@ func kiroRuntimeScriptsExist(contracts []kiroHookContract) (bool, error) {
 			continue
 		}
 		configPath := filepath.Join(agentDir, "config.json")
-		config, exists, err := readKiroObject(configPath, "Elydora runtime config")
+		config, exists, err := readHookJSONObject(configPath, "Elydora runtime config")
 		if err != nil {
 			return false, err
 		}

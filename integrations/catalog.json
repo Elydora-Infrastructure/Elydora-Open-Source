@@ -109,9 +109,9 @@
       "adapters": {
         "node": true,
         "python": true,
-        "go": false
+        "go": true
       },
-      "delivery_state": "partial",
+      "delivery_state": "available",
       "source_url": "https://learn.chatgpt.com/docs/hooks"
     },
     {

@@ -10,6 +10,7 @@ type AgentRegistryEntry struct {
 // SupportedAgents is the canonical registry of all supported agent integrations.
 var SupportedAgents = map[string]AgentRegistryEntry{
 	"claudecode": {Name: "Claude Code", ConfigDir: "~/.claude", ConfigFile: "settings.json"},
+	"codex":      {Name: "OpenAI Codex", ConfigDir: "~/.codex", ConfigFile: "hooks.json"},
 	"cursor":     {Name: "Cursor", ConfigDir: "~/.cursor", ConfigFile: "hooks.json"},
 	"gemini":     {Name: "Gemini CLI", ConfigDir: "~/.gemini", ConfigFile: "settings.json"},
 	"kirocli":    {Name: "Kiro CLI", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.json"},
@@ -25,6 +26,8 @@ func NewPlugin(agentName string) AgentPlugin {
 	switch agentName {
 	case "claudecode":
 		return &ClaudeCodePlugin{}
+	case "codex":
+		return &CodexPlugin{}
 	case "cursor":
 		return &CursorPlugin{}
 	case "gemini":
