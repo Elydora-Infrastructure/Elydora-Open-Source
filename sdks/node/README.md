@@ -51,7 +51,7 @@ npx elydora install \
   --kid agent-456-key-v1
 ```
 
-The CLI reads the private key and optional API token through hidden terminal prompts. For non-interactive installation, store each secret in an owner-only file and pass `--private_key_file <path>` and `--token_file <path>`. Secret values are rejected as command-line arguments because process listings and shell history can expose them.
+The CLI reads the private key and optional API token through hidden terminal prompts. For non-interactive installation, store each secret in an owner-only file and pass `--private_key_file <path>` and `--token_file <path>`. Secret values are rejected as command-line arguments because process listings and shell history can expose them. Agent IDs map to one physical directory directly under `~/.elydora`; portable filename rules and physical-directory checks apply before writes or recursive removal. Ambiguous uninstall discovery requires an explicit agent ID.
 
 Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex after installation and trust the Elydora `PreToolUse` and `PostToolUse` definitions.
 

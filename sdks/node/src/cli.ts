@@ -4,7 +4,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { resolveInstallSecrets } from './cli-secrets.js';
 import { derivePublicKey } from './crypto.js';
-import { ensurePrivateDirectory, writePrivateFile } from './secure-files.js';
+import {
+  ensurePrivateDirectory,
+  requirePhysicalDirectory,
+  requirePhysicalFile,
+  resolvePrivateChildDirectory,
+} from './runtime-paths.js';
+import { writePrivateFile } from './secure-files.js';
 import { SUPPORTED_AGENTS } from './plugins/registry.js';
 import type { AgentPlugin, InstallConfig } from './plugins/base.js';
 import { generateHookScript, generateGuardScript } from './plugins/hook-template.js';
@@ -51,6 +57,65 @@ const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
 function die(message: string): never {
   console.error(`Error: ${message}`);
   process.exit(1);
+}
+
+interface InstalledAgent {
+  agentId: string;
+  agentName: string;
+  configPath: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function readInstalledAgent(agentId: string): Promise<InstalledAgent | undefined> {
+  const agentDirectory = resolvePrivateChildDirectory(ELYDORA_DIR, agentId);
+  if (!(await requirePhysicalDirectory(agentDirectory))) return undefined;
+
+  const configPath = path.join(agentDirectory, 'config.json');
+  if (!(await requirePhysicalFile(configPath))) return undefined;
+  let raw: string;
+  try {
+    raw = await fsp.readFile(configPath, 'utf-8');
+  } catch (error) {
+    throw new Error(`Could not read agent config: ${configPath}`, { cause: error });
+  }
+
+  let config: unknown;
+  try {
+    config = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Could not parse agent config: ${configPath}`, { cause: error });
+  }
+  if (
+    !isRecord(config)
+    || typeof config.agent_id !== 'string'
+    || typeof config.agent_name !== 'string'
+  ) {
+    throw new Error(`Agent config has an invalid runtime identity: ${configPath}`);
+  }
+  if (config.agent_id !== agentId) {
+    throw new Error(`Agent config crosses its runtime directory: ${configPath}`);
+  }
+  resolvePrivateChildDirectory(ELYDORA_DIR, config.agent_id);
+  return { agentId, agentName: config.agent_name, configPath };
+}
+
+async function discoverInstalledAgents(): Promise<InstalledAgent[]> {
+  if (!(await requirePhysicalDirectory(ELYDORA_DIR))) return [];
+
+  const entries = await fsp.readdir(ELYDORA_DIR, { withFileTypes: true });
+  const installedAgents: InstalledAgent[] = [];
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Agent runtime path is not a physical directory: ${path.join(ELYDORA_DIR, entry.name)}`);
+    }
+    if (!entry.isDirectory()) continue;
+    const installedAgent = await readInstalledAgent(entry.name);
+    if (installedAgent) installedAgents.push(installedAgent);
+  }
+  return installedAgents;
 }
 
 function printUsage(): void {
@@ -102,6 +167,7 @@ async function cmdInstall(args: string[]): Promise<void> {
 
   const agentId = values.agent_id;
   if (!agentId) die('--agent_id is required');
+  const agentDir = resolvePrivateChildDirectory(ELYDORA_DIR, agentId);
 
   const kid = values.kid;
   if (!kid) die('--kid is required');
@@ -123,7 +189,6 @@ async function cmdInstall(args: string[]): Promise<void> {
   console.log(`Verifying private key... Public key: ${publicKey.slice(0, 12)}...`);
 
   // Create ~/.elydora/{agentId}/ directory
-  const agentDir = path.join(ELYDORA_DIR, agentId);
   await ensurePrivateDirectory(ELYDORA_DIR);
   await ensurePrivateDirectory(agentDir);
 
@@ -194,31 +259,36 @@ async function cmdUninstall(args: string[]): Promise<void> {
   }
 
   let agentId = values.agent_id;
+  let agentDir: string;
+  let agentDirectoryExists: boolean;
 
   // If --agent_id not provided, scan ~/.elydora/*/config.json for matching agent_name
-  if (!agentId) {
-    try {
-      const entries = await fsp.readdir(ELYDORA_DIR, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const cfgPath = path.join(ELYDORA_DIR, entry.name, 'config.json');
-        try {
-          const raw = await fsp.readFile(cfgPath, 'utf-8');
-          const cfg = JSON.parse(raw);
-          if (cfg.agent_name === agentName) {
-            agentId = entry.name;
-            break;
-          }
-        } catch {
-          // Skip unreadable configs
-        }
+  if (agentId) {
+    agentDir = resolvePrivateChildDirectory(ELYDORA_DIR, agentId);
+    const runtimeRootExists = await requirePhysicalDirectory(ELYDORA_DIR);
+    agentDirectoryExists = runtimeRootExists
+      ? await requirePhysicalDirectory(agentDir)
+      : false;
+    if (agentDirectoryExists) {
+      const installedAgent = await readInstalledAgent(agentId);
+      if (installedAgent && installedAgent.agentName !== agentName) {
+        throw new Error(
+          `Agent runtime ${agentId} belongs to ${installedAgent.agentName}, not ${agentName}`,
+        );
       }
-    } catch {
-      // ELYDORA_DIR may not exist
     }
-    if (!agentId) {
+  } else {
+    const matches = (await discoverInstalledAgents())
+      .filter((installedAgent) => installedAgent.agentName === agentName);
+    if (matches.length === 0) {
       die(`No installed agent found for "${agentName}". Use --agent_id to specify explicitly.`);
     }
+    if (matches.length > 1) {
+      die(`Multiple installed agents found for "${agentName}". Use --agent_id to specify explicitly.`);
+    }
+    agentId = matches[0].agentId;
+    agentDir = resolvePrivateChildDirectory(ELYDORA_DIR, agentId);
+    agentDirectoryExists = true;
   }
 
   const plugin = PLUGINS.get(agentName)!;
@@ -228,11 +298,8 @@ async function cmdUninstall(args: string[]): Promise<void> {
   await plugin.uninstall(agentId);
 
   // Remove entire agent directory
-  const agentDir = path.join(ELYDORA_DIR, agentId);
-  try {
-    await fsp.rm(agentDir, { recursive: true, force: true });
-  } catch {
-    // Already removed
+  if (agentDirectoryExists) {
+    await fsp.rm(agentDir, { recursive: true });
   }
 
   console.log(`Elydora audit hook uninstalled for ${registryEntry.name}.`);
@@ -244,25 +311,7 @@ async function cmdStatus(): Promise<void> {
   let anyInstalled = false;
 
   // Scan ~/.elydora/*/config.json to discover installed agents
-  const installedAgents: Array<{ agentId: string; agentName: string; configPath: string }> = [];
-  try {
-    const entries = await fsp.readdir(ELYDORA_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const cfgPath = path.join(ELYDORA_DIR, entry.name, 'config.json');
-      try {
-        const raw = await fsp.readFile(cfgPath, 'utf-8');
-        const cfg = JSON.parse(raw);
-        if (cfg.agent_name && cfg.agent_id) {
-          installedAgents.push({ agentId: entry.name, agentName: cfg.agent_name, configPath: cfgPath });
-        }
-      } catch {
-        // Skip unreadable configs
-      }
-    }
-  } catch {
-    // ELYDORA_DIR may not exist
-  }
+  const installedAgents = await discoverInstalledAgents();
 
   for (const [name, plugin] of PLUGINS) {
     const st = await plugin.status();

@@ -1,17 +1,7 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-
-function isMissingFile(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-export async function ensurePrivateDirectory(directory: string): Promise<void> {
-  await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
-  if (process.platform !== 'win32') {
-    await fsp.chmod(directory, 0o700);
-  }
-}
+import { ensurePrivateDirectory, isMissingPath } from './runtime-paths.js';
 
 export async function writePrivateFile(filePath: string, contents: string): Promise<void> {
   const directory = path.dirname(filePath);
@@ -41,7 +31,7 @@ export async function writePrivateFile(filePath: string, contents: string): Prom
       try {
         await fsp.unlink(temporaryPath);
       } catch (error) {
-        if (!isMissingFile(error)) throw error;
+        if (!isMissingPath(error)) throw error;
       }
     }
   }
