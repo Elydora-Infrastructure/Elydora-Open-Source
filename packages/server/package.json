@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
@@ -14,21 +17,20 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.0.0",
-    "better-auth": "^1.5.5",
-    "@hono/node-server": "^1.13.0",
-    "bullmq": "^5.0.0",
+    "@aws-sdk/client-s3": "^3.1090.0",
+    "better-auth": "^1.6.23",
+    "@hono/node-server": "^1.19.14",
+    "bullmq": "^5.80.9",
     "dotenv": "^16.0.0",
-    "hono": "^4.7.0",
-    "ioredis": "^5.3.0",
-    "node-cron": "^3.0.0",
-    "pg": "^8.11.0"
+    "hono": "^4.12.31",
+    "ioredis": "^5.11.1",
+    "node-cron": "^4.6.0",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/node-cron": "^3.0.0",
     "@types/pg": "^8.11.0",
-    "tsx": "^4.7.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.7.0"
   }
 }
