@@ -3,6 +3,7 @@
 from .client import ElydoraClient
 from .async_client import AsyncElydoraClient
 from .errors import ElydoraError
+from ._version import __version__
 from .crypto import (
     compute_chain_hash,
     compute_payload_hash,
@@ -48,9 +49,8 @@ from .types import (
     IntegrationType,
 )
 
-__version__ = "1.0.0"
-
 __all__ = [
+    "__version__",
     "ElydoraClient",
     "AsyncElydoraClient",
     "ElydoraError",
