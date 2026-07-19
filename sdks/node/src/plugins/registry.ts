@@ -16,6 +16,7 @@ export const SUPPORTED_AGENTS: ReadonlyMap<string, AgentRegistryEntry> = new Map
   ['letta', { name: 'Letta Code', configDir: '~/.letta', configFile: 'settings.json' }],
   ['codex', { name: 'OpenAI Codex', configDir: '~/.codex', configFile: 'hooks.json' }],
   ['cline', { name: 'Cline', configDir: '~/.cline/hooks', configFile: 'PreToolUse.mjs' }],
+  ['droid', { name: 'Factory Droid', configDir: '~/.factory', configFile: 'hooks.json' }],
   ['kimi', { name: 'Kimi Code', configDir: '~/.kimi-code', configFile: 'config.toml' }],
   ['grok', { name: 'Grok Build', configDir: '~/.grok/hooks', configFile: 'elydora-audit.json' }],
 ]);

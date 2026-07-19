@@ -17,6 +17,7 @@ import { copilotPlugin } from './plugins/copilot.js';
 import { lettaPlugin } from './plugins/letta.js';
 import { codexPlugin } from './plugins/codex.js';
 import { clinePlugin } from './plugins/cline.js';
+import { droidPlugin } from './plugins/droid.js';
 import { kimiPlugin } from './plugins/kimi.js';
 import { grokPlugin } from './plugins/grok.js';
 
@@ -34,6 +35,7 @@ const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
   ['letta', lettaPlugin],
   ['codex', codexPlugin],
   ['cline', clinePlugin],
+  ['droid', droidPlugin],
   ['kimi', kimiPlugin],
   ['grok', grokPlugin],
 ]);

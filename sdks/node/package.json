@@ -25,6 +25,7 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
-    "@decimalturn/toml-patch": "^2.0.0"
+    "@decimalturn/toml-patch": "^2.0.0",
+    "jsonc-parser": "^3.3.1"
   }
 }

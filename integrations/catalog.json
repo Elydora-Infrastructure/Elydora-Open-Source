@@ -186,8 +186,8 @@
         "mechanism": "exit_code_2",
         "failure_mode": "fail_open"
       },
-      "adapters": { "node": false, "python": false, "go": false },
-      "delivery_state": "planned",
+      "adapters": { "node": true, "python": false, "go": false },
+      "delivery_state": "partial",
       "source_url": "https://docs.factory.ai/reference/hooks-reference",
       "contract_variants": [
         {

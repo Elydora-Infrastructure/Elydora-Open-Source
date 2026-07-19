@@ -56,6 +56,8 @@ Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex aft
 
 Cline installation writes `PreToolUse.mjs` and `PostToolUse.mjs` to `$CLINE_DIR/hooks` (default `~/.cline/hooks`). Elydora leaves the Documents and workspace hook roots unchanged. The guard translates a frozen agent into Cline's JSON stdout cancellation control.
 
+Factory Droid installation preserves the active user source across `~/.factory/hooks.json`, the `hooks` field in `~/.factory/settings.json`, and the legacy `~/.factory/hooks/hooks.json` path. Hook files store events at the document root; settings stores the same event map under `hooks`. Project and organization sources remain unchanged. Droid snapshots hooks for each session, so run `/hooks` after installation to review and apply the external change.
+
 Kimi installation writes the strict hook contract to each detected runtime: Kimi Code's `$KIMI_CODE_HOME/config.toml` (default `~/.kimi-code/config.toml`) and the migrating Python CLI's `~/.kimi/config.toml`. A fresh installation targets current Kimi Code, avoiding cross-runtime migration markers. Both runtimes load the hooks globally; run `/hooks` to inspect them.
 
 Grok Build installation writes native global hooks to `$GROK_HOME/hooks/elydora-audit.json` (default `~/.grok/hooks/elydora-audit.json`). Project hooks still follow Grok's `/hooks-trust` workflow; Elydora leaves project, Claude Code, and Cursor compatibility files unchanged.
@@ -81,6 +83,7 @@ Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the genera
 | Claude Code | `claudecode` |
 | OpenAI Codex | `codex` |
 | Cline | `cline` |
+| Factory Droid | `droid` |
 | Kimi Code | `kimi` |
 | Grok Build | `grok` |
 | Cursor | `cursor` |

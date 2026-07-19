@@ -28,7 +28,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Write Auggie hooks only to `~/.augment/settings.json`; keep system and workspace settings read-only. Generate `.cmd` wrappers on Windows and `.sh` wrappers on Unix because Auggie dispatches supported script paths, and express hook timeouts in milliseconds.
 - Validate Auggie matcher syntax during installation with Node.js `new RegExp`; keep status and uninstall independent from the JavaScript validator so recovery remains available offline.
 - Write Cline file hooks to `$CLINE_DIR/hooks` with `~/.cline/hooks` as the default; keep Documents and workspace hook roots read-only. Use supported event filenames, preserve official hook input byte-for-byte, use `process.execPath` in Node and Go wrappers, and resolve Python runtimes from absolute shebangs. Translate guard exit code `2` into JSON stdout with `cancel: true`. Treat hook errors, timeouts, and invalid control JSON as fail-open.
-- Preserve Factory Droid's scope-root `hooks.json` precedence, legacy nested hook source, and per-event `settings.json` fallback. Edit only effective user sources; keep project and organization sources read-only.
+- Preserve Factory Droid's scope-root `hooks.json` precedence, legacy nested hook source, and per-event `settings.json` fallback. Scope-root and legacy files store event keys at the document root; settings stores the same map under `hooks`. Edit only effective user sources; keep project and organization sources read-only. Preserve JSONC comments through syntax-tree edits and require `/hooks` review after external changes.
 
 ## Mirror Workflow
 
