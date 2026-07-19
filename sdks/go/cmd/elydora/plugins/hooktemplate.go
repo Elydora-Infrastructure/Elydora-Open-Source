@@ -12,7 +12,7 @@ import (
 // It always exits 0 so it never blocks the host agent.
 func GenerateHookScript(destPath string, config InstallConfig) error {
 	dir := filepath.Dir(destPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := EnsurePrivateDirectory(dir); err != nil {
 		return fmt.Errorf("create hook script directory: %w", err)
 	}
 
@@ -32,13 +32,9 @@ func GenerateHookScript(destPath string, config InstallConfig) error {
 // ~/.elydora/<agentId>/config.json and ~/.elydora/<agentId>/private.key so that
 // the generated hook script can read them at runtime without embedding secrets.
 func writeAgentConfig(config InstallConfig) error {
-	home, err := os.UserHomeDir()
+	agentDir, err := PrepareAgentRuntimeDirectory(config.AgentID)
 	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
-	}
-	agentDir := filepath.Join(home, ".elydora", config.AgentID)
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
-		return fmt.Errorf("create agent directory: %w", err)
+		return err
 	}
 
 	baseURL := config.BaseURL

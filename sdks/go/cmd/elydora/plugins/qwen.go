@@ -119,14 +119,15 @@ func (p *QwenPlugin) Status() (PluginStatus, error) {
 }
 
 func qwenAgentDirectory(agentID string) (string, string, error) {
-	if agentID == "" || agentID == "." || agentID == ".." || filepath.IsAbs(agentID) || filepath.Base(agentID) != agentID {
-		return "", "", fmt.Errorf("agent_id must be a single non-empty path segment")
-	}
 	runtimeRoot, err := qwenRuntimeRoot()
 	if err != nil {
 		return "", "", err
 	}
-	return runtimeRoot, filepath.Join(runtimeRoot, agentID), nil
+	agentDirectory, err := ResolveAgentRuntimeDirectory(agentID)
+	if err != nil {
+		return "", "", err
+	}
+	return runtimeRoot, agentDirectory, nil
 }
 
 func prepareQwenInstallationChanges(

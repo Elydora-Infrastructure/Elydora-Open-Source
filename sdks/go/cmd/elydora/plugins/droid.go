@@ -153,14 +153,15 @@ func (p *DroidPlugin) Status() (PluginStatus, error) {
 }
 
 func droidAgentDirectory(agentID string) (string, string, error) {
-	if agentID == "" || agentID == "." || agentID == ".." || filepath.IsAbs(agentID) || filepath.Base(agentID) != agentID {
-		return "", "", fmt.Errorf("agent_id must be a single non-empty path segment")
-	}
 	runtimeRoot, err := droidRuntimeRoot()
 	if err != nil {
 		return "", "", err
 	}
-	return runtimeRoot, filepath.Join(runtimeRoot, agentID), nil
+	agentDirectory, err := ResolveAgentRuntimeDirectory(agentID)
+	if err != nil {
+		return "", "", err
+	}
+	return runtimeRoot, agentDirectory, nil
 }
 
 func droidSettingsDocument(settings *droidDocument) *droidDocument {

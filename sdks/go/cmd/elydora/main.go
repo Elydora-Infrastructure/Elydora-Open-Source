@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,7 +11,7 @@ import (
 	"github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora/plugins"
 )
 
-const version = "1.1.0"
+const version = "1.2.1"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -92,16 +91,13 @@ func cmdInstall(args []string) {
 	}
 
 	// Generate guard script (PreToolUse — freeze enforcement)
-	guardScriptPath, err := guardScriptPathForAgent(*agentID)
+	agentDirectory, err := plugins.PrepareAgentRuntimeDirectory(*agentID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	guardScriptPath := filepath.Join(agentDirectory, "guard.js")
 	guardScript := plugins.GenerateGuardScript(*agent, *agentID)
-	if err := os.MkdirAll(filepath.Dir(guardScriptPath), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating guard script directory: %v\n", err)
-		os.Exit(1)
-	}
 	if err := os.WriteFile(guardScriptPath, []byte(guardScript), 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing guard script: %v\n", err)
 		os.Exit(1)
@@ -149,13 +145,14 @@ func cmdUninstall(args []string) {
 		os.Exit(1)
 	}
 
-	// Resolve agentID: if not given, scan ~/.elydora/*/config.json for matching agent_name
-	resolvedAgentID := *agentID
+	resolvedAgentID, agentDirectory, agentDirectoryExists, err := resolveAgentRuntimeForUninstall(*agent, *agentID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	if resolvedAgentID == "" {
-		resolvedAgentID = findAgentIDByName(*agent)
-		if resolvedAgentID == "" {
-			fmt.Fprintf(os.Stderr, "Warning: could not find agent ID for %q in ~/.elydora/*/config.json\n", *agent)
-		}
+		fmt.Fprintf(os.Stderr, "Error: could not find agent ID for %q in ~/.elydora/*/config.json; pass --agent-id explicitly\n", *agent)
+		os.Exit(1)
 	}
 
 	if err := plugin.Uninstall(resolvedAgentID); err != nil {
@@ -164,49 +161,13 @@ func cmdUninstall(args []string) {
 	}
 
 	// Remove the per-agent directory
-	if resolvedAgentID != "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			agentDir := filepath.Join(home, ".elydora", resolvedAgentID)
-			if err := os.RemoveAll(agentDir); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to remove agent directory %s: %v\n", agentDir, err)
-			} else {
-				fmt.Printf("  Removed agent directory: %s\n", agentDir)
-			}
+	if agentDirectoryExists {
+		if err := os.RemoveAll(agentDirectory); err != nil {
+			fmt.Fprintf(os.Stderr, "Error removing agent directory %s: %v\n", agentDirectory, err)
+			os.Exit(1)
 		}
+		fmt.Printf("  Removed agent directory: %s\n", agentDirectory)
 	}
-}
-
-// findAgentIDByName scans ~/.elydora/*/config.json for a config whose agent_name
-// matches the given name and returns the directory name (agent ID).
-func findAgentIDByName(agentName string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	elydoraDir := filepath.Join(home, ".elydora")
-	entries, err := os.ReadDir(elydoraDir)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		configPath := filepath.Join(elydoraDir, entry.Name(), "config.json")
-		data, err := os.ReadFile(configPath)
-		if err != nil {
-			continue
-		}
-		var config map[string]interface{}
-		if err := json.Unmarshal(data, &config); err != nil {
-			continue
-		}
-		if name, _ := config["agent_name"].(string); name == agentName {
-			return entry.Name()
-		}
-	}
-	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -285,9 +246,9 @@ func sortedAgentNames() []string {
 
 // guardScriptPathForAgent returns the path to ~/.elydora/<agentId>/guard.js.
 func guardScriptPathForAgent(agentId string) (string, error) {
-	home, err := os.UserHomeDir()
+	agentDirectory, err := plugins.ResolveAgentRuntimeDirectory(agentId)
 	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".elydora", agentId, "guard.js"), nil
+	return filepath.Join(agentDirectory, "guard.js"), nil
 }
