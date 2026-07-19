@@ -187,6 +187,33 @@ test('high-drift providers retain their verified hook contracts', async () => {
     after_tool: 'PostToolUse',
   });
   assert.equal(providers.get('kimi').config_format, 'toml');
+  assert.deepEqual(providers.get('kimi').config_paths, [
+    '$KIMI_CODE_HOME/config.toml',
+    '~/.kimi-code/config.toml',
+  ]);
+  assert.deepEqual(providers.get('kimi').contract_variants, [
+    {
+      id: 'pythoncli',
+      release_channel: 'legacy',
+      activation: 'kimi-cli',
+      config_format: 'toml',
+      config_paths: ['~/.kimi/config.toml'],
+      events: {
+        before_tool: 'PreToolUse',
+        after_tool: 'PostToolUse',
+      },
+      event_fields: {
+        name: 'tool_name',
+        input: 'tool_input',
+        session: 'session_id',
+      },
+      blocking: {
+        mechanism: 'exit_code_2',
+        failure_mode: 'fail_open',
+      },
+      source_url: 'https://moonshotai.github.io/kimi-cli/en/customization/hooks.html',
+    },
+  ]);
   assert.deepEqual(providers.get('grok').event_fields, {
     name: 'toolName',
     input: 'toolInput',

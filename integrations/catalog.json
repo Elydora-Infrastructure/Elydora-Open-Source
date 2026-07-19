@@ -272,6 +272,7 @@
       "integration_mode": "command_hooks",
       "config_format": "toml",
       "config_paths": [
+        "$KIMI_CODE_HOME/config.toml",
         "~/.kimi-code/config.toml"
       ],
       "events": {
@@ -293,7 +294,32 @@
         "go": false
       },
       "delivery_state": "planned",
-      "source_url": "https://moonshotai.github.io/kimi-code/en/customization/hooks"
+      "source_url": "https://moonshotai.github.io/kimi-code/en/customization/hooks",
+      "contract_variants": [
+        {
+          "id": "pythoncli",
+          "release_channel": "legacy",
+          "activation": "kimi-cli",
+          "config_format": "toml",
+          "config_paths": [
+            "~/.kimi/config.toml"
+          ],
+          "events": {
+            "before_tool": "PreToolUse",
+            "after_tool": "PostToolUse"
+          },
+          "event_fields": {
+            "name": "tool_name",
+            "input": "tool_input",
+            "session": "session_id"
+          },
+          "blocking": {
+            "mechanism": "exit_code_2",
+            "failure_mode": "fail_open"
+          },
+          "source_url": "https://moonshotai.github.io/kimi-cli/en/customization/hooks.html"
+        }
+      ]
     },
     {
       "id": "kirocli",
