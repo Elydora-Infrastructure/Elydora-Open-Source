@@ -33,6 +33,10 @@ func writeHookJSONObjectAtomic(path string, value map[string]any) error {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
 	encoded = append(encoded, '\n')
+	return writeHookFileAtomic(path, encoded, 0600)
+}
+
+func writeHookFileAtomic(path string, contents []byte, mode os.FileMode) error {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return fmt.Errorf("create directory %s: %w", directory, err)
@@ -50,10 +54,10 @@ func writeHookJSONObjectAtomic(path string, value map[string]any) error {
 		}
 		return errors.Join(cause, closeErr, removeErr)
 	}
-	if err := temporary.Chmod(0600); err != nil {
+	if err := temporary.Chmod(mode); err != nil {
 		return cleanup(fmt.Errorf("set permissions for %s: %w", temporaryPath, err))
 	}
-	if _, err := temporary.Write(encoded); err != nil {
+	if _, err := temporary.Write(contents); err != nil {
 		return cleanup(fmt.Errorf("write temporary file for %s: %w", path, err))
 	}
 	if err := temporary.Sync(); err != nil {

@@ -15,6 +15,7 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 	"gemini":     {Name: "Gemini CLI", ConfigDir: "~/.gemini", ConfigFile: "settings.json"},
 	"kirocli":    {Name: "Kiro CLI", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.json"},
 	"kiroide":    {Name: "Kiro IDE", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.kiro.hook"},
+	"kimi":       {Name: "Kimi Code", ConfigDir: "~/.kimi-code", ConfigFile: "config.toml"},
 	"opencode":   {Name: "OpenCode", ConfigDir: "~/.config/opencode/plugins", ConfigFile: "elydora-audit.mjs"},
 	"copilot":    {Name: "Copilot CLI", ConfigDir: ".github/hooks", ConfigFile: "hooks.json"},
 	"letta":      {Name: "Letta Code", ConfigDir: "~/.letta", ConfigFile: "settings.json"},
@@ -36,6 +37,8 @@ func NewPlugin(agentName string) AgentPlugin {
 		return &KiroCliPlugin{}
 	case "kiroide":
 		return &KiroIdePlugin{}
+	case "kimi":
+		return &KimiPlugin{}
 	case "opencode":
 		return &OpenCodePlugin{}
 	case "copilot":

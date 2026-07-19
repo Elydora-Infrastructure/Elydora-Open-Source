@@ -75,6 +75,8 @@ Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex aft
 
 Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
 
+Kimi installation follows detected runtime evidence. Kimi Code uses `$KIMI_CODE_HOME/config.toml` with `~/.kimi-code/config.toml` as the default. Legacy `kimi-cli` uses `~/.kimi/config.toml`; Elydora updates both contracts only when both runtimes are present.
+
 ### Commands
 
 | Command | Description |
@@ -95,6 +97,7 @@ Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the genera
 | Gemini CLI | `gemini` |
 | Kiro CLI | `kirocli` |
 | Kiro IDE | `kiroide` |
+| Kimi Code | `kimi` |
 | Letta Code | `letta` |
 | OpenCode | `opencode` |
 

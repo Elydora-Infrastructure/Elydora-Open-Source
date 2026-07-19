@@ -291,9 +291,9 @@
       "adapters": {
         "node": true,
         "python": true,
-        "go": false
+        "go": true
       },
-      "delivery_state": "partial",
+      "delivery_state": "available",
       "source_url": "https://moonshotai.github.io/kimi-code/en/customization/hooks",
       "contract_variants": [
         {
