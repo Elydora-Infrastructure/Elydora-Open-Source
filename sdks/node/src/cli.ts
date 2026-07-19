@@ -16,6 +16,7 @@ import { copilotPlugin } from './plugins/copilot.js';
 import { lettaPlugin } from './plugins/letta.js';
 import { codexPlugin } from './plugins/codex.js';
 import { kimiPlugin } from './plugins/kimi.js';
+import { grokPlugin } from './plugins/grok.js';
 
 const ELYDORA_DIR = path.join(os.homedir(), '.elydora');
 
@@ -30,6 +31,7 @@ const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
   ['letta', lettaPlugin],
   ['codex', codexPlugin],
   ['kimi', kimiPlugin],
+  ['grok', grokPlugin],
 ]);
 
 // ---------------------------------------------------------------------------

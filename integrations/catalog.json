@@ -258,11 +258,11 @@
         "failure_mode": "fail_open"
       },
       "adapters": {
-        "node": false,
+        "node": true,
         "python": false,
         "go": false
       },
-      "delivery_state": "planned",
+      "delivery_state": "partial",
       "source_url": "https://docs.x.ai/build/features/hooks"
     },
     {
