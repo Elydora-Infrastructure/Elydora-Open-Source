@@ -214,6 +214,51 @@ test('high-drift providers retain their verified hook contracts', async () => {
     '~/.codex/hooks.json',
     '.codex/hooks.json',
   ]);
+  assert.deepEqual(providers.get('droid').config_paths, [
+    '~/.factory/hooks.json',
+    '~/.factory/settings.json',
+    '.factory/hooks.json',
+    '.factory/settings.json',
+  ]);
+  assert.deepEqual(providers.get('droid').events, {
+    before_tool: 'PreToolUse',
+    after_tool: 'PostToolUse',
+  });
+  assert.deepEqual(providers.get('droid').event_fields, {
+    name: 'tool_name',
+    input: 'tool_input',
+    session: 'session_id',
+  });
+  assert.deepEqual(providers.get('droid').blocking, {
+    mechanism: 'exit_code_2',
+    failure_mode: 'fail_open',
+  });
+  assert.deepEqual(providers.get('droid').contract_variants, [
+    {
+      id: 'nestedhooks',
+      release_channel: 'legacy',
+      activation: 'An existing nested hooks file remains active until Droid saves and archives it',
+      config_format: 'json',
+      config_paths: [
+        '~/.factory/hooks/hooks.json',
+        '.factory/hooks/hooks.json',
+      ],
+      events: {
+        before_tool: 'PreToolUse',
+        after_tool: 'PostToolUse',
+      },
+      event_fields: {
+        name: 'tool_name',
+        input: 'tool_input',
+        session: 'session_id',
+      },
+      blocking: {
+        mechanism: 'exit_code_2',
+        failure_mode: 'fail_open',
+      },
+      source_url: 'https://docs.factory.ai/reference/hooks-reference',
+    },
+  ]);
   assert.equal(providers.get('cline').integration_mode, 'command_hooks');
   assert.equal(providers.get('cline').config_format, 'script');
   assert.deepEqual(providers.get('cline').config_paths, [

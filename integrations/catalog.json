@@ -169,7 +169,9 @@
       "config_format": "json",
       "config_paths": [
         "~/.factory/hooks.json",
-        ".factory/hooks.json"
+        "~/.factory/settings.json",
+        ".factory/hooks.json",
+        ".factory/settings.json"
       ],
       "events": {
         "before_tool": "PreToolUse",
@@ -186,7 +188,33 @@
       },
       "adapters": { "node": false, "python": false, "go": false },
       "delivery_state": "planned",
-      "source_url": "https://docs.factory.ai/reference/hooks-reference"
+      "source_url": "https://docs.factory.ai/reference/hooks-reference",
+      "contract_variants": [
+        {
+          "id": "nestedhooks",
+          "release_channel": "legacy",
+          "activation": "An existing nested hooks file remains active until Droid saves and archives it",
+          "config_format": "json",
+          "config_paths": [
+            "~/.factory/hooks/hooks.json",
+            ".factory/hooks/hooks.json"
+          ],
+          "events": {
+            "before_tool": "PreToolUse",
+            "after_tool": "PostToolUse"
+          },
+          "event_fields": {
+            "name": "tool_name",
+            "input": "tool_input",
+            "session": "session_id"
+          },
+          "blocking": {
+            "mechanism": "exit_code_2",
+            "failure_mode": "fail_open"
+          },
+          "source_url": "https://docs.factory.ai/reference/hooks-reference"
+        }
+      ]
     },
     {
       "id": "gemini",
