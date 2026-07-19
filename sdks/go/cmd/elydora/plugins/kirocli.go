@@ -1,24 +1,46 @@
 package plugins
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-)
+import "fmt"
 
-// KiroCliPlugin manages the Elydora audit hook for Kiro CLI.
-// It merges PreToolUse/PostToolUse hooks into ~/.kiro/settings.json.
+// KiroCliPlugin manages the stable v2 custom-agent and early-access v3 hook contracts.
 type KiroCliPlugin struct{}
 
-func (p *KiroCliPlugin) configPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	return filepath.Join(home, ".kiro", "settings.json"), nil
-}
-
 func (p *KiroCliPlugin) Install(config InstallConfig) error {
+	if config.AgentID == "" {
+		return fmt.Errorf("agent ID is required")
+	}
+	if config.GuardScriptPath == "" {
+		return fmt.Errorf("guard script path is required")
+	}
+	guardExists, err := regularFileExists(config.GuardScriptPath, "Elydora guard runtime")
+	if err != nil {
+		return err
+	}
+	if !guardExists {
+		return fmt.Errorf("Elydora guard runtime is missing: %s", config.GuardScriptPath)
+	}
+
+	v2Path, v3Path, err := kiroConfigPaths()
+	if err != nil {
+		return err
+	}
+	v2Settings, _, err := readKiroObject(v2Path, "Kiro CLI v2 agent config")
+	if err != nil {
+		return err
+	}
+	v3Settings, _, err := readKiroObject(v3Path, "Kiro CLI v3 hooks config")
+	if err != nil {
+		return err
+	}
+	v2Hooks, err := kiroHooksObject(v2Settings, "Kiro CLI v2 agent config")
+	if err != nil {
+		return err
+	}
+	currentV3Hooks, err := kiroV3Hooks(v3Settings)
+	if err != nil {
+		return err
+	}
+
 	scriptPath, err := hookScriptPath(config.AgentID)
 	if err != nil {
 		return err
@@ -26,199 +48,151 @@ func (p *KiroCliPlugin) Install(config InstallConfig) error {
 	if config.HookScript != "" {
 		scriptPath = config.HookScript
 	}
+	nodePath, err := resolveNodeRuntime()
+	if err != nil {
+		return err
+	}
+
+	preToolUse, err := kiroHookEntries(v2Hooks, "preToolUse", "Kiro CLI v2 agent config")
+	if err != nil {
+		return err
+	}
+	postToolUse, err := kiroHookEntries(v2Hooks, "postToolUse", "Kiro CLI v2 agent config")
+	if err != nil {
+		return err
+	}
+	v2Hooks["preToolUse"] = append(
+		withoutKiroV2Hooks(preToolUse, ""),
+		buildKiroV2Hook(nodePath, config.GuardScriptPath),
+	)
+	v2Hooks["postToolUse"] = append(
+		withoutKiroV2Hooks(postToolUse, ""),
+		buildKiroV2Hook(nodePath, scriptPath),
+	)
+
+	nextV2 := map[string]any{
+		"name":           kiroV2AgentName,
+		"description":    kiroV2Description,
+		"tools":          []any{"*"},
+		"includeMcpJson": true,
+	}
+	copyKiroObject(nextV2, v2Settings)
+	nextV2["hooks"] = v2Hooks
+
+	nextV3 := cloneKiroObject(v3Settings)
+	nextV3["version"] = "v1"
+	v3Hooks := make([]any, 0, len(currentV3Hooks)+2)
+	for _, hook := range currentV3Hooks {
+		if !isManagedKiroV3Hook(hook, "") {
+			v3Hooks = append(v3Hooks, hook)
+		}
+	}
+	v3Hooks = append(
+		v3Hooks,
+		buildKiroV3Hook(
+			kiroV3GuardName,
+			"Block tool use when the Elydora agent is frozen",
+			"PreToolUse",
+			nodePath,
+			config.GuardScriptPath,
+		),
+		buildKiroV3Hook(
+			kiroV3AuditName,
+			"Record tool use in the Elydora audit trail",
+			"PostToolUse",
+			nodePath,
+			scriptPath,
+		),
+	)
+	nextV3["hooks"] = v3Hooks
 
 	if err := GenerateHookScript(scriptPath, config); err != nil {
 		return fmt.Errorf("generate hook script: %w", err)
 	}
-
-	guardPath := config.GuardScriptPath
-	if guardPath == "" {
-		guardPath, err = guardScriptPath(config.AgentID)
-		if err != nil {
-			return err
-		}
+	if err := writeKiroObjectAtomic(v2Path, nextV2); err != nil {
+		return err
 	}
-
-	configPath, err := p.configPath()
-	if err != nil {
+	if err := writeKiroObjectAtomic(v3Path, nextV3); err != nil {
 		return err
 	}
 
-	settings, err := readJSONFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		hooks = make(map[string]interface{})
-	}
-
-	// --- PreToolUse (guard — freeze enforcement) ---
-	preToolUse, _ := hooks["PreToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
-	}
-	guardEntry := map[string]interface{}{
-		"matcher": "*",
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":       "command",
-				"command":    "node " + guardPath,
-				"timeout_ms": float64(5000),
-			},
-		},
-	}
-	preFiltered = append(preFiltered, guardEntry)
-	hooks["PreToolUse"] = preFiltered
-
-	// --- PostToolUse (audit logging) ---
-	postToolUse, _ := hooks["PostToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	hookEntry := map[string]interface{}{
-		"matcher": "*",
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":       "command",
-				"command":    "node " + scriptPath,
-				"timeout_ms": float64(5000),
-			},
-		},
-	}
-	postFiltered = append(postFiltered, hookEntry)
-	hooks["PostToolUse"] = postFiltered
-
-	settings["hooks"] = hooks
-
-	if err := writeJSONFile(configPath, settings); err != nil {
-		return err
-	}
-	fmt.Printf("Installed Elydora hook for Kiro CLI at %s\n", configPath)
+	fmt.Println(`Kiro CLI v2: start with "kiro-cli --agent elydora-audit".`)
+	fmt.Println(`Kiro CLI v3: start with "kiro-cli --v3"; global hooks load automatically.`)
 	return nil
 }
 
 func (p *KiroCliPlugin) Uninstall(agentID string) error {
-	configPath, err := p.configPath()
+	v2Path, v3Path, err := kiroConfigPaths()
+	if err != nil {
+		return err
+	}
+	v2Settings, v2Exists, err := readKiroObject(v2Path, "Kiro CLI v2 agent config")
+	if err != nil {
+		return err
+	}
+	v3Settings, v3Exists, err := readKiroObject(v3Path, "Kiro CLI v3 hooks config")
 	if err != nil {
 		return err
 	}
 
-	settings, err := readJSONFile(configPath)
+	v2Mutation, err := prepareKiroV2Uninstall(v2Path, v2Settings, v2Exists, agentID)
 	if err != nil {
 		return err
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		fmt.Println("No Kiro CLI hooks found.")
-		return nil
+	v3Mutation, err := prepareKiroV3Uninstall(v3Path, v3Settings, v3Exists, agentID)
+	if err != nil {
+		return err
 	}
-
-	// Remove PreToolUse Elydora entries
-	preToolUse, _ := hooks["PreToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
+	if err := applyKiroMutation(v2Mutation); err != nil {
+		return err
 	}
-	if len(preFiltered) == 0 {
-		delete(hooks, "PreToolUse")
-	} else {
-		hooks["PreToolUse"] = preFiltered
-	}
-
-	// Remove PostToolUse Elydora entries
-	postToolUse, _ := hooks["PostToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	if len(postFiltered) == 0 {
-		delete(hooks, "PostToolUse")
-	} else {
-		hooks["PostToolUse"] = postFiltered
-	}
-
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
-	}
-
-	if err := writeJSONFile(configPath, settings); err != nil {
+	if err := applyKiroMutation(v3Mutation); err != nil {
 		return err
 	}
 
-	if agentID != "" {
-		scriptPath, _ := hookScriptPath(agentID)
-		if scriptPath != "" {
-			os.Remove(scriptPath)
-		}
-		gPath, _ := guardScriptPath(agentID)
-		if gPath != "" {
-			os.Remove(gPath)
-		}
-	}
-	fmt.Println("Uninstalled Elydora hook for Kiro CLI.")
+	fmt.Println("Uninstalled Elydora hooks from Kiro CLI.")
 	return nil
 }
 
 func (p *KiroCliPlugin) Status() (PluginStatus, error) {
-	configPath, err := p.configPath()
+	v2Path, v3Path, err := kiroConfigPaths()
 	if err != nil {
 		return PluginStatus{}, err
 	}
-
 	status := PluginStatus{
-		AgentName:   "kirocli",
+		AgentName:   kiroAgentKey,
 		DisplayName: "Kiro CLI",
-		ConfigPath:  configPath,
+		ConfigPath:  v3Path,
+	}
+	v2Settings, v2Exists, err := readKiroObject(v2Path, "Kiro CLI v2 agent config")
+	if err != nil {
+		return status, err
+	}
+	v3Settings, v3Exists, err := readKiroObject(v3Path, "Kiro CLI v3 hooks config")
+	if err != nil {
+		return status, err
 	}
 
-	settings, err := readJSONFile(configPath)
+	contracts, err := configuredKiroContracts(
+		v2Path,
+		v2Settings,
+		v2Exists,
+		v3Path,
+		v3Settings,
+		v3Exists,
+	)
 	if err != nil {
+		return status, err
+	}
+	if len(contracts) == 0 {
 		return status, nil
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks != nil {
-		preConfigured := hasElydoraEntry(hooks["PreToolUse"])
-		postConfigured := hasElydoraEntry(hooks["PostToolUse"])
-		status.HookConfigured = preConfigured && postConfigured
-
-		// Extract hook script path from the configured command
-		scriptPath := extractElydoraScriptPath(hooks["PostToolUse"])
-		if scriptPath != "" {
-			if _, err := os.Stat(scriptPath); err == nil {
-				status.HookScriptExists = true
-			}
-		}
+	status.ConfigPath = contracts[len(contracts)-1].configPath
+	status.HookConfigured = true
+	status.HookScriptExists, err = kiroRuntimeScriptsExist(contracts)
+	if err != nil {
+		return status, err
 	}
-
-	status.Installed = status.HookConfigured && status.HookScriptExists
+	status.Installed = status.HookScriptExists
 	return status, nil
 }
-

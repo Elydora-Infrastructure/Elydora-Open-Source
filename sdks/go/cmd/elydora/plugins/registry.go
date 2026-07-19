@@ -12,7 +12,7 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 	"claudecode": {Name: "Claude Code", ConfigDir: "~/.claude", ConfigFile: "settings.json"},
 	"cursor":     {Name: "Cursor", ConfigDir: "~/.cursor", ConfigFile: "hooks.json"},
 	"gemini":     {Name: "Gemini CLI", ConfigDir: "~/.gemini", ConfigFile: "settings.json"},
-	"kirocli":    {Name: "Kiro CLI", ConfigDir: "~/.kiro", ConfigFile: "settings.json"},
+	"kirocli":    {Name: "Kiro CLI", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.json"},
 	"kiroide":    {Name: "Kiro IDE", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.kiro.hook"},
 	"opencode":   {Name: "OpenCode", ConfigDir: "~/.config/opencode/plugins", ConfigFile: "elydora-audit.mjs"},
 	"copilot":    {Name: "Copilot CLI", ConfigDir: ".github/hooks", ConfigFile: "hooks.json"},
