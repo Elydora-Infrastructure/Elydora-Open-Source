@@ -83,7 +83,10 @@ export default function CredentialsStep({
           <h3 id="private-key-label" className="section-label text-red-700">
             {t('agentRegistration.privateKeySaveNow')}
           </h3>
-          <CopyControl value={credentials.privateKey} />
+          <CopyControl
+            value={credentials.privateKey}
+            ariaLabel={t('agentRegistration.copyPrivateKey')}
+          />
         </div>
         <code className="block p-3 bg-ink text-[#EAEAE5] font-mono text-[10px] break-all select-all">
           {credentials.privateKey}
@@ -104,7 +107,10 @@ export default function CredentialsStep({
               <span className="font-mono text-[10px] text-ink-dim">
                 {t('agentRegistration.tokenIssued')}
               </span>
-              <CopyControl value={token} />
+              <CopyControl
+                value={token}
+                ariaLabel={t('agentRegistration.copyApiToken')}
+              />
             </div>
             <code className="block p-3 bg-ink text-[#EAEAE5] font-mono text-[10px] break-all select-all">
               {token}

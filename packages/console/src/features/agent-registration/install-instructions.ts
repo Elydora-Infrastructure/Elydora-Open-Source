@@ -1,13 +1,18 @@
 import type { IntegrationCatalogItem } from './integrations';
-import type { AgentCredentials } from './credentials';
 
 export const SDK_LANGUAGES = ['node', 'python', 'go'] as const;
 export type SdkLanguage = (typeof SDK_LANGUAGES)[number];
+type SecretDelivery = 'hidden-prompts' | 'environment';
+
+interface AgentInstallIdentity {
+  readonly agentId: string;
+  readonly kid: string;
+  readonly orgId: string;
+}
 
 interface InstructionInput {
   readonly integration: IntegrationCatalogItem;
-  readonly credentials: AgentCredentials;
-  readonly token: string;
+  readonly identity: AgentInstallIdentity;
   readonly baseUrl: string;
 }
 
@@ -16,37 +21,39 @@ export interface InstallInstructions {
   readonly usage?: string;
   readonly verify?: string;
   readonly postInstall?: readonly string[];
+  readonly secretDelivery: SecretDelivery;
 }
 
-function quoted(value: string): string {
-  return `"${value.replaceAll('"', '\\"')}"`;
+function shellQuoted(value: string, label: string): string {
+  if (!value || /['\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error(`${label} cannot be represented in the generated shell command.`);
+  }
+  return `'${value}'`;
 }
 
 function adapterCommand(
   language: SdkLanguage,
-  { integration, credentials, token, baseUrl }: InstructionInput,
+  { integration, identity, baseUrl }: InstructionInput,
 ): string {
   const values = {
     agent: integration.id,
-    orgId: quoted(credentials.orgId),
-    agentId: quoted(credentials.agentId),
-    privateKey: quoted(credentials.privateKey),
-    kid: quoted(credentials.kid),
-    token: quoted(token),
-    baseUrl: quoted(baseUrl),
+    orgId: shellQuoted(identity.orgId, 'Organization ID'),
+    agentId: shellQuoted(identity.agentId, 'Agent ID'),
+    kid: shellQuoted(identity.kid, 'Key ID'),
+    baseUrl: shellQuoted(baseUrl, 'API base URL'),
   };
 
   if (language === 'go') {
     return [
       'go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest',
-      `elydora install --agent ${values.agent} --org-id ${values.orgId} --agent-id ${values.agentId} --private-key ${values.privateKey} --kid ${values.kid} --token ${values.token} --base-url ${values.baseUrl}`,
+      `elydora install --agent ${values.agent} --org-id ${values.orgId} --agent-id ${values.agentId} --kid ${values.kid} --base-url ${values.baseUrl}`,
     ].join('\n');
   }
 
   const executable = language === 'node'
     ? 'npx @elydora/sdk install'
     : 'python -m pip install elydora\nelydora install';
-  return `${executable} --agent ${values.agent} --org_id ${values.orgId} --agent_id ${values.agentId} --private_key ${values.privateKey} --kid ${values.kid} --token ${values.token} --base_url ${values.baseUrl}`;
+  return `${executable} --agent ${values.agent} --org_id ${values.orgId} --agent_id ${values.agentId} --kid ${values.kid} --base_url ${values.baseUrl}`;
 }
 
 function postInstallSteps(integration: IntegrationCatalogItem): readonly string[] | undefined {
@@ -63,31 +70,47 @@ function postInstallSteps(integration: IntegrationCatalogItem): readonly string[
 }
 
 function sdkSetup(language: SdkLanguage, input: InstructionInput): string {
-  const { credentials, token, baseUrl } = input;
+  const { identity, baseUrl } = input;
   if (language === 'python') {
     return `python -m pip install elydora
 
+import os
+
 from elydora import ElydoraClient
 
+def require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is required")
+    return value
+
 client = ElydoraClient(
-    org_id=${JSON.stringify(credentials.orgId)},
-    agent_id=${JSON.stringify(credentials.agentId)},
-    private_key=${JSON.stringify(credentials.privateKey)},
+    org_id=${JSON.stringify(identity.orgId)},
+    agent_id=${JSON.stringify(identity.agentId)},
+    private_key=require_env("ELYDORA_PRIVATE_KEY"),
     base_url=${JSON.stringify(baseUrl)},
-    token=${JSON.stringify(token)},
+    token=require_env("ELYDORA_API_TOKEN"),
 )
-client.set_kid(${JSON.stringify(credentials.kid)})`;
+client.set_kid(${JSON.stringify(identity.kid)})`;
   }
 
   if (language === 'go') {
     return `go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
 
+requireEnv := func(name string) string {
+    value, ok := os.LookupEnv(name)
+    if !ok || value == "" {
+        panic(name + " is required")
+    }
+    return value
+}
+
 client, err := elydora.NewClient(&elydora.Config{
-    OrgID: ${JSON.stringify(credentials.orgId)},
-    AgentID: ${JSON.stringify(credentials.agentId)},
-    PrivateKey: ${JSON.stringify(credentials.privateKey)},
+    OrgID: ${JSON.stringify(identity.orgId)},
+    AgentID: ${JSON.stringify(identity.agentId)},
+    PrivateKey: requireEnv("ELYDORA_PRIVATE_KEY"),
     BaseURL: ${JSON.stringify(baseUrl)},
-    Token: ${JSON.stringify(token)},
+    Token: requireEnv("ELYDORA_API_TOKEN"),
 })
 if err != nil {
     panic(err)
@@ -98,14 +121,20 @@ if err != nil {
 
 import { ElydoraClient } from '@elydora/sdk';
 
+const privateKey = process.env.ELYDORA_PRIVATE_KEY;
+const token = process.env.ELYDORA_API_TOKEN;
+if (!privateKey || !token) {
+  throw new Error('ELYDORA_PRIVATE_KEY and ELYDORA_API_TOKEN are required');
+}
+
 const client = new ElydoraClient({
-  orgId: ${JSON.stringify(credentials.orgId)},
-  agentId: ${JSON.stringify(credentials.agentId)},
-  privateKey: ${JSON.stringify(credentials.privateKey)},
-  kid: ${JSON.stringify(credentials.kid)},
+  orgId: ${JSON.stringify(identity.orgId)},
+  agentId: ${JSON.stringify(identity.agentId)},
+  privateKey,
+  kid: ${JSON.stringify(identity.kid)},
   baseUrl: ${JSON.stringify(baseUrl)},
 });
-client.setToken(${JSON.stringify(token)});`;
+client.setToken(token);`;
 }
 
 function sdkUsage(language: SdkLanguage): string {
@@ -153,11 +182,13 @@ export function buildInstallInstructions(
       setup: adapterCommand(language, input),
       verify: language === 'node' ? 'npx @elydora/sdk status' : 'elydora status',
       postInstall: postInstallSteps(input.integration),
+      secretDelivery: 'hidden-prompts',
     };
   }
 
   return {
     setup: sdkSetup(language, input),
     usage: sdkUsage(language),
+    secretDelivery: 'environment',
   };
 }

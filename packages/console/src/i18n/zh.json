@@ -307,6 +307,7 @@
     "submitting": "注册中...",
     "submit": "注册代理",
     "failedToRegister": "注册代理失败。",
+    "privateKey": "私钥",
     "privateKeySaveNow": "私钥 — 请立即保存",
     "privateKeyWarning": "此私钥不会再次显示。请将其存储为环境变量或保存在密钥管理器中。",
     "apiToken": "API 令牌",
@@ -333,6 +334,11 @@
       "sdk": "自定义 SDK"
     },
     "integration": "集成",
+    "copySetup": "复制安装命令",
+    "copyUsage": "复制操作示例",
+    "copyVerify": "复制验证命令",
+    "copyPrivateKey": "复制私钥",
+    "copyApiToken": "复制 API 令牌",
     "copyFailed": "复制失败。",
     "invalidExpiration": "请选择有效期限。",
     "tokenIssued": "仅显示一次，请安全保存。",
@@ -340,7 +346,11 @@
     "record": "记录操作",
     "verify": "验证",
     "postInstall": "安装后步骤",
-    "sdkLanguage": "SDK 语言"
+    "sdkLanguage": "SDK 语言",
+    "secretDelivery": {
+      "hidden-prompts": "CLI 会在关闭终端回显后请求这两项凭据。",
+      "environment": "请在运行环境中设置 ELYDORA_PRIVATE_KEY 与 ELYDORA_API_TOKEN。"
+    }
   },
   "chain": {
     "title": "链可视化",

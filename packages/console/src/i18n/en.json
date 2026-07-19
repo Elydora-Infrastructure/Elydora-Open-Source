@@ -307,6 +307,7 @@
     "submitting": "Registering...",
     "submit": "Register Agent",
     "failedToRegister": "Failed to register agent.",
+    "privateKey": "Private Key",
     "privateKeySaveNow": "Private Key — Save This Now",
     "privateKeyWarning": "This will not be shown again. Store it as an environment variable or in a secrets manager.",
     "apiToken": "API Token",
@@ -333,6 +334,11 @@
       "sdk": "Custom SDK"
     },
     "integration": "Integration",
+    "copySetup": "Copy setup command",
+    "copyUsage": "Copy operation example",
+    "copyVerify": "Copy verification command",
+    "copyPrivateKey": "Copy private key",
+    "copyApiToken": "Copy API token",
     "copyFailed": "Copy failed.",
     "invalidExpiration": "Select a valid expiration.",
     "tokenIssued": "Issued once. Store it securely.",
@@ -340,7 +346,11 @@
     "record": "Record an operation",
     "verify": "Verify",
     "postInstall": "Post-install steps",
-    "sdkLanguage": "SDK language"
+    "sdkLanguage": "SDK language",
+    "secretDelivery": {
+      "hidden-prompts": "The CLI requests both values with terminal echo disabled.",
+      "environment": "Set ELYDORA_PRIVATE_KEY and ELYDORA_API_TOKEN in the runtime environment."
+    }
   },
   "chain": {
     "title": "Chain Visualization",

@@ -56,6 +56,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Avoid compatibility shims without a named public contract.
 - Preserve the minimum runtime versions declared by each package.
 - Keep private keys and API tokens out of process arguments and generated setup commands. Accept them through hidden terminal input or owner-only credential files.
+- Keep Console instruction generation limited to agent identity and public configuration. Adapter commands use hidden CLI prompts; direct SDK examples read named runtime environment variables. Expose credentials through explicit copy controls only.
 - Persist credential-bearing files through owner-only same-directory temporary files and atomic rename.
 - Resolve every agent runtime directory as one physical child of `~/.elydora`; reject separators, traversal segments, cross-platform reserved names, symbolic-link directories, and linked identity configs before writes or recursive removal. Validate stored directory identity before changing host CLI configuration, and require an explicit agent ID when discovery is ambiguous.
 

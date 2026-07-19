@@ -52,26 +52,26 @@ test('generates every adapter command with the verified SDK flag contract', () =
     for (const language of SDK_LANGUAGES) {
       const instructions = buildInstallInstructions(language, {
         integration,
-        credentials,
-        token: 'token-contract',
+        identity: credentials,
         baseUrl: 'https://api.example.com',
       });
 
       expect(instructions.setup).toContain(`--agent ${integration.id}`);
-      expect(instructions.setup).toContain('"private-key"');
-      expect(instructions.setup).toContain('"token-contract"');
-      expect(instructions.setup).toContain('"https://api.example.com"');
+      expect(instructions.setup).toContain("'https://api.example.com'");
+      expect(instructions.setup).not.toContain('private-key');
+      expect(instructions.setup).not.toContain('private_key');
+      expect(instructions.setup).not.toContain('--token');
+      expect(instructions.setup).not.toContain('token-contract');
+      expect(instructions.secretDelivery).toBe('hidden-prompts');
 
       if (language === 'go') {
-        expect(instructions.setup).toContain('--org-id "org-contract"');
-        expect(instructions.setup).toContain('--agent-id "agent-contract"');
-        expect(instructions.setup).toContain('--private-key "private-key"');
-        expect(instructions.setup).toContain('--base-url "https://api.example.com"');
+        expect(instructions.setup).toContain("--org-id 'org-contract'");
+        expect(instructions.setup).toContain("--agent-id 'agent-contract'");
+        expect(instructions.setup).toContain("--base-url 'https://api.example.com'");
       } else {
-        expect(instructions.setup).toContain('--org_id "org-contract"');
-        expect(instructions.setup).toContain('--agent_id "agent-contract"');
-        expect(instructions.setup).toContain('--private_key "private-key"');
-        expect(instructions.setup).toContain('--base_url "https://api.example.com"');
+        expect(instructions.setup).toContain("--org_id 'org-contract'");
+        expect(instructions.setup).toContain("--agent_id 'agent-contract'");
+        expect(instructions.setup).toContain("--base_url 'https://api.example.com'");
       }
     }
   }
@@ -84,15 +84,41 @@ test('generates direct SDK setup and operation code for each language', () => {
   for (const language of SDK_LANGUAGES) {
     const instructions = buildInstallInstructions(language, {
       integration: integration!,
-      credentials,
-      token: 'token-contract',
+      identity: credentials,
       baseUrl: 'https://api.example.com',
     });
     expect(instructions.setup).toContain('agent-contract');
-    expect(instructions.setup).toContain('token-contract');
+    expect(instructions.setup).toContain('ELYDORA_PRIVATE_KEY');
+    expect(instructions.setup).toContain('ELYDORA_API_TOKEN');
+    expect(instructions.setup).not.toContain('private-key');
+    expect(instructions.setup).not.toContain('token-contract');
     expect(instructions.usage).toContain('ai.tool_use');
     expect(instructions.verify).toBeUndefined();
+    expect(instructions.secretDelivery).toBe('environment');
   }
+});
+
+test('quotes shell metacharacters and rejects unsupported command values', () => {
+  const integration = INTEGRATION_CATALOG.find(({ id }) => id === 'grok');
+  expect(integration).toBeDefined();
+
+  const instructions = buildInstallInstructions('go', {
+    integration: integration!,
+    identity: {
+      agentId: 'agent-contract',
+      kid: 'agent-contract-key-1',
+      orgId: '$(Write-Output injected)',
+    },
+    baseUrl: 'https://api.example.com/`whoami`',
+  });
+  expect(instructions.setup).toContain("'$(Write-Output injected)'");
+  expect(instructions.setup).toContain("'https://api.example.com/`whoami`'");
+
+  expect(() => buildInstallInstructions('go', {
+    integration: integration!,
+    identity: { ...credentials, orgId: "org-'unsafe" },
+    baseUrl: 'https://api.example.com',
+  })).toThrow('Organization ID cannot be represented');
 });
 
 test('classifies malformed successful responses as blocking contract failures', () => {

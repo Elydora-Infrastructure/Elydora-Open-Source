@@ -30,8 +30,16 @@ export default function ConnectStep({
   const [language, setLanguage] = useState<SdkLanguage>('node');
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
   const instructions = useMemo(
-    () => buildInstallInstructions(language, { integration, credentials, token, baseUrl }),
-    [baseUrl, credentials, integration, language, token],
+    () => buildInstallInstructions(language, {
+      integration,
+      identity: {
+        agentId: credentials.agentId,
+        kid: credentials.kid,
+        orgId: credentials.orgId,
+      },
+      baseUrl,
+    }),
+    [baseUrl, credentials.agentId, credentials.kid, credentials.orgId, integration, language],
   );
 
   return (
@@ -63,18 +71,50 @@ export default function ConnectStep({
           <h3 id="setup-command-label" className="section-label">
             {integration.mode === 'adapter' ? t('agentRegistration.install') : t('agentRegistration.configure')}
           </h3>
-          <CopyControl value={instructions.setup} />
+          <CopyControl
+            value={instructions.setup}
+            ariaLabel={t('agentRegistration.copySetup')}
+          />
         </div>
         <pre className="p-4 bg-ink text-[#EAEAE5] font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all overflow-x-auto">
           {instructions.setup}
         </pre>
       </section>
 
+      <div>
+        <div
+          className="border-y border-border"
+          role="group"
+          aria-label={t('agentRegistration.steps.credentials')}
+        >
+          <div className="flex items-center justify-between py-2 border-b border-border">
+            <span className="section-label">{t('agentRegistration.privateKey')}</span>
+            <CopyControl
+              value={credentials.privateKey}
+              ariaLabel={t('agentRegistration.copyPrivateKey')}
+            />
+          </div>
+          <div className="flex items-center justify-between py-2">
+            <span className="section-label">{t('agentRegistration.apiToken')}</span>
+            <CopyControl
+              value={token}
+              ariaLabel={t('agentRegistration.copyApiToken')}
+            />
+          </div>
+        </div>
+        <p className="mt-2 font-mono text-[10px] text-ink-dim">
+          {t(`agentRegistration.secretDelivery.${instructions.secretDelivery}`)}
+        </p>
+      </div>
+
       {instructions.usage && (
         <section aria-labelledby="record-operation-label">
           <div className="flex items-center justify-between mb-2">
             <h3 id="record-operation-label" className="section-label">{t('agentRegistration.record')}</h3>
-            <CopyControl value={instructions.usage} />
+            <CopyControl
+              value={instructions.usage}
+              ariaLabel={t('agentRegistration.copyUsage')}
+            />
           </div>
           <pre className="p-4 bg-ink text-[#EAEAE5] font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all overflow-x-auto">
             {instructions.usage}
@@ -86,7 +126,10 @@ export default function ConnectStep({
         <section aria-labelledby="verify-command-label">
           <div className="flex items-center justify-between mb-2">
             <h3 id="verify-command-label" className="section-label">{t('agentRegistration.verify')}</h3>
-            <CopyControl value={instructions.verify} />
+            <CopyControl
+              value={instructions.verify}
+              ariaLabel={t('agentRegistration.copyVerify')}
+            />
           </div>
           <code className="block px-3 py-2 border-y border-border font-mono text-[11px] text-ink">
             {instructions.verify}
