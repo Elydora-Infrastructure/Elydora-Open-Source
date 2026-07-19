@@ -108,7 +108,7 @@
       },
       "adapters": {
         "node": true,
-        "python": false,
+        "python": true,
         "go": false
       },
       "delivery_state": "partial",
