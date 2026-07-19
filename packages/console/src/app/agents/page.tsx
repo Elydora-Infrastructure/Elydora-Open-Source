@@ -40,6 +40,7 @@ function AgentsContent() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [showRegister, setShowRegister] = useState(false);
+  const [registrationDismissible, setRegistrationDismissible] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<AgentRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -132,10 +133,26 @@ function AgentsContent() {
     [router],
   );
 
-  const handleRegisterSuccess = useCallback(() => {
-    setShowRegister(false);
-    mutate();
+  const refreshAgents = useCallback(() => {
+    void mutate().catch((error: unknown) => {
+      console.error('Failed to refresh agents after registration.', error);
+    });
   }, [mutate]);
+
+  const handleRegisterSuccess = useCallback(() => {
+    setRegistrationDismissible(true);
+    setShowRegister(false);
+    refreshAgents();
+  }, [refreshAgents]);
+
+  const openRegistration = useCallback(() => {
+    setRegistrationDismissible(true);
+    setShowRegister(true);
+  }, []);
+
+  const closeRegistration = useCallback(() => {
+    if (registrationDismissible) setShowRegister(false);
+  }, [registrationDismissible]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -162,7 +179,7 @@ function AgentsContent() {
           { label: t('agents.title') },
         ]}
         actions={
-          <button className="btn-brutalist" onClick={() => setShowRegister(true)}>
+          <button className="btn-brutalist" onClick={openRegistration}>
             {t('agents.registerAgent')}
           </button>
         }
@@ -194,13 +211,15 @@ function AgentsContent() {
 
       <Modal
         isOpen={showRegister}
-        onClose={() => setShowRegister(false)}
+        onClose={closeRegistration}
         title={t('agents.registerAgent')}
         width="max-w-2xl"
+        dismissible={registrationDismissible}
       >
         <AgentRegistrationForm
+          onRegistered={refreshAgents}
+          onDismissibleChange={setRegistrationDismissible}
           onSuccess={handleRegisterSuccess}
-          onCancel={() => setShowRegister(false)}
         />
       </Modal>
 

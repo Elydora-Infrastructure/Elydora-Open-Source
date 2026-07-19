@@ -121,7 +121,14 @@ services:
           org_id             TEXT   NOT NULL REFERENCES organizations (org_id),
           display_name       TEXT   NOT NULL,
           responsible_entity TEXT   NOT NULL,
-          integration_type   TEXT   NOT NULL DEFAULT 'sdk',
+          integration_type   TEXT   NOT NULL
+                             CONSTRAINT agents_integration_type_check
+                             CHECK (integration_type IN (
+                               'augment', 'claudecode', 'cline', 'codex', 'copilot',
+                               'cursor', 'droid', 'gemini', 'grok', 'kimi', 'kirocli',
+                               'kiroide', 'letta', 'opencode', 'qwen', 'enterprise',
+                               'gui', 'sdk', 'other'
+                             )),
           status             TEXT   NOT NULL DEFAULT 'active'
                              CHECK (status IN ('active', 'frozen', 'revoked')),
           created_at         BIGINT NOT NULL,
@@ -129,6 +136,17 @@ services:
         );
 
         CREATE INDEX IF NOT EXISTS idx_agents_org_id ON agents (org_id);
+
+        ALTER TABLE agents ALTER COLUMN integration_type DROP DEFAULT;
+        ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_integration_type_check;
+        ALTER TABLE agents
+          ADD CONSTRAINT agents_integration_type_check
+          CHECK (integration_type IN (
+            'augment', 'claudecode', 'cline', 'codex', 'copilot',
+            'cursor', 'droid', 'gemini', 'grok', 'kimi', 'kirocli',
+            'kiroide', 'letta', 'opencode', 'qwen', 'enterprise',
+            'gui', 'sdk', 'other'
+          ));
 
         CREATE TABLE IF NOT EXISTS agent_keys (
           kid        TEXT   NOT NULL PRIMARY KEY,
@@ -215,6 +233,10 @@ services:
 
         INSERT INTO schema_versions (version, applied_at, description)
         VALUES (1, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Initial schema')
+        ON CONFLICT DO NOTHING;
+
+        INSERT INTO schema_versions (version, applied_at, description)
+        VALUES (2, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Require supported agent integration type')
         ON CONFLICT DO NOTHING;
       "
     restart: on-failure

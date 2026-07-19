@@ -1,5 +1,5 @@
 import type { Agent, AgentKey, Epoch, Export, Operation, Organization, Receipt, User } from './entities.js';
-import type { ErrorCode } from './enums.js';
+import type { ErrorCode, IntegrationType } from './enums.js';
 import type { EAR, EOR } from './protocol.js';
 
 // ---------------------------------------------------------------------------
@@ -10,7 +10,7 @@ export interface RegisterAgentRequest {
   readonly agent_id: string;
   readonly display_name?: string;
   readonly responsible_entity?: string;
-  readonly integration_type?: string;
+  readonly integration_type: IntegrationType;
   readonly keys: ReadonlyArray<{
     readonly kid: string;
     readonly public_key: string;
@@ -46,7 +46,7 @@ export interface RevokeAgentRequest {
 }
 
 export interface UpdateAgentRequest {
-  readonly integration_type: string;
+  readonly integration_type: IntegrationType;
 }
 
 // ---------------------------------------------------------------------------

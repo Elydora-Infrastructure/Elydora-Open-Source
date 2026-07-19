@@ -44,6 +44,8 @@ from .types import (
     GetMeResponse,
     IssueTokenResponse,
     HealthResponse,
+    INTEGRATION_TYPES,
+    IntegrationType,
 )
 
 __version__ = "1.0.0"
@@ -93,4 +95,6 @@ __all__ = [
     "GetMeResponse",
     "IssueTokenResponse",
     "HealthResponse",
+    "INTEGRATION_TYPES",
+    "IntegrationType",
 ]

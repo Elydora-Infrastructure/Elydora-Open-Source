@@ -19,10 +19,29 @@ export type AdminAction =
   | 'export.create';
 
 /** Supported agent integration types */
-export type IntegrationType =
-  | 'claudecode' | 'cursor' | 'gemini' | 'kirocli' | 'kiroide'
-  | 'opencode' | 'copilot' | 'letta' | 'codex' | 'kimi'
-  | 'enterprise' | 'gui' | 'sdk' | 'other';
+export const INTEGRATION_TYPES = [
+  'augment',
+  'claudecode',
+  'cline',
+  'codex',
+  'copilot',
+  'cursor',
+  'droid',
+  'gemini',
+  'grok',
+  'kimi',
+  'kirocli',
+  'kiroide',
+  'letta',
+  'opencode',
+  'qwen',
+  'enterprise',
+  'gui',
+  'sdk',
+  'other',
+] as const;
+
+export type IntegrationType = (typeof INTEGRATION_TYPES)[number];
 
 /** RBAC roles for console access */
 export type RbacRole =

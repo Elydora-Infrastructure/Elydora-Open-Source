@@ -22,7 +22,7 @@ const expectedProviderIds = [
   'qwen',
 ];
 
-const expectedCustomIntegrationIds = ['enterprise', 'gui', 'other', 'sdk'];
+const expectedCustomIntegrationIds = ['enterprise', 'gui', 'sdk', 'other'];
 const expectedAdapterKeys = ['go', 'node', 'python'];
 const adapterSourcePaths = {
   go: (id) => `sdks/go/cmd/elydora/plugins/${id}.go`,
@@ -46,6 +46,16 @@ const requiredProviderFields = [
 
 async function readJson(path) {
   return JSON.parse(await readFile(new URL(path, root), 'utf8'));
+}
+
+async function readText(path) {
+  return readFile(new URL(path, root), 'utf8');
+}
+
+function extractQuotedValues(source, pattern, label) {
+  const match = source.match(pattern);
+  assert.ok(match, `${label} inventory was not found`);
+  return [...match[1].matchAll(/["']([^"']+)["']/g)].map((entry) => entry[1]);
 }
 
 async function sourceExists(path) {
@@ -78,6 +88,55 @@ test('catalog contains the complete, ordered integration inventory', async () =>
     catalog.custom_integrations.map(({ id }) => id),
     expectedCustomIntegrationIds,
   );
+});
+
+test('server, SDK, and PostgreSQL contracts match the integration catalog', async () => {
+  const catalog = await readJson('integrations/catalog.json');
+  const expected = [
+    ...catalog.providers.map(({ id }) => id),
+    ...catalog.custom_integrations.map(({ id }) => id),
+  ];
+  const enumSource = await readText('packages/server/src/shared/types/enums.ts');
+  assert.deepEqual(
+    extractQuotedValues(
+      enumSource,
+      /export const INTEGRATION_TYPES = \[([\s\S]*?)\] as const;/,
+      'server enum',
+    ),
+    expected,
+  );
+
+  for (const [path, pattern] of [
+    [
+      'sdks/node/src/types.ts',
+      /export const INTEGRATION_TYPES = \[([\s\S]*?)\] as const;/,
+    ],
+    [
+      'sdks/python/elydora/types.py',
+      /INTEGRATION_TYPES:[^=]+\= \(([\s\S]*?)\)/,
+    ],
+    [
+      'sdks/go/types.go',
+      /type IntegrationType string\s+const \(([\s\S]*?)\)/,
+    ],
+  ]) {
+    assert.deepEqual(
+      extractQuotedValues(await readText(path), pattern, path),
+      expected,
+    );
+  }
+
+  const constraintPattern = /CONSTRAINT agents_integration_type_check\s+CHECK\s+\(integration_type IN \(([\s\S]*?)\)\)/;
+  for (const path of [
+    'packages/server/migrations/001_initial.sql',
+    'packages/server/migrations/002_agent_integration_contract.sql',
+    'docker-compose.yml',
+  ]) {
+    assert.deepEqual(
+      extractQuotedValues(await readText(path), constraintPattern, path),
+      expected,
+    );
+  }
 });
 
 test('every provider exposes a complete, machine-readable hook contract', async () => {

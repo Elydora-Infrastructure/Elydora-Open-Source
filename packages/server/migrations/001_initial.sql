@@ -47,7 +47,14 @@ CREATE TABLE IF NOT EXISTS agents (
   org_id             TEXT   NOT NULL,
   display_name       TEXT   NOT NULL,
   responsible_entity TEXT   NOT NULL,
-  integration_type   TEXT   NOT NULL DEFAULT 'sdk',
+  integration_type   TEXT   NOT NULL
+                     CONSTRAINT agents_integration_type_check
+                     CHECK (integration_type IN (
+                       'augment', 'claudecode', 'cline', 'codex', 'copilot',
+                       'cursor', 'droid', 'gemini', 'grok', 'kimi', 'kirocli',
+                       'kiroide', 'letta', 'opencode', 'qwen', 'enterprise',
+                       'gui', 'sdk', 'other'
+                     )),
   status             TEXT   NOT NULL DEFAULT 'active',
   created_at         BIGINT NOT NULL,
   updated_at         BIGINT NOT NULL

@@ -11,6 +11,28 @@ export type RbacRole =
   | 'compliance_auditor'
   | 'readonly_investigator'
   | 'integration_engineer';
+export const INTEGRATION_TYPES = [
+  'augment',
+  'claudecode',
+  'cline',
+  'codex',
+  'copilot',
+  'cursor',
+  'droid',
+  'gemini',
+  'grok',
+  'kimi',
+  'kirocli',
+  'kiroide',
+  'letta',
+  'opencode',
+  'qwen',
+  'enterprise',
+  'gui',
+  'sdk',
+  'other',
+] as const;
+export type IntegrationType = (typeof INTEGRATION_TYPES)[number];
 export type ErrorCode =
   | 'INVALID_SIGNATURE'
   | 'UNKNOWN_AGENT'
@@ -36,6 +58,7 @@ export interface Agent {
   readonly org_id: string;
   readonly display_name: string;
   readonly responsible_entity: string;
+  readonly integration_type: IntegrationType;
   readonly status: AgentStatus;
   readonly created_at: number;
   readonly updated_at: number;
@@ -160,6 +183,7 @@ export interface EAR {
 
 export interface RegisterAgentRequest {
   readonly agent_id: string;
+  readonly integration_type: IntegrationType;
   readonly display_name?: string;
   readonly responsible_entity?: string;
   readonly keys: ReadonlyArray<{

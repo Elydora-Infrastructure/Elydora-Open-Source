@@ -3,15 +3,13 @@
 All types use TypedDict for structural typing, compatible with Python 3.9+.
 """
 
-from __future__ import annotations
-
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 if sys.version_info >= (3, 11):
-    from typing import Literal, TypedDict
+    from typing import Literal, NotRequired, TypedDict
 else:
-    from typing_extensions import Literal, TypedDict
+    from typing_extensions import Literal, NotRequired, TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +26,32 @@ RbacRole = Literal[
     "readonly_investigator",
     "integration_engineer",
 ]
+IntegrationType = Literal[
+    "augment",
+    "claudecode",
+    "cline",
+    "codex",
+    "copilot",
+    "cursor",
+    "droid",
+    "gemini",
+    "grok",
+    "kimi",
+    "kirocli",
+    "kiroide",
+    "letta",
+    "opencode",
+    "qwen",
+    "enterprise",
+    "gui",
+    "sdk",
+    "other",
+]
+INTEGRATION_TYPES: Tuple[IntegrationType, ...] = (
+    "augment", "claudecode", "cline", "codex", "copilot", "cursor", "droid",
+    "gemini", "grok", "kimi", "kirocli", "kiroide", "letta", "opencode", "qwen",
+    "enterprise", "gui", "sdk", "other",
+)
 ErrorCode = Literal[
     "INVALID_SIGNATURE",
     "UNKNOWN_AGENT",
@@ -55,6 +79,7 @@ class Agent(TypedDict):
     org_id: str
     display_name: str
     responsible_entity: str
+    integration_type: IntegrationType
     status: AgentStatus
     created_at: int
     updated_at: int
@@ -187,11 +212,12 @@ class RegisterAgentKeyParam(TypedDict):
     algorithm: Literal["ed25519"]
 
 
-class RegisterAgentRequest(TypedDict, total=False):
+class RegisterAgentRequest(TypedDict):
     agent_id: str
-    display_name: str
-    responsible_entity: str
+    integration_type: IntegrationType
     keys: List[RegisterAgentKeyParam]
+    display_name: NotRequired[str]
+    responsible_entity: NotRequired[str]
 
 
 class AuditQueryParams(TypedDict, total=False):

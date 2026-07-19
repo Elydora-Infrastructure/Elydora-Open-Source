@@ -189,6 +189,7 @@ agent, err := client.RegisterAgent(&elydora.RegisterAgentRequest{
 	AgentID:           "my-agent",
 	DisplayName:       "My Agent",
 	ResponsibleEntity: "team@example.com",
+	IntegrationType:   elydora.IntegrationTypeSDK,
 	Keys: []elydora.RegisterAgentKeyInput{
 		{KID: "key-v1", PublicKey: "<base64url>", Algorithm: "ed25519"},
 	},

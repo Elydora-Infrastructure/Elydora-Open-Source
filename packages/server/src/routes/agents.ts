@@ -98,17 +98,13 @@ agents.patch(
     const agentId = c.req.param('agent_id');
     const body = await c.req.json<UpdateAgentRequest>();
 
-    if (!body || !body.integration_type || typeof body.integration_type !== 'string') {
-      throw new AppError(400, 'VALIDATION_ERROR', { key: 'agent.missingIntegrationType' });
-    }
-
     const orgId = c.get('org_id');
     const actor = c.get('actor');
 
     const result = await agentService.updateAgentIntegrationType(
       c.env.ELYDORA_DB,
       agentId,
-      body.integration_type,
+      body?.integration_type,
       orgId,
       actor,
     );

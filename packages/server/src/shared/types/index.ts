@@ -3,9 +3,12 @@ export type {
   KeyStatus,
   ExportStatus,
   AdminAction,
+  IntegrationType,
   RbacRole,
   ErrorCode,
 } from './enums.js';
+
+export { INTEGRATION_TYPES } from './enums.js';
 
 export type {
   EOR,

@@ -12,10 +12,7 @@ import Modal from '@/components/ui/Modal';
 import Link from 'next/link';
 import type { AgentKey, Operation } from '@elydora/shared';
 import { useTranslation } from 'react-i18next';
-
-const HOOKS_INTEGRATIONS = new Set([
-  'claudecode', 'cursor', 'gemini', 'kirocli', 'kiroide', 'opencode', 'copilot', 'letta',
-]);
+import { ADAPTER_INTEGRATION_IDS } from '@/features/agent-registration/integrations';
 
 export default function AgentDetailClient({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
@@ -39,7 +36,9 @@ export default function AgentDetailClient({ agentId }: { agentId: string }) {
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
   const agent = agentData?.agent;
-  const supportsFreeze = !agent?.integration_type || HOOKS_INTEGRATIONS.has(agent.integration_type);
+  const supportsFreeze = agent
+    ? ADAPTER_INTEGRATION_IDS.has(agent.integration_type)
+    : false;
   const keys = agentData?.keys ?? [];
   const operations = opsData?.operations ?? [];
 

@@ -23,6 +23,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "validate:integrations": "node --test test/integration-catalog.test.mjs",
+    "test:server": "cd packages/server && npm test",
+    "test:console:e2e": "cd packages/console && npm run test:e2e",
     "build:server": "cd packages/server && npm run build",
     "build:console": "cd packages/console && npm run build",
     "build": "npm run build:server && npm run build:console",

@@ -3,6 +3,7 @@ export type {
   KeyStatus,
   ExportStatus,
   AdminAction,
+  IntegrationType,
   RbacRole,
   ErrorCode,
   EOR,
@@ -50,6 +51,8 @@ export type {
   JWKSResponse,
   ErrorResponse,
 } from './types/index.js';
+
+export { INTEGRATION_TYPES } from './types/index.js';
 
 export {
   ERROR_CODES,

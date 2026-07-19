@@ -282,6 +282,7 @@ Register a new agent. Required role: **integration_engineer**.
 ```json
 {
   "agent_id": "my-agent-v1",
+  "integration_type": "codex",
   "display_name": "Customer Support Bot",
   "responsible_entity": "engineering-team@example.com",
   "keys": [
@@ -317,6 +318,8 @@ Retrieve a specific agent and its keys. Required role: **readonly_investigator**
 #### `PATCH /v1/agents/:id`
 
 Update agent metadata. Required role: **integration_engineer**.
+
+**Request body:** `{ "integration_type": "codex" }`
 
 ---
 
@@ -566,6 +569,7 @@ client.setToken(token);
 // 3. Register the agent with its public key
 await client.registerAgent({
   agent_id: 'order-processor-v1',
+  integration_type: 'sdk',
   display_name: 'Order Processor',
   keys: [{ kid: 'order-processor-v1-key-v1', public_key: client.getPublicKey(), algorithm: 'ed25519' }],
 });
@@ -627,6 +631,7 @@ client = ElydoraClient(
 from elydora.crypto import derive_public_key
 client.register_agent({
     "agent_id": "order-processor-v1",
+    "integration_type": "sdk",
     "display_name": "Order Processor",
     "keys": [{"kid": "order-processor-v1-key-v1",
                "public_key": derive_public_key(os.environ["AGENT_PRIVATE_KEY"]),

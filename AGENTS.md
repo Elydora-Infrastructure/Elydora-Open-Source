@@ -7,6 +7,7 @@ This repository publishes the open-source server, console, integration catalog, 
 ## Sources of Truth
 
 - `integrations/catalog.json` owns provider IDs, official hook contracts, blocking semantics, release variants, and adapter delivery state.
+- The server exports that catalog as `INTEGRATION_TYPES`; registration requires an explicit member before any database access.
 - Official provider documentation owns every external hook API fact.
 - The standalone SDK repositories own released package behavior. Mirror a reviewed standalone commit here without semantic drift.
 - Backend schemas own persisted data contracts. Shared types and Console consumers must follow those schemas.
@@ -51,6 +52,24 @@ This repository publishes the open-source server, console, integration catalog, 
 - Preserve the minimum runtime versions declared by each package.
 
 ## Verification
+
+Server:
+
+```powershell
+cd packages/server
+npm test
+npm run typecheck
+npm audit --omit=dev --audit-level=high
+```
+
+Console:
+
+```powershell
+cd packages/console
+npm run typecheck
+npm run build
+npm run test:e2e
+```
 
 Node SDK:
 

@@ -7,6 +7,13 @@ import (
 
 // RegisterAgent registers a new AI agent within the organization.
 func (c *Client) RegisterAgent(req *RegisterAgentRequest) (*RegisterAgentResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("elydora: register agent request must not be nil")
+	}
+	if !req.IntegrationType.IsValid() {
+		return nil, fmt.Errorf("elydora: invalid integration_type %q", req.IntegrationType)
+	}
+
 	var result RegisterAgentResponse
 	if err := c.doPost("/v1/agents/register", req, &result); err != nil {
 		return nil, err

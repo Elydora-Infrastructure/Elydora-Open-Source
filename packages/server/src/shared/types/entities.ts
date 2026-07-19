@@ -1,4 +1,4 @@
-import type { AgentStatus, ExportStatus, KeyStatus, RbacRole } from './enums.js';
+import type { AgentStatus, ExportStatus, IntegrationType, KeyStatus, RbacRole } from './enums.js';
 
 /** Registered AI agent within an organization */
 export interface Agent {
@@ -6,7 +6,7 @@ export interface Agent {
   readonly org_id: string;
   readonly display_name: string;
   readonly responsible_entity: string;
-  readonly integration_type: string;
+  readonly integration_type: IntegrationType;
   readonly status: AgentStatus;
   readonly created_at: number;
   readonly updated_at: number;

@@ -18,6 +18,9 @@ import { generateUUIDv7 } from '../utils/uuid.js';
 import { base64urlDecode } from '../utils/crypto.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { Database, PreparedStatement } from '../adapters/interfaces.js';
+import { requireIntegrationType } from './agent-integration.js';
+
+export { updateAgentIntegrationType } from './agent-integration.js';
 
 // ---------------------------------------------------------------------------
 // Register agent
@@ -29,6 +32,7 @@ export async function registerAgent(
   orgId: string,
   actor: string,
 ): Promise<RegisterAgentResponse> {
+  const integrationType = requireIntegrationType(body.integration_type);
   const now = Date.now();
 
   // Check if agent already exists
@@ -68,7 +72,7 @@ export async function registerAgent(
     org_id: orgId,
     display_name: body.display_name ?? body.agent_id,
     responsible_entity: body.responsible_entity ?? '',
-    integration_type: body.integration_type ?? 'sdk',
+    integration_type: integrationType,
     status: 'active',
     created_at: now,
     updated_at: now,
@@ -195,81 +199,6 @@ export async function getAgent(
   const keys = keysResult.results ?? [];
 
   return { agent: agentRow, keys };
-}
-
-// ---------------------------------------------------------------------------
-// Update agent integration type
-// ---------------------------------------------------------------------------
-
-const VALID_INTEGRATION_TYPES = [
-  'sdk', 'claudecode', 'cursor', 'gemini', 'kirocli', 'kiroide',
-  'opencode', 'copilot', 'letta', 'codex', 'kimi',
-  'enterprise', 'gui', 'other',
-] as const;
-
-export async function updateAgentIntegrationType(
-  db: Database,
-  agentId: string,
-  integrationValue: string,
-  orgId: string,
-  actor: string,
-): Promise<{ agent: Agent }> {
-  const now = Date.now();
-
-  const agentRow = await db
-    .prepare('SELECT * FROM agents WHERE agent_id = ? AND org_id = ?')
-    .bind(agentId, orgId)
-    .first<Agent>();
-
-  if (!agentRow) {
-    throw new AppError(404, 'NOT_FOUND', { key: 'agent.notFound', params: { id: agentId } });
-  }
-
-  if (!(VALID_INTEGRATION_TYPES as readonly string[]).includes(integrationValue)) {
-    throw new AppError(
-      400,
-      'VALIDATION_ERROR',
-      { key: 'agent.invalidIntegrationType', params: { value: integrationValue, valid: VALID_INTEGRATION_TYPES.join(', ') } },
-    );
-  }
-
-  const statements: PreparedStatement[] = [];
-
-  statements.push(
-    db
-      .prepare('UPDATE agents SET integration_type = ?, updated_at = ? WHERE agent_id = ?')
-      .bind(integrationValue, now, agentId),
-  );
-
-  const eventId = generateUUIDv7();
-  const action: AdminAction = 'agent.update';
-  statements.push(
-    db
-      .prepare(
-        `INSERT INTO admin_events (event_id, org_id, actor, action, target_type, target_id, details, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        eventId,
-        orgId,
-        actor,
-        action,
-        'agent',
-        agentId,
-        JSON.stringify({ integration_type: integrationValue, previous_integration_type: agentRow.integration_type }),
-        now,
-      ),
-  );
-
-  await db.batch(statements);
-
-  const updatedAgent: Agent = {
-    ...agentRow,
-    integration_type: integrationValue,
-    updated_at: now,
-  };
-
-  return { agent: updatedAgent };
 }
 
 // ---------------------------------------------------------------------------

@@ -496,14 +496,14 @@
       "description": "Desktop or browser automation agent"
     },
     {
-      "id": "other",
-      "name": "Other",
-      "description": "Custom integration outside the provider catalog"
-    },
-    {
       "id": "sdk",
       "name": "SDK",
       "description": "Direct Elydora SDK integration"
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "description": "Custom integration outside the provider catalog"
     }
   ]
 }

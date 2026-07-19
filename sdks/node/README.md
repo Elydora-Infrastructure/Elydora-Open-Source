@@ -159,6 +159,7 @@ const result = await client.verifyOperation(operationId);
 // Register a new agent
 const agent = await client.registerAgent({
   agent_id: 'my-agent',
+  integration_type: 'codex',
   display_name: 'My Agent',
   responsible_entity: 'team@example.com',
   keys: [{ kid: 'key-v1', public_key: '<base64url>', algorithm: 'ed25519' }],
