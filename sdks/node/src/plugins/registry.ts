@@ -19,4 +19,5 @@ export const SUPPORTED_AGENTS: ReadonlyMap<string, AgentRegistryEntry> = new Map
   ['droid', { name: 'Factory Droid', configDir: '~/.factory', configFile: 'hooks.json' }],
   ['kimi', { name: 'Kimi Code', configDir: '~/.kimi-code', configFile: 'config.toml' }],
   ['grok', { name: 'Grok Build', configDir: '~/.grok/hooks', configFile: 'elydora-audit.json' }],
+  ['qwen', { name: 'Qwen Code', configDir: '~/.qwen', configFile: 'settings.json' }],
 ]);

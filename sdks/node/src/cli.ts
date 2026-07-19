@@ -20,6 +20,7 @@ import { clinePlugin } from './plugins/cline.js';
 import { droidPlugin } from './plugins/droid.js';
 import { kimiPlugin } from './plugins/kimi.js';
 import { grokPlugin } from './plugins/grok.js';
+import { qwenPlugin } from './plugins/qwen.js';
 
 const ELYDORA_DIR = path.join(os.homedir(), '.elydora');
 
@@ -38,6 +39,7 @@ const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
   ['droid', droidPlugin],
   ['kimi', kimiPlugin],
   ['grok', grokPlugin],
+  ['qwen', qwenPlugin],
 ]);
 
 // ---------------------------------------------------------------------------

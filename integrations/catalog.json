@@ -462,6 +462,7 @@
       "integration_mode": "command_hooks",
       "config_format": "json",
       "config_paths": [
+        "$QWEN_HOME/settings.json",
         "~/.qwen/settings.json",
         ".qwen/settings.json"
       ],
@@ -478,8 +479,8 @@
         "mechanism": "exit_code_2",
         "failure_mode": "fail_open"
       },
-      "adapters": { "node": false, "python": false, "go": false },
-      "delivery_state": "planned",
+      "adapters": { "node": true, "python": false, "go": false },
+      "delivery_state": "partial",
       "source_url": "https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/"
     }
   ],

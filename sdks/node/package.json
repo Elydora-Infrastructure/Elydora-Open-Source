@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@decimalturn/toml-patch": "^2.0.0",
+    "dotenv": "^17.4.2",
     "jsonc-parser": "^3.3.1"
   }
 }

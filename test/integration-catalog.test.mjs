@@ -368,4 +368,23 @@ test('high-drift providers retain their verified hook contracts', async () => {
     mechanism: 'exit_code_2',
     failure_mode: 'fail_open',
   });
+  assert.equal(providers.get('qwen').config_format, 'json');
+  assert.deepEqual(providers.get('qwen').config_paths, [
+    '$QWEN_HOME/settings.json',
+    '~/.qwen/settings.json',
+    '.qwen/settings.json',
+  ]);
+  assert.deepEqual(providers.get('qwen').events, {
+    before_tool: 'PreToolUse',
+    after_tool: 'PostToolUse',
+  });
+  assert.deepEqual(providers.get('qwen').event_fields, {
+    name: 'tool_name',
+    input: 'tool_input',
+    session: 'session_id',
+  });
+  assert.deepEqual(providers.get('qwen').blocking, {
+    mechanism: 'exit_code_2',
+    failure_mode: 'fail_open',
+  });
 });
