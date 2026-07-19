@@ -79,6 +79,8 @@ Kimi installation follows detected runtime evidence. Kimi Code uses `$KIMI_CODE_
 
 Grok Build installation writes native global hooks to `$GROK_HOME/hooks/elydora-audit.json` (default `~/.grok/hooks/elydora-audit.json`). Project hooks still follow Grok's `/hooks-trust` workflow; Elydora leaves project, Claude Code, and Cursor compatibility files unchanged.
 
+Auggie installation writes user-level hooks to `~/.augment/settings.json` and creates the `.cmd` or `.sh` wrappers required by its command runner. System and workspace settings remain unchanged. Sessions started with `--augment-cache-dir` load settings from that alternate directory.
+
 ### Commands
 
 | Command | Description |
@@ -92,6 +94,7 @@ Grok Build installation writes native global hooks to `$GROK_HOME/hooks/elydora-
 
 | Agent | Key |
 |-------|-----|
+| Augment Code CLI | `augment` |
 | Claude Code | `claudecode` |
 | OpenAI Codex | `codex` |
 | Copilot CLI | `copilot` |

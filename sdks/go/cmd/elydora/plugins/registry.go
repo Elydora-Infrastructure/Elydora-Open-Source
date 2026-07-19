@@ -9,6 +9,7 @@ type AgentRegistryEntry struct {
 
 // SupportedAgents is the canonical registry of all supported agent integrations.
 var SupportedAgents = map[string]AgentRegistryEntry{
+	"augment":    {Name: "Augment Code CLI", ConfigDir: "~/.augment", ConfigFile: "settings.json"},
 	"claudecode": {Name: "Claude Code", ConfigDir: "~/.claude", ConfigFile: "settings.json"},
 	"codex":      {Name: "OpenAI Codex", ConfigDir: "~/.codex", ConfigFile: "hooks.json"},
 	"cursor":     {Name: "Cursor", ConfigDir: "~/.cursor", ConfigFile: "hooks.json"},
@@ -26,6 +27,8 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 // Returns nil if the agent is not supported.
 func NewPlugin(agentName string) AgentPlugin {
 	switch agentName {
+	case "augment":
+		return &AugmentPlugin{}
 	case "claudecode":
 		return &ClaudeCodePlugin{}
 	case "codex":

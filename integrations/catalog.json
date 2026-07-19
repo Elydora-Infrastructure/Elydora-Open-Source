@@ -30,8 +30,8 @@
         "mechanism": "exit_code_2",
         "failure_mode": "fail_open"
       },
-      "adapters": { "node": true, "python": true, "go": false },
-      "delivery_state": "partial",
+      "adapters": { "node": true, "python": true, "go": true },
+      "delivery_state": "available",
       "source_url": "https://docs.augmentcode.com/cli/hooks"
     },
     {
