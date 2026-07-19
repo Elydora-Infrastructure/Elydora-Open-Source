@@ -73,6 +73,8 @@ elydora install \
 
 Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex after installation and trust the Elydora `PreToolUse` and `PostToolUse` definitions.
 
+Cline installation writes `PreToolUse.mjs` and `PostToolUse.mjs` to `$CLINE_DIR/hooks` (default `~/.cline/hooks`). Elydora leaves the Documents and workspace hook roots unchanged. The wrappers preserve Cline's official payload and translate a frozen guard into JSON stdout cancellation control.
+
 Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
 
 Kimi installation follows detected runtime evidence. Kimi Code uses `$KIMI_CODE_HOME/config.toml` with `~/.kimi-code/config.toml` as the default. Legacy `kimi-cli` uses `~/.kimi/config.toml`; Elydora updates both contracts only when both runtimes are present.
@@ -97,6 +99,7 @@ Auggie installation writes user-level hooks to `~/.augment/settings.json` and cr
 | Augment Code CLI | `augment` |
 | Claude Code | `claudecode` |
 | OpenAI Codex | `codex` |
+| Cline | `cline` |
 | Copilot CLI | `copilot` |
 | Cursor | `cursor` |
 | Gemini CLI | `gemini` |
