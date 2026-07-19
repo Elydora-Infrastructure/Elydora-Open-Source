@@ -180,6 +180,13 @@
             "type": "string",
             "format": "uri",
             "pattern": "^https://"
+          },
+          "contract_variants": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/contractVariant"
+            }
           }
         }
       }
@@ -207,6 +214,127 @@
             "type": "string",
             "minLength": 1
           }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "contractVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "release_channel",
+        "activation",
+        "config_format",
+        "config_paths",
+        "events",
+        "blocking",
+        "source_url"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*$"
+        },
+        "release_channel": {
+          "enum": [
+            "stable",
+            "early_access",
+            "legacy"
+          ]
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_format": {
+          "enum": [
+            "json",
+            "toml",
+            "plugin"
+          ]
+        },
+        "config_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "events": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "before_tool",
+            "after_tool"
+          ],
+          "properties": {
+            "before_tool": {
+              "type": "string",
+              "minLength": 1
+            },
+            "after_tool": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "event_fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "input",
+            "session"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "input": {
+              "type": "string",
+              "minLength": 1
+            },
+            "session": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "blocking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mechanism",
+            "failure_mode"
+          ],
+          "properties": {
+            "mechanism": {
+              "enum": [
+                "any_nonzero_exit",
+                "exception",
+                "exit_code_2",
+                "hook_policy"
+              ]
+            },
+            "failure_mode": {
+              "enum": [
+                "adapter_controlled",
+                "configurable",
+                "fail_closed",
+                "fail_open"
+              ]
+            }
+          }
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
         }
       }
     }

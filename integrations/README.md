@@ -2,6 +2,8 @@
 
 [`catalog.json`](catalog.json) is the canonical inventory for agent integration IDs, official hook contracts, blocking behavior, and SDK delivery state. Backend validation, Console controls, Docs, and SDK registries derive their integration facts from this catalog.
 
+The provider-level contract represents the default stable runtime. `contract_variants` records opt-in or transitional runtimes with their activation command and release channel. Kiro CLI uses this field for its v2 embedded hooks and v3 standalone hooks.
+
 `delivery_state` is computed from the `node`, `python`, and `go` adapter flags:
 
 | State | Meaning |

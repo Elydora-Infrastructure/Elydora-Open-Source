@@ -108,6 +108,19 @@ test('every provider exposes a complete, machine-readable hook contract', async 
       assert.equal(typeof provider.event_fields.input, 'string');
       assert.equal(typeof provider.event_fields.session, 'string');
     }
+
+    for (const variant of provider.contract_variants ?? []) {
+      assert.match(variant.id, /^[a-z][a-z0-9]*$/);
+      assert.ok(['stable', 'early_access', 'legacy'].includes(variant.release_channel));
+      assert.equal(typeof variant.activation, 'string');
+      assert.ok(['json', 'toml', 'plugin'].includes(variant.config_format));
+      assert.ok(Array.isArray(variant.config_paths) && variant.config_paths.length > 0);
+      assert.equal(typeof variant.events.before_tool, 'string');
+      assert.equal(typeof variant.events.after_tool, 'string');
+      assert.equal(typeof variant.blocking.mechanism, 'string');
+      assert.equal(typeof variant.blocking.failure_mode, 'string');
+      assert.match(variant.source_url, /^https:\/\//);
+    }
   }
 });
 
@@ -121,6 +134,12 @@ test('schema freezes the provider contract and supported enums', async () => {
   assert.deepEqual(providerSchema.properties.surface.enum, ['cli', 'ide', 'cli_and_ide']);
   assert.deepEqual(providerSchema.properties.integration_mode.enum, ['command_hooks', 'plugin_api']);
   assert.deepEqual(providerSchema.properties.delivery_state.enum, ['available', 'partial', 'planned']);
+  assert.equal(providerSchema.properties.contract_variants.items.$ref, '#/$defs/contractVariant');
+  assert.deepEqual(schema.$defs.contractVariant.properties.release_channel.enum, [
+    'stable',
+    'early_access',
+    'legacy',
+  ]);
 });
 
 test('high-drift providers retain their verified hook contracts', async () => {
@@ -144,6 +163,29 @@ test('high-drift providers retain their verified hook contracts', async () => {
   assert.deepEqual(providers.get('kirocli').config_paths, [
     '~/.kiro/agents/*.json',
     '.kiro/agents/*.json',
+  ]);
+  assert.deepEqual(providers.get('kirocli').contract_variants, [
+    {
+      id: 'v3',
+      release_channel: 'early_access',
+      activation: 'kiro-cli --v3',
+      config_format: 'json',
+      config_paths: ['~/.kiro/hooks/*.json', '.kiro/hooks/*.json'],
+      events: {
+        before_tool: 'PreToolUse',
+        after_tool: 'PostToolUse',
+      },
+      event_fields: {
+        name: 'tool_name',
+        input: 'tool_input',
+        session: 'session_id',
+      },
+      blocking: {
+        mechanism: 'exit_code_2',
+        failure_mode: 'fail_open',
+      },
+      source_url: 'https://kiro.dev/docs/cli/v3/hooks/',
+    },
   ]);
   assert.deepEqual(providers.get('kiroide').config_paths, [
     '.kiro/hooks/*.json',

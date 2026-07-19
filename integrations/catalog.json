@@ -10,11 +10,7 @@
       "surface": "cli",
       "integration_mode": "command_hooks",
       "config_format": "json",
-      "config_paths": [
-        "~/.augment/settings.json",
-        ".augment/settings.json",
-        ".augment/settings.local.json"
-      ],
+      "config_paths": ["~/.augment/settings.json", ".augment/settings.json", ".augment/settings.local.json"],
       "events": {
         "before_tool": "PreToolUse",
         "after_tool": "PostToolUse"
@@ -43,11 +39,7 @@
       "surface": "cli",
       "integration_mode": "command_hooks",
       "config_format": "json",
-      "config_paths": [
-        "~/.claude/settings.json",
-        ".claude/settings.json",
-        ".claude/settings.local.json"
-      ],
+      "config_paths": ["~/.claude/settings.json", ".claude/settings.json", ".claude/settings.local.json"],
       "events": {
         "before_tool": "PreToolUse",
         "after_tool": "PostToolUse"
@@ -100,10 +92,7 @@
       "surface": "cli",
       "integration_mode": "command_hooks",
       "config_format": "json",
-      "config_paths": [
-        "~/.codex/hooks.json",
-        ".codex/hooks.json"
-      ],
+      "config_paths": ["~/.codex/hooks.json", ".codex/hooks.json"],
       "events": {
         "before_tool": "PreToolUse",
         "after_tool": "PostToolUse"
@@ -336,7 +325,33 @@
         "go": true
       },
       "delivery_state": "available",
-      "source_url": "https://kiro.dev/docs/cli/hooks/"
+      "source_url": "https://kiro.dev/docs/cli/hooks/",
+      "contract_variants": [
+        {
+          "id": "v3",
+          "release_channel": "early_access",
+          "activation": "kiro-cli --v3",
+          "config_format": "json",
+          "config_paths": [
+            "~/.kiro/hooks/*.json",
+            ".kiro/hooks/*.json"
+          ],
+          "events": {
+            "before_tool": "PreToolUse",
+            "after_tool": "PostToolUse"
+          },
+          "event_fields": {
+            "name": "tool_name",
+            "input": "tool_input",
+            "session": "session_id"
+          },
+          "blocking": {
+            "mechanism": "exit_code_2",
+            "failure_mode": "fail_open"
+          },
+          "source_url": "https://kiro.dev/docs/cli/v3/hooks/"
+        }
+      ]
     },
     {
       "id": "kiroide",
