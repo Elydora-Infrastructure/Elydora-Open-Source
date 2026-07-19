@@ -241,14 +241,19 @@ function removeManaged(
       result.push(group);
       continue;
     }
+    let groupChanged = false;
     const handlers = group.hooks.filter((handler) => {
       const managedId = managedAgentId(handler, scriptName);
       const remove = managedId !== undefined
         && (agentId === undefined || sameAgentId(managedId, agentId));
-      if (remove) changed = true;
+      if (remove) {
+        changed = true;
+        groupChanged = true;
+      }
       return !remove;
     });
-    if (handlers.length > 0) result.push(handlers.length === group.hooks.length ? group : { ...group, hooks: handlers });
+    if (!groupChanged) result.push(group);
+    else if (handlers.length > 0) result.push({ ...group, hooks: handlers });
   }
   return { groups: result, changed };
 }

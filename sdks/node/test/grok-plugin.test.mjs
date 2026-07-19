@@ -351,17 +351,17 @@ test('Grok install replaces stale Elydora handlers for every agent', async () =>
   }
 });
 
-test('Grok uninstall preserves an untouched empty native event', async () => {
+test('Grok uninstall preserves an untouched empty native group', async () => {
   const fixture = await createFixture({ config: { owner: 'user' } });
   try {
     assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
     const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    config.hooks.PreToolUse = [];
+    config.hooks.PreToolUse.unshift({ hooks: [], label: 'keep empty group' });
     await writeFile(fixture.configPath, JSON.stringify(config, null, 2));
     const result = await runPlugin(fixture, 'uninstall', 'agent-1');
     assert.equal(result.code, 0, result.stderr);
     const remaining = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    assert.deepEqual(remaining.hooks.PreToolUse, []);
+    assert.deepEqual(remaining.hooks.PreToolUse, [{ hooks: [], label: 'keep empty group' }]);
     assert.equal(remaining.hooks.PostToolUse, undefined);
   } finally {
     await fixture.close();
