@@ -85,7 +85,7 @@
         "mechanism": "json_stdout_cancel",
         "failure_mode": "fail_open"
       },
-      "adapters": { "node": true, "python": false, "go": false },
+      "adapters": { "node": true, "python": true, "go": false },
       "delivery_state": "partial",
       "source_url": "https://github.com/cline/cline/blob/main/sdk/examples/hooks/README.md"
     },
