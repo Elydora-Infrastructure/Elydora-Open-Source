@@ -6,6 +6,7 @@ import { derivePublicKey } from './crypto.js';
 import { SUPPORTED_AGENTS } from './plugins/registry.js';
 import type { AgentPlugin, InstallConfig } from './plugins/base.js';
 import { generateHookScript, generateGuardScript } from './plugins/hook-template.js';
+import { augmentPlugin } from './plugins/augment.js';
 import { claudecodePlugin } from './plugins/claudecode.js';
 import { cursorPlugin } from './plugins/cursor.js';
 import { geminiPlugin } from './plugins/gemini.js';
@@ -21,6 +22,7 @@ import { grokPlugin } from './plugins/grok.js';
 const ELYDORA_DIR = path.join(os.homedir(), '.elydora');
 
 const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
+  ['augment', augmentPlugin],
   ['claudecode', claudecodePlugin],
   ['cursor', cursorPlugin],
   ['gemini', geminiPlugin],

@@ -5,6 +5,7 @@ export interface AgentRegistryEntry {
 }
 
 export const SUPPORTED_AGENTS: ReadonlyMap<string, AgentRegistryEntry> = new Map([
+  ['augment', { name: 'Augment Code CLI', configDir: '~/.augment', configFile: 'settings.json' }],
   ['claudecode', { name: 'Claude Code', configDir: '~/.claude', configFile: 'settings.json' }],
   ['cursor', { name: 'Cursor', configDir: '.cursor', configFile: 'hooks.json' }],
   ['gemini', { name: 'Gemini CLI', configDir: '~/.gemini', configFile: 'settings.json' }],
