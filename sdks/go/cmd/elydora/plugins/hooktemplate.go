@@ -117,7 +117,7 @@ async function main() {
     if (age < CACHE_TTL_MS) {
       if (cache.status === 'frozen') {
         process.stderr.write('Agent "' + AGENT_NAME + '" is frozen by Elydora. Tool execution blocked.\n');
-        process.exitCode = 1;
+        process.exitCode = 2;
       }
       return; // Cache is fresh — use cached result
     }
@@ -161,7 +161,7 @@ async function main() {
 
       if (agentStatus === 'frozen') {
         process.stderr.write('Agent "' + AGENT_NAME + '" is frozen by Elydora. Tool execution blocked.\n');
-        process.exitCode = 1;
+        process.exitCode = 2;
       }
     }
   } catch {

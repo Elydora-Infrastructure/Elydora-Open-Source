@@ -25,21 +25,20 @@ export const ElydoraAuditPlugin = async (ctx) => {
   return {
     "tool.execute.before": async (input, output) => {
       // Guard — blocks tool if agent is frozen
+      let result;
       try {
-        const result = spawnSync('node', ['__ELYDORA_GUARD_SCRIPT_PATH__'], {
+        result = spawnSync('node', ['__ELYDORA_GUARD_SCRIPT_PATH__'], {
           timeout: 5000,
           stdio: ['pipe', 'ignore', 'pipe'],
         });
-        if (result.status === 2) {
-          const msg = result.stderr ? result.stderr.toString().trim() : 'Agent is frozen by Elydora.';
-          // Signal denial by setting a blocked flag
-          if (output && typeof output === 'object') {
-            output.blocked = true;
-            output.reason = msg;
-          }
-        }
       } catch {
         // Fail-open — allow if guard can't run
+        return;
+      }
+
+      if (result.status === 2) {
+        const msg = result.stderr ? result.stderr.toString().trim() : 'Agent is frozen by Elydora.';
+        throw new Error(msg);
       }
     },
 

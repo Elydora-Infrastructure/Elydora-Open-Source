@@ -301,7 +301,7 @@ main();
  *
  * - Caches the agent status locally (60s TTL) to avoid hitting the API on every tool call
  * - Fails open: if the API is unreachable, tool execution is allowed
- * - If frozen: exits with code 1 to block the tool
+ * - If frozen: exits with code 2, the blocking code shared by supported hook CLIs
  */
 export function generateGuardScript(agentName: string, agentId: string): string {
   return `#!/usr/bin/env node

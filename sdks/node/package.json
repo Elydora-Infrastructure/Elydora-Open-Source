@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "tsc && node scripts/postbuild.mjs",
+    "test": "npm run build && node --test",
     "prepublishOnly": "npm run build"
   },
   "engines": {
