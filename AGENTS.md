@@ -49,6 +49,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Propagate unexpected errors to the CLI or request boundary.
 - Keep technical claims executable through tests or generated validation.
 - Keep the mirrored Python package, distribution, and CLI version in `sdks/python/elydora/_version.py`; Setuptools metadata must read that literal dynamically.
+- Ship `sdks/python/elydora/py.typed` in every mirrored wheel and verify public annotations from an installed-wheel consumer.
 - Interpret Python SDK `max_retries` as retries after the initial attempt and reject negative or non-integer values.
 - Retry RFC-idempotent Python SDK requests automatically; retry non-idempotent requests only when the transport proves the request was never sent.
 - Honor valid `Retry-After` delay-seconds and HTTP-date values, and release retryable responses before sleeping.
