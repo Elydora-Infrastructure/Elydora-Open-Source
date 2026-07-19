@@ -16,6 +16,7 @@ import { opencodePlugin } from './plugins/opencode.js';
 import { copilotPlugin } from './plugins/copilot.js';
 import { lettaPlugin } from './plugins/letta.js';
 import { codexPlugin } from './plugins/codex.js';
+import { clinePlugin } from './plugins/cline.js';
 import { kimiPlugin } from './plugins/kimi.js';
 import { grokPlugin } from './plugins/grok.js';
 
@@ -32,6 +33,7 @@ const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
   ['copilot', copilotPlugin],
   ['letta', lettaPlugin],
   ['codex', codexPlugin],
+  ['cline', clinePlugin],
   ['kimi', kimiPlugin],
   ['grok', grokPlugin],
 ]);

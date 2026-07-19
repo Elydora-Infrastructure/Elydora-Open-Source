@@ -180,11 +180,20 @@ async function main() {
       return;
     }
 
-    // Extract tool_name and tool_input from hook data
-    // Different agents may pass data in different shapes
-    const toolName = hookData.tool_name || hookData.toolName || hookData.name || 'unknown';
-    const toolInput = hookData.tool_input || hookData.toolInput || hookData.input || hookData.parameters || {};
-    const sessionId = hookData.session_id || hookData.sessionId || hookData.session || 'unknown';
+    // Extract provider-native tool fields without reshaping the hook input.
+    const clineToolEvent =
+      hookData.tool_result && typeof hookData.tool_result === 'object'
+        ? hookData.tool_result
+        : hookData.tool_call && typeof hookData.tool_call === 'object'
+          ? hookData.tool_call
+          : {};
+    const toolName =
+      hookData.tool_name || hookData.toolName || hookData.name || clineToolEvent.name || 'unknown';
+    const toolInput =
+      hookData.tool_input || hookData.toolInput || hookData.input || hookData.parameters ||
+      clineToolEvent.input || {};
+    const sessionId =
+      hookData.session_id || hookData.sessionId || hookData.session || hookData.taskId || 'unknown';
 
     // Read agent config and private key
     let config;
