@@ -93,7 +93,7 @@ test('every provider exposes a complete, machine-readable hook contract', async 
     assert.equal(typeof provider.vendor, 'string');
     assert.ok(['cli', 'ide', 'cli_and_ide'].includes(provider.surface));
     assert.ok(['command_hooks', 'plugin_api'].includes(provider.integration_mode));
-    assert.ok(['json', 'toml', 'plugin'].includes(provider.config_format));
+    assert.ok(['json', 'toml', 'plugin', 'script'].includes(provider.config_format));
     assert.ok(Array.isArray(provider.config_paths));
     assert.equal(typeof provider.events.before_tool, 'string');
     assert.equal(typeof provider.events.after_tool, 'string');
@@ -102,6 +102,7 @@ test('every provider exposes a complete, machine-readable hook contract', async 
       'exception',
       'exit_code_2',
       'hook_policy',
+      'json_stdout_cancel',
     ].includes(provider.blocking.mechanism));
     assert.ok([
       'adapter_controlled',
@@ -128,7 +129,7 @@ test('every provider exposes a complete, machine-readable hook contract', async 
       assert.match(variant.id, /^[a-z][a-z0-9]*$/);
       assert.ok(['stable', 'early_access', 'legacy'].includes(variant.release_channel));
       assert.equal(typeof variant.activation, 'string');
-      assert.ok(['json', 'toml', 'plugin'].includes(variant.config_format));
+      assert.ok(['json', 'toml', 'plugin', 'script'].includes(variant.config_format));
       assert.ok(Array.isArray(variant.config_paths) && variant.config_paths.length > 0);
       assert.equal(typeof variant.events.before_tool, 'string');
       assert.equal(typeof variant.events.after_tool, 'string');
@@ -148,6 +149,17 @@ test('schema freezes the provider contract and supported enums', async () => {
   assert.deepEqual([...providerSchema.required].sort(), [...requiredProviderFields].sort());
   assert.deepEqual(providerSchema.properties.surface.enum, ['cli', 'ide', 'cli_and_ide']);
   assert.deepEqual(providerSchema.properties.integration_mode.enum, ['command_hooks', 'plugin_api']);
+  assert.deepEqual(providerSchema.properties.config_format.enum, [
+    'json',
+    'toml',
+    'plugin',
+    'script',
+  ]);
+  assert.ok(
+    providerSchema.properties.blocking.properties.mechanism.enum.includes(
+      'json_stdout_cancel',
+    ),
+  );
   assert.deepEqual(providerSchema.properties.delivery_state.enum, ['available', 'partial', 'planned']);
   assert.equal(providerSchema.properties.contract_variants.items.$ref, '#/$defs/contractVariant');
   assert.deepEqual(schema.$defs.contractVariant.properties.release_channel.enum, [
@@ -202,6 +214,27 @@ test('high-drift providers retain their verified hook contracts', async () => {
     '~/.codex/hooks.json',
     '.codex/hooks.json',
   ]);
+  assert.equal(providers.get('cline').integration_mode, 'command_hooks');
+  assert.equal(providers.get('cline').config_format, 'script');
+  assert.deepEqual(providers.get('cline').config_paths, [
+    '~/Documents/Cline/Hooks/',
+    '$CLINE_DIR/hooks/',
+    '.clinerules/hooks/',
+    '.cline/hooks/',
+  ]);
+  assert.deepEqual(providers.get('cline').events, {
+    before_tool: 'PreToolUse',
+    after_tool: 'PostToolUse',
+  });
+  assert.deepEqual(providers.get('cline').event_fields, {
+    name: 'tool_call.name/tool_result.name',
+    input: 'tool_call.input/tool_result.input',
+    session: 'taskId',
+  });
+  assert.deepEqual(providers.get('cline').blocking, {
+    mechanism: 'json_stdout_cancel',
+    failure_mode: 'fail_open',
+  });
   assert.deepEqual(providers.get('kimi').events, {
     before_tool: 'PreToolUse',
     after_tool: 'PostToolUse',

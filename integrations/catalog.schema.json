@@ -71,7 +71,8 @@
             "enum": [
               "json",
               "toml",
-              "plugin"
+              "plugin",
+              "script"
             ]
           },
           "config_paths": {
@@ -136,7 +137,8 @@
                   "any_nonzero_exit",
                   "exception",
                   "exit_code_2",
-                  "hook_policy"
+                  "hook_policy",
+                  "json_stdout_cancel"
                 ]
               },
               "failure_mode": {
@@ -252,7 +254,8 @@
           "enum": [
             "json",
             "toml",
-            "plugin"
+            "plugin",
+            "script"
           ]
         },
         "config_paths": {
@@ -318,7 +321,8 @@
                 "any_nonzero_exit",
                 "exception",
                 "exit_code_2",
-                "hook_policy"
+                "hook_policy",
+                "json_stdout_cancel"
               ]
             },
             "failure_mode": {

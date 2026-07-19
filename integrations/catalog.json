@@ -64,20 +64,30 @@
       "name": "Cline",
       "vendor": "Cline",
       "surface": "cli_and_ide",
-      "integration_mode": "plugin_api",
-      "config_format": "plugin",
-      "config_paths": [],
+      "integration_mode": "command_hooks",
+      "config_format": "script",
+      "config_paths": [
+        "~/Documents/Cline/Hooks/",
+        "$CLINE_DIR/hooks/",
+        ".clinerules/hooks/",
+        ".cline/hooks/"
+      ],
       "events": {
-        "before_tool": "beforeTool",
-        "after_tool": "afterTool"
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "tool_call.name/tool_result.name",
+        "input": "tool_call.input/tool_result.input",
+        "session": "taskId"
       },
       "blocking": {
-        "mechanism": "hook_policy",
-        "failure_mode": "configurable"
+        "mechanism": "json_stdout_cancel",
+        "failure_mode": "fail_open"
       },
       "adapters": { "node": false, "python": false, "go": false },
       "delivery_state": "planned",
-      "source_url": "https://docs.cline.bot/sdk/plugins"
+      "source_url": "https://github.com/cline/cline/blob/main/sdk/examples/hooks/README.md"
     },
     {
       "id": "codex",
