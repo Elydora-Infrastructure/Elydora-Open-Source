@@ -24,6 +24,11 @@ const expectedProviderIds = [
 
 const expectedCustomIntegrationIds = ['enterprise', 'gui', 'other', 'sdk'];
 const expectedAdapterKeys = ['go', 'node', 'python'];
+const adapterSourcePaths = {
+  go: (id) => `sdks/go/cmd/elydora/plugins/${id}.go`,
+  node: (id) => `sdks/node/src/plugins/${id}.ts`,
+  python: (id) => `sdks/python/elydora/plugins/${id}.py`,
+};
 const requiredProviderFields = [
   'id',
   'name',
@@ -41,6 +46,16 @@ const requiredProviderFields = [
 
 async function readJson(path) {
   return JSON.parse(await readFile(new URL(path, root), 'utf8'));
+}
+
+async function sourceExists(path) {
+  try {
+    await readFile(new URL(path, root));
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 function deliveryState(adapters) {
@@ -140,6 +155,23 @@ test('schema freezes the provider contract and supported enums', async () => {
     'early_access',
     'legacy',
   ]);
+});
+
+test('adapter delivery claims resolve to source files in every SDK mirror', async () => {
+  const catalog = await readJson('integrations/catalog.json');
+
+  for (const provider of catalog.providers) {
+    for (const [language, delivered] of Object.entries(provider.adapters)) {
+      const resolveSourcePath = adapterSourcePaths[language];
+      assert.ok(resolveSourcePath, `unknown adapter language: ${language}`);
+      const sourcePath = resolveSourcePath(provider.id);
+      assert.equal(
+        await sourceExists(sourcePath),
+        delivered,
+        `${provider.id} ${language} delivery state disagrees with ${sourcePath}`,
+      );
+    }
+  }
 });
 
 test('high-drift providers retain their verified hook contracts', async () => {

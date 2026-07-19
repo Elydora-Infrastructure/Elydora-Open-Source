@@ -14,6 +14,7 @@ import { kiroidePlugin } from './plugins/kiroide.js';
 import { opencodePlugin } from './plugins/opencode.js';
 import { copilotPlugin } from './plugins/copilot.js';
 import { lettaPlugin } from './plugins/letta.js';
+import { codexPlugin } from './plugins/codex.js';
 
 const ELYDORA_DIR = path.join(os.homedir(), '.elydora');
 
@@ -26,6 +27,7 @@ const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
   ['opencode', opencodePlugin],
   ['copilot', copilotPlugin],
   ['letta', lettaPlugin],
+  ['codex', codexPlugin],
 ]);
 
 // ---------------------------------------------------------------------------

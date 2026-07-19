@@ -13,4 +13,5 @@ export const SUPPORTED_AGENTS: ReadonlyMap<string, AgentRegistryEntry> = new Map
   ['opencode', { name: 'OpenCode', configDir: '.config/opencode/plugins', configFile: 'elydora-audit.mjs' }],
   ['copilot', { name: 'Copilot CLI', configDir: '.github/hooks', configFile: 'hooks.json' }],
   ['letta', { name: 'Letta Code', configDir: '~/.letta', configFile: 'settings.json' }],
+  ['codex', { name: 'OpenAI Codex', configDir: '~/.codex', configFile: 'hooks.json' }],
 ]);
