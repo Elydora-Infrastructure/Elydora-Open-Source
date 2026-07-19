@@ -77,6 +77,8 @@ Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the genera
 
 Kimi installation follows detected runtime evidence. Kimi Code uses `$KIMI_CODE_HOME/config.toml` with `~/.kimi-code/config.toml` as the default. Legacy `kimi-cli` uses `~/.kimi/config.toml`; Elydora updates both contracts only when both runtimes are present.
 
+Grok Build installation writes native global hooks to `$GROK_HOME/hooks/elydora-audit.json` (default `~/.grok/hooks/elydora-audit.json`). Project hooks still follow Grok's `/hooks-trust` workflow; Elydora leaves project, Claude Code, and Cursor compatibility files unchanged.
+
 ### Commands
 
 | Command | Description |
@@ -95,6 +97,7 @@ Kimi installation follows detected runtime evidence. Kimi Code uses `$KIMI_CODE_
 | Copilot CLI | `copilot` |
 | Cursor | `cursor` |
 | Gemini CLI | `gemini` |
+| Grok Build | `grok` |
 | Kiro CLI | `kirocli` |
 | Kiro IDE | `kiroide` |
 | Kimi Code | `kimi` |

@@ -13,6 +13,7 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 	"codex":      {Name: "OpenAI Codex", ConfigDir: "~/.codex", ConfigFile: "hooks.json"},
 	"cursor":     {Name: "Cursor", ConfigDir: "~/.cursor", ConfigFile: "hooks.json"},
 	"gemini":     {Name: "Gemini CLI", ConfigDir: "~/.gemini", ConfigFile: "settings.json"},
+	"grok":       {Name: "Grok Build", ConfigDir: "~/.grok/hooks", ConfigFile: "elydora-audit.json"},
 	"kirocli":    {Name: "Kiro CLI", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.json"},
 	"kiroide":    {Name: "Kiro IDE", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.kiro.hook"},
 	"kimi":       {Name: "Kimi Code", ConfigDir: "~/.kimi-code", ConfigFile: "config.toml"},
@@ -33,6 +34,8 @@ func NewPlugin(agentName string) AgentPlugin {
 		return &CursorPlugin{}
 	case "gemini":
 		return &GeminiPlugin{}
+	case "grok":
+		return &GrokPlugin{}
 	case "kirocli":
 		return &KiroCliPlugin{}
 	case "kiroide":

@@ -260,9 +260,9 @@
       "adapters": {
         "node": true,
         "python": true,
-        "go": false
+        "go": true
       },
-      "delivery_state": "partial",
+      "delivery_state": "available",
       "source_url": "https://docs.x.ai/build/features/hooks"
     },
     {
