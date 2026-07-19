@@ -21,49 +21,51 @@ function generatePluginScript(hookScriptPath: string, guardScriptPath: string): 
 
 import { spawn, spawnSync } from 'node:child_process';
 
+const HOOK_SCRIPT_PATH = ${JSON.stringify(hookScriptPath)};
+const GUARD_SCRIPT_PATH = ${JSON.stringify(guardScriptPath)};
+
 export const ElydoraAuditPlugin = async (ctx) => {
   return {
-    "tool.execute.before": async (input, output) => {
+    "tool.execute.before": async () => {
       // Guard — blocks tool if agent is frozen
       let result;
       try {
-        result = spawnSync('node', ['__ELYDORA_GUARD_SCRIPT_PATH__'], {
+        result = spawnSync('node', [GUARD_SCRIPT_PATH], {
           timeout: 5000,
           stdio: ['pipe', 'ignore', 'pipe'],
         });
-      } catch {
-        // Fail-open — allow if guard can't run
-        return;
+      } catch (error) {
+        throw new Error('Elydora guard failed: ' + error.message);
       }
 
-      if (result.status === 2) {
-        const msg = result.stderr ? result.stderr.toString().trim() : 'Agent is frozen by Elydora.';
-        throw new Error(msg);
+      if (result.error) {
+        throw new Error('Elydora guard failed: ' + result.error.message);
+      }
+      if (result.status !== 0) {
+        const message = result.stderr?.toString().trim() || 'Guard exited with status ' + result.status;
+        const prefix = result.status === 2 ? '' : 'Elydora guard failed: ';
+        throw new Error(prefix + message);
       }
     },
 
     "tool.execute.after": async (input, output) => {
-      try {
-        const toolName = input?.tool || 'unknown';
-        const toolInput = output?.args || input?.args || {};
-        const sessionId = ctx?.project?.name || 'unknown';
-
-        const data = JSON.stringify({
-          tool_name: toolName,
-          tool_input: toolInput,
-          session_id: sessionId,
-        });
-
-        const child = spawn('node', ['__ELYDORA_HOOK_SCRIPT_PATH__'], {
-          detached: true,
-          stdio: ['pipe', 'ignore', 'ignore'],
-        });
-        child.stdin.write(data);
-        child.stdin.end();
-        child.unref();
-      } catch {
-        // Fire-and-forget — never block the developer
-      }
+      const data = JSON.stringify({
+        tool_name: input?.tool || 'unknown',
+        tool_input: input?.args || output?.args || {},
+        session_id: input?.sessionID || ctx?.project?.name || 'unknown',
+      });
+      const child = spawn('node', [HOOK_SCRIPT_PATH], {
+        detached: true,
+        stdio: ['pipe', 'ignore', 'ignore'],
+      });
+      child.on('error', (error) => {
+        console.error('[elydora] audit hook failed:', error.message);
+      });
+      child.stdin.on('error', (error) => {
+        console.error('[elydora] audit input failed:', error.message);
+      });
+      child.stdin.end(data);
+      child.unref();
     },
   };
 };
@@ -76,9 +78,7 @@ export const opencodePlugin: AgentPlugin = {
     await fsp.mkdir(configDir, { recursive: true });
 
     const configPath = resolveConfigPath();
-    const script = generatePluginScript(config.hookScriptPath, config.guardScriptPath)
-      .replace('__ELYDORA_HOOK_SCRIPT_PATH__', config.hookScriptPath.replace(/\\/g, '\\\\'))
-      .replace('__ELYDORA_GUARD_SCRIPT_PATH__', config.guardScriptPath.replace(/\\/g, '\\\\'));
+    const script = generatePluginScript(config.hookScriptPath, config.guardScriptPath);
 
     await fsp.writeFile(configPath, script, 'utf-8');
   },
@@ -97,24 +97,25 @@ export const opencodePlugin: AgentPlugin = {
 
     let hookConfigured = false;
     let hookScriptPath = '';
+    let guardScriptPath = '';
     try {
       const raw = await fsp.readFile(configPath, 'utf-8');
-      hookConfigured = true;
-
-      // Extract hook script path from plugin script content
-      // The plugin script contains a spawn call like: spawn('node', ['<path>'])
-      const match = raw.match(/spawn\('node',\s*\['([^']*elydora[^']*)'\]/);
-      if (match) {
-        hookScriptPath = match[1];
+      const hookMatch = raw.match(/const HOOK_SCRIPT_PATH = ("(?:\\.|[^"\\])*");/);
+      const guardMatch = raw.match(/const GUARD_SCRIPT_PATH = ("(?:\\.|[^"\\])*");/);
+      if (hookMatch && guardMatch) {
+        hookScriptPath = JSON.parse(hookMatch[1]);
+        guardScriptPath = JSON.parse(guardMatch[1]);
+        hookConfigured = true;
       }
     } catch {
       // File doesn't exist
     }
 
     let hookScriptExists = false;
-    if (hookScriptPath) {
+    if (hookScriptPath && guardScriptPath) {
       try {
         await fsp.access(hookScriptPath);
+        await fsp.access(guardScriptPath);
         hookScriptExists = true;
       } catch {
         // File doesn't exist
