@@ -145,7 +145,9 @@ func requireMissingDroidFile(t *testing.T, path string) {
 
 func readDroidTestObject(t *testing.T, path string) map[string]any {
 	t.Helper()
-	standard, err := standardizeDroidJSONC([]byte(readDroidTestFile(t, path)))
+	standard, err := standardizeJSONC(
+		[]byte(readDroidTestFile(t, path)), "Factory Droid test source", true,
+	)
 	if err != nil {
 		t.Fatalf("standardize %s: %v", path, err)
 	}

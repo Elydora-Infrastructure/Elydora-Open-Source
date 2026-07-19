@@ -23,6 +23,7 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 	"opencode":   {Name: "OpenCode", ConfigDir: "~/.config/opencode/plugins", ConfigFile: "elydora-audit.mjs"},
 	"copilot":    {Name: "Copilot CLI", ConfigDir: ".github/hooks", ConfigFile: "hooks.json"},
 	"letta":      {Name: "Letta Code", ConfigDir: "~/.letta", ConfigFile: "settings.json"},
+	"qwen":       {Name: "Qwen Code", ConfigDir: "~/.qwen", ConfigFile: "settings.json"},
 }
 
 // NewPlugin creates a plugin instance for the given agent name.
@@ -57,6 +58,8 @@ func NewPlugin(agentName string) AgentPlugin {
 		return &CopilotPlugin{}
 	case "letta":
 		return &LettaPlugin{}
+	case "qwen":
+		return &QwenPlugin{}
 	default:
 		return nil
 	}

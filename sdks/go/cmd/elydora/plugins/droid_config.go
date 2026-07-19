@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,7 +53,7 @@ func readDroidSources() (*droidSources, error) {
 	if err != nil {
 		return nil, err
 	}
-	rootRaw, rootExists, err := readDroidOptional(rootPath, "Factory Droid hooks")
+	rootRaw, rootExists, err := readOptionalFile(rootPath, "Factory Droid hooks")
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +64,7 @@ func readDroidSources() (*droidSources, error) {
 			return nil, err
 		}
 	} else {
-		legacyRaw, legacyExists, readErr := readDroidOptional(legacyPath, "Factory Droid legacy hooks")
+		legacyRaw, legacyExists, readErr := readOptionalFile(legacyPath, "Factory Droid legacy hooks")
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -76,7 +75,7 @@ func readDroidSources() (*droidSources, error) {
 			}
 		}
 	}
-	settingsRaw, settingsExists, err := readDroidOptional(settingsPath, "Factory Droid settings")
+	settingsRaw, settingsExists, err := readOptionalFile(settingsPath, "Factory Droid settings")
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +93,7 @@ func readDroidSources() (*droidSources, error) {
 
 func parseDroidDocument(exists bool, filePath, kind string, raw []byte) (*droidDocument, error) {
 	label := droidDocumentLabel(kind, filePath)
-	root, err := decodeDroidJSONCObject(raw, label)
+	root, err := decodeJSONCObject(raw, label, true)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +201,7 @@ func renderDroidDocument(
 	agentID, runtimeRoot string,
 	additions map[string]map[string]any,
 ) (*droidRenderedDocument, error) {
-	editor, err := newDroidJSONCEditor(document.raw, droidDocumentLabel(document.kind, document.filePath))
+	editor, err := newJSONCEditor(document.raw, droidDocumentLabel(document.kind, document.filePath), true)
 	if err != nil {
 		return nil, err
 	}
@@ -286,15 +285,4 @@ func displayDroidConfigPath(sources *droidSources) string {
 		return sources.settings.filePath
 	}
 	return sources.rootPath
-}
-
-func readDroidOptional(path, label string) ([]byte, bool, error) {
-	raw, err := os.ReadFile(path) // #nosec G304 -- paths are fixed user-level Factory configuration paths.
-	if err == nil {
-		return raw, true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	return nil, false, fmt.Errorf("read %s at %s: %w", label, path, err)
 }

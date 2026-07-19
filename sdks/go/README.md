@@ -85,6 +85,8 @@ Auggie installation writes user-level hooks to `~/.augment/settings.json` and cr
 
 Factory Droid installation selects `PreToolUse` and `PostToolUse` independently across `~/.factory/hooks.json`, the legacy `~/.factory/hooks/hooks.json`, and `~/.factory/settings.json`. Elydora preserves JSONC comments and formatting, commits runtime and hook changes as one transaction, and reports disabled hooks as unhealthy. Run `/hooks` in Droid after installation to review the effective hooks.
 
+Qwen Code installation writes native user hooks to `$QWEN_HOME/settings.json` with `~/.qwen/settings.json` as the default. Elydora follows Qwen's `.env` discovery order, preserves JSON-with-comments source formatting, keeps workspace settings read-only, and commits runtime and settings changes as one transaction. Run `/hooks` in Qwen Code after installation to review the effective hooks.
+
 ### Commands
 
 | Command | Description |
@@ -112,6 +114,7 @@ Factory Droid installation selects `PreToolUse` and `PostToolUse` independently 
 | Kimi Code | `kimi` |
 | Letta Code | `letta` |
 | OpenCode | `opencode` |
+| Qwen Code | `qwen` |
 
 ## API Reference
 

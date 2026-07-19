@@ -8,7 +8,7 @@ import (
 )
 
 type DroidPlugin struct {
-	rename droidRenameFunc
+	rename renameFunc
 }
 
 type droidRuntimeConfig struct {
@@ -80,7 +80,7 @@ func (p *DroidPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := writeDroidChanges(changes, "Write Factory Droid installation", p.rename); err != nil {
+	if err := writeChanges(changes, "Write Factory Droid installation", p.rename); err != nil {
 		return err
 	}
 	fmt.Printf(
@@ -102,7 +102,7 @@ func (p *DroidPlugin) Uninstall(agentID string) error {
 		return err
 	}
 	documents := uniqueDroidDocuments(sources.primary, droidSettingsDocument(sources.settings))
-	changes := make([]*droidFileChange, 0, len(documents))
+	changes := make([]*fileChange, 0, len(documents))
 	for _, document := range documents {
 		rendered, renderErr := renderDroidDocument(document, agentID, runtimeRoot, nil)
 		if renderErr != nil {
@@ -114,7 +114,7 @@ func (p *DroidPlugin) Uninstall(agentID string) error {
 		}
 		changes = append(changes, change)
 	}
-	return writeDroidChanges(changes, "Write Factory Droid hook sources", p.rename)
+	return writeChanges(changes, "Write Factory Droid hook sources", p.rename)
 }
 
 func (p *DroidPlugin) Status() (PluginStatus, error) {
@@ -174,7 +174,7 @@ func prepareDroidInstallationChanges(
 	config InstallConfig,
 	agentDirectory, auditPath string,
 	rendered []*droidRenderedDocument,
-) ([]*droidFileChange, error) {
+) ([]*fileChange, error) {
 	baseURL := config.BaseURL
 	if baseURL == "" {
 		baseURL = "https://api.elydora.com"
@@ -196,9 +196,9 @@ func prepareDroidInstallationChanges(
 		{filepath.Join(agentDirectory, "private.key"), "Elydora private key", []byte(config.PrivateKey + "\n"), 0600},
 		{auditPath, "Elydora audit runtime", []byte(buildHookScript(droidAgentKey, config.AgentID)), 0700},
 	}
-	changes := make([]*droidFileChange, 0, len(runtimeChanges)+len(rendered))
+	changes := make([]*fileChange, 0, len(runtimeChanges)+len(rendered))
 	for _, item := range runtimeChanges {
-		change, changeErr := prepareDroidFileChange(item.path, item.label, item.content, item.mode)
+		change, changeErr := prepareFileChange(item.path, item.label, item.content, item.mode)
 		if changeErr != nil {
 			return nil, changeErr
 		}
