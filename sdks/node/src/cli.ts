@@ -2,7 +2,9 @@ import { parseArgs } from 'node:util';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { resolveInstallSecrets } from './cli-secrets.js';
 import { derivePublicKey } from './crypto.js';
+import { ensurePrivateDirectory, writePrivateFile } from './secure-files.js';
 import { SUPPORTED_AGENTS } from './plugins/registry.js';
 import type { AgentPlugin, InstallConfig } from './plugins/base.js';
 import { generateHookScript, generateGuardScript } from './plugins/hook-template.js';
@@ -55,7 +57,7 @@ function printUsage(): void {
   console.log(`Elydora CLI — Tamper-evident audit for AI coding agents
 
 Usage:
-  elydora install   --agent <name> --org_id <id> --agent_id <id> --private_key <key> --kid <kid> [--token <token>] [--base_url <url>]
+  elydora install   --agent <name> --org_id <id> --agent_id <id> --kid <kid> [--private_key_file <path>] [--token_file <path>] [--base_url <url>]
   elydora uninstall --agent <name> [--agent_id <id>]
   elydora status
   elydora agents
@@ -81,9 +83,9 @@ async function cmdInstall(args: string[]): Promise<void> {
       agent: { type: 'string' },
       org_id: { type: 'string' },
       agent_id: { type: 'string' },
-      private_key: { type: 'string' },
+      private_key_file: { type: 'string' },
       kid: { type: 'string' },
-      token: { type: 'string' },
+      token_file: { type: 'string' },
       base_url: { type: 'string' },
     },
     strict: true,
@@ -101,13 +103,13 @@ async function cmdInstall(args: string[]): Promise<void> {
   const agentId = values.agent_id;
   if (!agentId) die('--agent_id is required');
 
-  const privateKey = values.private_key;
-  if (!privateKey) die('--private_key is required');
-
   const kid = values.kid;
   if (!kid) die('--kid is required');
 
-  const token = values.token;
+  const { privateKey, token } = await resolveInstallSecrets({
+    privateKeyFile: values.private_key_file,
+    tokenFile: values.token_file,
+  });
   const baseUrl = values.base_url ?? 'https://api.elydora.com';
 
   // Validate private key by deriving public key
@@ -122,7 +124,8 @@ async function cmdInstall(args: string[]): Promise<void> {
 
   // Create ~/.elydora/{agentId}/ directory
   const agentDir = path.join(ELYDORA_DIR, agentId);
-  await fsp.mkdir(agentDir, { recursive: true });
+  await ensurePrivateDirectory(ELYDORA_DIR);
+  await ensurePrivateDirectory(agentDir);
 
   // Write agent config
   const agentConfigPath = path.join(agentDir, 'config.json');
@@ -134,18 +137,12 @@ async function cmdInstall(args: string[]): Promise<void> {
     ...(token ? { token } : {}),
     agent_name: agentName,
   };
-  await fsp.writeFile(agentConfigPath, JSON.stringify(agentConfig, null, 2) + '\n', 'utf-8');
-  if (process.platform !== 'win32') {
-    await fsp.chmod(agentConfigPath, 0o600);
-  }
+  await writePrivateFile(agentConfigPath, JSON.stringify(agentConfig, null, 2) + '\n');
   console.log(`  Agent config: ${agentConfigPath}`);
 
-  // Write private key (chmod 600)
+  // Write private key with owner-restricted access
   const keyPath = path.join(agentDir, 'private.key');
-  await fsp.writeFile(keyPath, privateKey, { encoding: 'utf-8', mode: 0o600 });
-  if (process.platform !== 'win32') {
-    await fsp.chmod(keyPath, 0o600);
-  }
+  await writePrivateFile(keyPath, privateKey);
   console.log(`  Private key:  ${keyPath}`);
 
   // Generate and write hook script (PostToolUse — audit logging)

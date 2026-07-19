@@ -55,6 +55,8 @@ This repository publishes the open-source server, console, integration catalog, 
 - Honor valid `Retry-After` delay-seconds and HTTP-date values, and release retryable responses before sleeping.
 - Avoid compatibility shims without a named public contract.
 - Preserve the minimum runtime versions declared by each package.
+- Keep private keys and API tokens out of process arguments and generated setup commands. Accept them through hidden terminal input or owner-only credential files.
+- Persist credential-bearing files through owner-only same-directory temporary files and atomic rename.
 
 ## Verification
 

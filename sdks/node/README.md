@@ -48,9 +48,10 @@ npx elydora install \
   --agent claudecode \
   --org_id org-123 \
   --agent_id agent-456 \
-  --private_key <key> \
   --kid agent-456-key-v1
 ```
+
+The CLI reads the private key and optional API token through hidden terminal prompts. For non-interactive installation, store each secret in an owner-only file and pass `--private_key_file <path>` and `--token_file <path>`. Secret values are rejected as command-line arguments because process listings and shell history can expose them.
 
 Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex after installation and trust the Elydora `PreToolUse` and `PostToolUse` definitions.
 
