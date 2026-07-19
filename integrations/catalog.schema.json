@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://elydora.com/schemas/integration-catalog.schema.json",
+  "title": "Elydora Integration Catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "verified_on",
+    "providers",
+    "custom_integrations"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "verified_on": {
+      "type": "string",
+      "format": "date"
+    },
+    "providers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "vendor",
+          "surface",
+          "integration_mode",
+          "config_format",
+          "config_paths",
+          "events",
+          "blocking",
+          "adapters",
+          "delivery_state",
+          "source_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "vendor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "surface": {
+            "enum": [
+              "cli",
+              "ide",
+              "cli_and_ide"
+            ]
+          },
+          "integration_mode": {
+            "enum": [
+              "command_hooks",
+              "plugin_api"
+            ]
+          },
+          "config_format": {
+            "enum": [
+              "json",
+              "toml",
+              "plugin"
+            ]
+          },
+          "config_paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "events": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "before_tool",
+              "after_tool"
+            ],
+            "properties": {
+              "before_tool": {
+                "type": "string",
+                "minLength": 1
+              },
+              "after_tool": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "event_fields": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "input",
+              "session"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "session": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "blocking": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mechanism",
+              "failure_mode"
+            ],
+            "properties": {
+              "mechanism": {
+                "enum": [
+                  "any_nonzero_exit",
+                  "exception",
+                  "exit_code_2",
+                  "hook_policy"
+                ]
+              },
+              "failure_mode": {
+                "enum": [
+                  "adapter_controlled",
+                  "configurable",
+                  "fail_closed",
+                  "fail_open"
+                ]
+              }
+            }
+          },
+          "adapters": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "node",
+              "python",
+              "go"
+            ],
+            "properties": {
+              "node": {
+                "type": "boolean"
+              },
+              "python": {
+                "type": "boolean"
+              },
+              "go": {
+                "type": "boolean"
+              }
+            }
+          },
+          "delivery_state": {
+            "enum": [
+              "available",
+              "partial",
+              "planned"
+            ]
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          }
+        }
+      }
+    },
+    "custom_integrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,482 @@
+{
+  "$schema": "./catalog.schema.json",
+  "schema_version": 1,
+  "verified_on": "2026-07-19",
+  "providers": [
+    {
+      "id": "augment",
+      "name": "Augment Code CLI",
+      "vendor": "Augment Code",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.augment/settings.json",
+        ".augment/settings.json",
+        ".augment/settings.local.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "conversation_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": false,
+        "python": false,
+        "go": false
+      },
+      "delivery_state": "planned",
+      "source_url": "https://docs.augmentcode.com/cli/hooks"
+    },
+    {
+      "id": "claudecode",
+      "name": "Claude Code",
+      "vendor": "Anthropic",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.claude/settings.json",
+        ".claude/settings.json",
+        ".claude/settings.local.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://code.claude.com/docs/en/hooks"
+    },
+    {
+      "id": "cline",
+      "name": "Cline",
+      "vendor": "Cline",
+      "surface": "cli_and_ide",
+      "integration_mode": "plugin_api",
+      "config_format": "plugin",
+      "config_paths": [],
+      "events": {
+        "before_tool": "beforeTool",
+        "after_tool": "afterTool"
+      },
+      "blocking": {
+        "mechanism": "hook_policy",
+        "failure_mode": "configurable"
+      },
+      "adapters": {
+        "node": false,
+        "python": false,
+        "go": false
+      },
+      "delivery_state": "planned",
+      "source_url": "https://docs.cline.bot/sdk/plugins"
+    },
+    {
+      "id": "codex",
+      "name": "OpenAI Codex",
+      "vendor": "OpenAI",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.codex/hooks.json",
+        ".codex/hooks.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": false,
+        "go": false
+      },
+      "delivery_state": "partial",
+      "source_url": "https://learn.chatgpt.com/docs/hooks"
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "vendor": "GitHub",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.copilot/hooks/*.json",
+        ".github/hooks/*.json"
+      ],
+      "events": {
+        "before_tool": "preToolUse",
+        "after_tool": "postToolUse"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://docs.github.com/en/copilot/reference/hooks-reference"
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "vendor": "Anysphere",
+      "surface": "ide",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.cursor/hooks.json",
+        ".cursor/hooks.json"
+      ],
+      "events": {
+        "before_tool": "preToolUse",
+        "after_tool": "postToolUse"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://cursor.com/docs/hooks"
+    },
+    {
+      "id": "droid",
+      "name": "Factory Droid",
+      "vendor": "Factory",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.factory/hooks.json",
+        ".factory/hooks.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": false,
+        "python": false,
+        "go": false
+      },
+      "delivery_state": "planned",
+      "source_url": "https://docs.factory.ai/reference/hooks-reference"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "vendor": "Google",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.gemini/settings.json",
+        ".gemini/settings.json"
+      ],
+      "events": {
+        "before_tool": "BeforeTool",
+        "after_tool": "AfterTool"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://geminicli.com/docs/hooks/reference/"
+    },
+    {
+      "id": "grok",
+      "name": "Grok Build",
+      "vendor": "xAI",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.grok/hooks/*.json",
+        ".grok/hooks/*.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "toolName",
+        "input": "toolInput",
+        "session": "sessionId"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": false,
+        "python": false,
+        "go": false
+      },
+      "delivery_state": "planned",
+      "source_url": "https://docs.x.ai/build/features/hooks"
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi Code",
+      "vendor": "Moonshot AI",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "toml",
+      "config_paths": [
+        "~/.kimi-code/config.toml"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": false,
+        "python": false,
+        "go": false
+      },
+      "delivery_state": "planned",
+      "source_url": "https://moonshotai.github.io/kimi-code/en/customization/hooks"
+    },
+    {
+      "id": "kirocli",
+      "name": "Kiro CLI",
+      "vendor": "AWS",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.kiro/agents/*.json",
+        ".kiro/agents/*.json"
+      ],
+      "events": {
+        "before_tool": "preToolUse",
+        "after_tool": "postToolUse"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://kiro.dev/docs/cli/hooks/"
+    },
+    {
+      "id": "kiroide",
+      "name": "Kiro IDE",
+      "vendor": "AWS",
+      "surface": "ide",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        ".kiro/hooks/*.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://kiro.dev/docs/hooks/"
+    },
+    {
+      "id": "letta",
+      "name": "Letta Code",
+      "vendor": "Letta",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.letta/settings.json",
+        ".letta/settings.json",
+        ".letta/settings.local.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://docs.letta.com/letta-agent/hooks"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "vendor": "SST",
+      "surface": "cli_and_ide",
+      "integration_mode": "plugin_api",
+      "config_format": "plugin",
+      "config_paths": [
+        "~/.config/opencode/plugins/*.{js,ts,mjs}",
+        ".opencode/plugins/*.{js,ts,mjs}"
+      ],
+      "events": {
+        "before_tool": "tool.execute.before",
+        "after_tool": "tool.execute.after"
+      },
+      "event_fields": {
+        "name": "tool",
+        "input": "args",
+        "session": "sessionID"
+      },
+      "blocking": {
+        "mechanism": "exception",
+        "failure_mode": "fail_closed"
+      },
+      "adapters": {
+        "node": true,
+        "python": true,
+        "go": true
+      },
+      "delivery_state": "available",
+      "source_url": "https://opencode.ai/docs/plugins/"
+    },
+    {
+      "id": "qwen",
+      "name": "Qwen Code",
+      "vendor": "Alibaba Cloud",
+      "surface": "cli",
+      "integration_mode": "command_hooks",
+      "config_format": "json",
+      "config_paths": [
+        "~/.qwen/settings.json",
+        ".qwen/settings.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id"
+      },
+      "blocking": {
+        "mechanism": "exit_code_2",
+        "failure_mode": "fail_open"
+      },
+      "adapters": {
+        "node": false,
+        "python": false,
+        "go": false
+      },
+      "delivery_state": "planned",
+      "source_url": "https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/"
+    }
+  ],
+  "custom_integrations": [
+    {
+      "id": "enterprise",
+      "name": "Enterprise",
+      "description": "Managed enterprise integration"
+    },
+    {
+      "id": "gui",
+      "name": "GUI Agent",
+      "description": "Desktop or browser automation agent"
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "description": "Custom integration outside the provider catalog"
+    },
+    {
+      "id": "sdk",
+      "name": "SDK",
+      "description": "Direct Elydora SDK integration"
+    }
+  ]
+}
