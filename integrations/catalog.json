@@ -240,6 +240,7 @@
       "integration_mode": "command_hooks",
       "config_format": "json",
       "config_paths": [
+        "$GROK_HOME/hooks/*.json",
         "~/.grok/hooks/*.json",
         ".grok/hooks/*.json"
       ],

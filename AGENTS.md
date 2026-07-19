@@ -24,6 +24,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Keep stable, legacy, and early-access contracts explicit, including their activation commands.
 - Select Kimi Code and legacy `kimi-cli` contracts from runtime evidence. An empty `KIMI_CODE_HOME` uses `~/.kimi-code`; create no cross-runtime migration marker.
 - Preserve Kimi TOML comments and unrelated formatting through range-based edits, then parse the complete rendered document before writing it.
+- Write Grok Build integrations to a native user hook file under non-empty `GROK_HOME` or `~/.grok`; keep Claude Code and Cursor compatibility sources read-only.
 
 ## Mirror Workflow
 

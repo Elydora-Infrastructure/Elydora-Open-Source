@@ -4,6 +4,8 @@
 
 The provider-level contract represents the default stable runtime. `contract_variants` records opt-in or transitional runtimes with their activation command and release channel. Kiro CLI uses this field for its v2 embedded hooks and v3 standalone hooks.
 
+Grok Build adapters write native user hook files under `$GROK_HOME/hooks` or `~/.grok/hooks`. Project `.grok/hooks` files require `/hooks-trust` or `--trust`; Claude Code and Cursor hook files are read-only compatibility sources for Elydora.
+
 `delivery_state` is computed from the `node`, `python`, and `go` adapter flags:
 
 | State | Meaning |
