@@ -1,141 +1,219 @@
 package plugins
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
-func copilotConfigPaths() (string, string, error) {
+type copilotSettingsLayer struct {
+	filePath string
+	label    string
+	jsonc    bool
+}
+
+type copilotDirectoryLocation struct {
+	path  string
+	label string
+}
+
+type copilotPaths struct {
+	copilotHome        string
+	userHooksDirectory string
+	userHookPath       string
+	legacyHookPath     string
+	settingsLayers     []copilotSettingsLayer
+	directories        []copilotDirectoryLocation
+}
+
+type parsedCopilotSettings struct {
+	layer    copilotSettingsLayer
+	disabled *bool
+	snapshot *managedFileSnapshot
+}
+
+func resolveCopilotPaths() (*copilotPaths, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", fmt.Errorf("resolve home directory: %w", err)
+		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
-	copilotHome := strings.TrimSpace(os.Getenv("COPILOT_HOME"))
-	if copilotHome == "" {
+	override := os.Getenv("COPILOT_HOME")
+	copilotHome := override
+	if strings.TrimSpace(override) == "" {
 		copilotHome = filepath.Join(home, ".copilot")
 	} else if !filepath.IsAbs(copilotHome) {
 		copilotHome, err = filepath.Abs(copilotHome)
 		if err != nil {
-			return "", "", fmt.Errorf("resolve COPILOT_HOME: %w", err)
+			return nil, fmt.Errorf("resolve COPILOT_HOME at %s: %w", override, err)
 		}
 	}
-	workingDirectory, err := os.Getwd()
+	project, err := os.Getwd()
 	if err != nil {
-		return "", "", fmt.Errorf("resolve working directory: %w", err)
+		return nil, fmt.Errorf("resolve working directory: %w", err)
 	}
-	return filepath.Join(copilotHome, "hooks", copilotConfigFile),
-		filepath.Join(workingDirectory, ".github", "hooks", "hooks.json"), nil
-}
-
-func readCopilotHooks(value any, label string) (copilotHooks, error) {
-	if value == nil {
-		return nil, fmt.Errorf(`%s field "hooks" must be an object`, label)
-	}
-	object, ok := value.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf(`%s field "hooks" must be an object`, label)
-	}
-	hooks := make(copilotHooks, len(object))
-	for event, handlerValue := range object {
-		values, ok := handlerValue.([]any)
-		if !ok {
-			return nil, fmt.Errorf(`%s field "hooks.%s" must be an array`, label, event)
-		}
-		handlers := make([]map[string]any, 0, len(values))
-		for index, value := range values {
-			handler, ok := value.(map[string]any)
-			if !ok || handler == nil {
-				return nil, fmt.Errorf(`%s handler hooks.%s[%d] must be an object`, label, event, index)
-			}
-			handlers = append(handlers, handler)
-		}
-		hooks[event] = handlers
-	}
-	return hooks, nil
-}
-
-func parseCopilotDocument(
-	filePath string,
-	raw []byte,
-	label string,
-) (*copilotDocument, error) {
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, fmt.Errorf("parse %s at %s: %w", label, filePath, err)
-	}
-	root, ok := value.(map[string]any)
-	if !ok || root == nil {
-		return nil, fmt.Errorf("%s at %s must contain a JSON object", label, filePath)
-	}
-	if root["version"] != float64(1) {
-		return nil, fmt.Errorf("%s at %s must declare version 1", label, filePath)
-	}
-	hooks := copilotHooks{}
-	if hooksValue, exists := root["hooks"]; exists {
-		var err error
-		hooks, err = readCopilotHooks(hooksValue, label)
-		if err != nil {
-			return nil, err
-		}
-	}
-	disabled := false
-	if value, exists := root["disableAllHooks"]; exists {
-		var valid bool
-		disabled, valid = value.(bool)
-		if !valid {
-			return nil, fmt.Errorf(`%s field "disableAllHooks" must be a boolean`, label)
-		}
-	}
-	return &copilotDocument{
-		exists: true, filePath: filePath, root: root,
-		hooks: hooks, raw: append([]byte(nil), raw...), disabled: disabled,
+	github := filepath.Join(project, ".github")
+	githubCopilot := filepath.Join(github, "copilot")
+	githubHooks := filepath.Join(github, "hooks")
+	claude := filepath.Join(project, ".claude")
+	userHooks := filepath.Join(copilotHome, "hooks")
+	return &copilotPaths{
+		copilotHome:        copilotHome,
+		userHooksDirectory: userHooks,
+		userHookPath:       filepath.Join(userHooks, copilotConfigFile),
+		legacyHookPath:     filepath.Join(githubHooks, "hooks.json"),
+		settingsLayers: []copilotSettingsLayer{
+			{filepath.Join(copilotHome, "config.json"), "legacy Copilot user config", false},
+			{filepath.Join(copilotHome, "settings.json"), "Copilot user settings", true},
+			{filepath.Join(claude, "settings.json"), "Claude repository settings", true},
+			{filepath.Join(claude, "settings.local.json"), "Claude local settings", true},
+			{filepath.Join(githubCopilot, "settings.json"), "Copilot repository settings", true},
+			{filepath.Join(githubCopilot, "settings.local.json"), "Copilot local settings", true},
+		},
+		directories: []copilotDirectoryLocation{
+			{project, "Copilot working directory"},
+			{copilotHome, "COPILOT_HOME"},
+			{userHooks, "Copilot user hooks directory"},
+			{github, "GitHub configuration directory"},
+			{githubHooks, "GitHub repository hooks directory"},
+			{githubCopilot, "Copilot repository settings directory"},
+			{claude, "Claude repository settings directory"},
+		},
 	}, nil
 }
 
-func readCopilotDocument(filePath, label string) (*copilotDocument, error) {
-	info, err := os.Lstat(filePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("inspect %s at %s: %w", label, filePath, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s path is not a physical file: %s", label, filePath)
-	}
-	raw, err := os.ReadFile(filePath) // #nosec G304 -- filePath is a validated provider configuration path.
-	if err != nil {
-		return nil, fmt.Errorf("read %s at %s: %w", label, filePath, err)
-	}
-	return parseCopilotDocument(filePath, raw, label)
-}
-
-func readCopilotSources() (*copilotSources, error) {
-	userPath, legacyPath, err := copilotConfigPaths()
-	if err != nil {
-		return nil, err
-	}
-	user, err := readCopilotDocument(userPath, "GitHub Copilot user hooks")
-	if err != nil {
-		return nil, err
-	}
-	legacy, err := readCopilotDocument(legacyPath, "GitHub Copilot project hooks")
-	if err != nil {
-		return nil, err
-	}
-	if user == nil {
-		user = &copilotDocument{
-			filePath: userPath,
-			root:     map[string]any{},
-			hooks:    copilotHooks{},
+func inspectCopilotDirectories(locations []copilotDirectoryLocation) error {
+	for _, location := range locations {
+		if _, err := managedPhysicalDirectoryExists(location.path, location.label); err != nil {
+			return err
 		}
 	}
-	return &copilotSources{user: user, legacy: legacy}, nil
+	return nil
+}
+
+func readCopilotDocument(filePath, label string) (*copilotDocument, error) {
+	snapshot, err := readManagedFile(filePath, label, maxManagedSourceBytes)
+	if err != nil || snapshot == nil {
+		return nil, err
+	}
+	return parseCopilotDocument(filePath, snapshot, label)
+}
+
+func parseCopilotSettings(
+	snapshot *managedFileSnapshot,
+	layer copilotSettingsLayer,
+) (map[string]any, error) {
+	if len(strings.TrimSpace(string(snapshot.contents))) == 0 {
+		return map[string]any{}, nil
+	}
+	label := fmt.Sprintf("%s at %s", layer.label, layer.filePath)
+	if layer.jsonc {
+		return decodeJSONCObject(snapshot.contents, label, true)
+	}
+	return decodeStrictJSONObject(snapshot.contents, label)
+}
+
+func readCopilotSettingsLayer(
+	layer copilotSettingsLayer,
+) (parsedCopilotSettings, error) {
+	snapshot, err := readManagedFile(
+		layer.filePath,
+		layer.label,
+		maxManagedSourceBytes,
+	)
+	if err != nil || snapshot == nil {
+		return parsedCopilotSettings{layer: layer}, err
+	}
+	root, err := parseCopilotSettings(snapshot, layer)
+	if err != nil {
+		return parsedCopilotSettings{}, err
+	}
+	result := parsedCopilotSettings{layer: layer, snapshot: snapshot}
+	if value, exists := root["disableAllHooks"]; exists {
+		disabled, ok := value.(bool)
+		if !ok {
+			return parsedCopilotSettings{}, fmt.Errorf(
+				`%s at %s field "disableAllHooks" must be a boolean`,
+				layer.label,
+				layer.filePath,
+			)
+		}
+		result.disabled = &disabled
+	}
+	return result, nil
+}
+
+func effectiveCopilotDisabledSource(layers []parsedCopilotSettings) string {
+	disabledBy := ""
+	for _, layer := range layers {
+		if layer.disabled == nil {
+			continue
+		}
+		if *layer.disabled {
+			disabledBy = fmt.Sprintf("%s at %s", layer.layer.label, layer.layer.filePath)
+		} else {
+			disabledBy = ""
+		}
+	}
+	return disabledBy
+}
+
+func readCopilotSources() (*copilotSources, *copilotPaths, error) {
+	paths, err := resolveCopilotPaths()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := inspectCopilotDirectories(paths.directories); err != nil {
+		return nil, nil, err
+	}
+	user, err := readCopilotDocument(paths.userHookPath, "GitHub Copilot user hooks")
+	if err != nil {
+		return nil, nil, err
+	}
+	legacy, err := readCopilotDocument(
+		paths.legacyHookPath,
+		"GitHub Copilot legacy project hooks",
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	settings := make([]parsedCopilotSettings, 0, len(paths.settingsLayers))
+	for _, layer := range paths.settingsLayers {
+		parsed, readErr := readCopilotSettingsLayer(layer)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		settings = append(settings, parsed)
+	}
+	if user == nil {
+		user = createCopilotDocument(paths.userHookPath)
+	}
+	disabledBy := effectiveCopilotDisabledSource(settings)
+	if user.hooksDisabled {
+		disabledBy = fmt.Sprintf("GitHub Copilot user hooks at %s", paths.userHookPath)
+	}
+	preconditions := make([]copilotSourcePrecondition, 0, len(settings))
+	for _, item := range settings {
+		preconditions = append(preconditions, copilotSourcePrecondition{
+			filePath: item.layer.filePath,
+			label:    item.layer.label,
+			snapshot: item.snapshot,
+		})
+	}
+	return &copilotSources{
+		user: user, legacy: legacy, disabledBy: disabledBy,
+		settingsPreconditions: preconditions,
+	}, paths, nil
+}
+
+func requireCopilotHooksEnabled(sources *copilotSources) error {
+	if sources.disabledBy == "" {
+		return nil
+	}
+	return fmt.Errorf(
+		"GitHub Copilot hooks are disabled by %s; set disableAllHooks to false before installation",
+		sources.disabledBy,
+	)
 }
 
 func prepareRenderedCopilotChange(
@@ -144,166 +222,41 @@ func prepareRenderedCopilotChange(
 	if rendered == nil || !rendered.changed {
 		return nil, nil
 	}
-	return prepareSourceChange(
+	return prepareSnapshotSourceChange(
 		rendered.document.filePath,
 		"GitHub Copilot hook source",
-		rendered.document.raw,
-		rendered.document.exists,
+		rendered.document.snapshot,
 		rendered.next,
 		0600,
 		rendered.remove,
 	)
 }
 
-func prepareCopilotInstallationChanges(
-	config InstallConfig,
+func writeCopilotChanges(
+	changes []*fileChange,
+	label string,
+	rename renameFunc,
+	runtimeRoot string,
 	agentDirectory string,
-	auditPath string,
-	rendered []*copilotRenderedDocument,
-) ([]*fileChange, error) {
-	baseURL := config.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.elydora.com"
-	}
-	runtimeConfig, err := json.MarshalIndent(agentRuntimeConfig{
-		OrgID: config.OrgID, AgentID: config.AgentID, KID: config.KID,
-		BaseURL: baseURL, Token: config.Token, AgentName: copilotAgentKey,
-	}, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("encode Elydora runtime config: %w", err)
-	}
-	runtimeConfig = append(runtimeConfig, '\n')
-	if len(runtimeConfig) > maxRuntimeConfigBytes {
-		return nil, fmt.Errorf(
-			"Elydora runtime config exceeds %d bytes after JSON encoding",
-			maxRuntimeConfigBytes,
-		)
-	}
-	items := []struct {
-		path, label string
-		content     []byte
-		mode        os.FileMode
-	}{
-		{filepath.Join(agentDirectory, "config.json"), "Elydora runtime config", runtimeConfig, 0600},
-		{filepath.Join(agentDirectory, "private.key"), "Elydora private key", []byte(config.PrivateKey), 0600},
-		{auditPath, "Elydora audit runtime", []byte(buildHookScript(copilotAgentKey, config.AgentID)), 0700},
-	}
-	changes := make([]*fileChange, 0, len(items)+len(rendered))
-	for _, item := range items {
-		if err := validateRuntimeFileTarget(item.path, item.label); err != nil {
-			return nil, err
-		}
-		change, err := prepareFileChange(item.path, item.label, item.content, item.mode)
-		if err != nil {
-			return nil, err
-		}
-		changes = append(changes, change)
-	}
-	for _, document := range rendered {
-		change, err := prepareRenderedCopilotChange(document)
-		if err != nil {
-			return nil, err
-		}
-		changes = append(changes, change)
-	}
-	return changes, nil
-}
-
-func activeCopilotContracts(
-	sources *copilotSources,
-	runtimeRoot string,
-) []copilotRuntimeContract {
-	contracts := make([]copilotRuntimeContract, 0)
-	for _, document := range []*copilotDocument{sources.user, sources.legacy} {
-		if document == nil || document.disabled {
-			continue
-		}
-		contracts = append(contracts, copilotRuntimeContracts(document.hooks, runtimeRoot)...)
-	}
-	unique := map[string]copilotRuntimeContract{}
-	for _, contract := range contracts {
-		key := contract.agentID
-		if runtime.GOOS == "windows" {
-			key = strings.ToLower(key)
-		}
-		unique[key] = contract
-	}
-	result := make([]copilotRuntimeContract, 0, len(unique))
-	for _, contract := range unique {
-		result = append(result, contract)
-	}
-	return result
-}
-
-func configuredCopilotPath(
-	sources *copilotSources,
-	runtimeRoot string,
-) string {
-	if !sources.user.disabled && len(copilotRuntimeContracts(sources.user.hooks, runtimeRoot)) > 0 {
-		return sources.user.filePath
-	}
-	if sources.legacy != nil && !sources.legacy.disabled &&
-		len(copilotRuntimeContracts(sources.legacy.hooks, runtimeRoot)) > 0 {
-		return sources.legacy.filePath
-	}
-	return sources.user.filePath
-}
-
-func copilotPhysicalFileExists(path, label string) (bool, error) {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect %s at %s: %w", label, path, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return false, fmt.Errorf("%s path is not a physical file: %s", label, path)
-	}
-	return true, nil
-}
-
-func copilotRuntimeFilesExist(contracts []copilotRuntimeContract) (bool, error) {
-	for _, contract := range contracts {
-		configPath := filepath.Join(filepath.Dir(contract.guardPath), "config.json")
-		configExists, err := copilotPhysicalFileExists(configPath, "Elydora runtime config")
-		if err != nil {
-			return false, err
-		}
-		if !configExists {
-			continue
-		}
-		raw, exists, err := readOptionalFile(configPath, "Elydora runtime config")
-		if err != nil {
-			return false, err
-		}
-		if !exists {
-			continue
-		}
-		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return false, fmt.Errorf("parse Elydora runtime config at %s: %w", configPath, err)
-		}
-		config, ok := value.(map[string]any)
-		if !ok || config == nil {
-			return false, fmt.Errorf("Elydora runtime config at %s must contain a JSON object", configPath)
-		}
-		agentID, ok := config["agent_id"].(string)
-		if !ok || config["agent_name"] != copilotAgentKey ||
-			!sameCopilotAgentID(agentID, contract.agentID) {
-			continue
-		}
-		guardExists, err := copilotPhysicalFileExists(contract.guardPath, "Elydora guard runtime")
-		if err != nil {
-			return false, err
-		}
-		auditExists, err := copilotPhysicalFileExists(contract.auditPath, "Elydora audit runtime")
-		if err != nil {
-			return false, err
-		}
-		if guardExists && auditExists {
-			return true, nil
+	preconditions []filePrecondition,
+) error {
+	hasChanges := false
+	for _, change := range changes {
+		if change != nil {
+			hasChanges = true
+			break
 		}
 	}
-	return false, nil
+	if !hasChanges {
+		return writeChanges(changes, label, rename, preconditions...)
+	}
+	if agentDirectory != "" {
+		if err := EnsurePrivateDirectory(runtimeRoot); err != nil {
+			return err
+		}
+		if err := EnsurePrivateDirectory(agentDirectory); err != nil {
+			return err
+		}
+	}
+	return writeChanges(changes, label, rename, preconditions...)
 }

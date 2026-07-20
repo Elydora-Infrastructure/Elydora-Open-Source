@@ -12,28 +12,42 @@ import (
 	"testing"
 )
 
-const copilotTestAgentID = "agent-1"
+const (
+	copilotTestAgentID    = "agent-1"
+	copilotTestPrivateKey = "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws"
+)
 
 type copilotFixtureOptions struct {
-	userRaw       *string
-	legacyRaw     *string
-	skipGuard     bool
-	emptyOverride bool
+	userRaw                *string
+	legacyRaw              *string
+	legacyUserConfigRaw    *string
+	userSettingsRaw        *string
+	claudeSettingsRaw      *string
+	claudeLocalSettingsRaw *string
+	repositorySettingsRaw  *string
+	localSettingsRaw       *string
+	emptyOverride          bool
 }
 
 type copilotFixture struct {
-	plugin        *CopilotPlugin
-	config        InstallConfig
-	homeDir       string
-	projectDir    string
-	copilotHome   string
-	agentDir      string
-	configPath    string
-	legacyPath    string
-	guardPath     string
-	hookPath      string
-	runtimeConfig string
-	privateKey    string
+	plugin              *CopilotPlugin
+	config              InstallConfig
+	homeDir             string
+	projectDir          string
+	copilotHome         string
+	agentDir            string
+	configPath          string
+	legacyPath          string
+	guardPath           string
+	hookPath            string
+	runtimeConfig       string
+	privateKey          string
+	legacyUserConfig    string
+	userSettings        string
+	claudeSettings      string
+	claudeLocalSettings string
+	repositorySettings  string
+	localSettings       string
 }
 
 type copilotCommandResult struct {
@@ -63,24 +77,27 @@ func prepareCopilotFixture(t *testing.T, options copilotFixtureOptions) *copilot
 	agentDir := filepath.Join(homeDir, ".elydora", copilotTestAgentID)
 	configPath := filepath.Join(copilotHome, "hooks", copilotConfigFile)
 	legacyPath := filepath.Join(projectDir, ".github", "hooks", "hooks.json")
+	legacyUserConfig := filepath.Join(copilotHome, "config.json")
+	userSettings := filepath.Join(copilotHome, "settings.json")
+	claudeSettings := filepath.Join(projectDir, ".claude", "settings.json")
+	claudeLocalSettings := filepath.Join(projectDir, ".claude", "settings.local.json")
+	repositorySettings := filepath.Join(projectDir, ".github", "copilot", "settings.json")
+	localSettings := filepath.Join(projectDir, ".github", "copilot", "settings.local.json")
 	guardPath := filepath.Join(agentDir, copilotGuardScript)
 	hookPath := filepath.Join(agentDir, copilotAuditScript)
-	for _, directory := range []string{projectDir, agentDir} {
+	for _, directory := range []string{homeDir, projectDir} {
 		if err := os.MkdirAll(directory, 0700); err != nil {
 			t.Fatalf("create fixture directory %s: %v", directory, err)
 		}
 	}
-	if !options.skipGuard {
-		guard := "const fs = require('node:fs');\n" +
-			"fs.readFileSync(0);\n" +
-			"process.stderr.write('Agent is frozen by Elydora.');\n" +
-			"process.exit(2);\n"
-		if err := os.WriteFile(guardPath, []byte(guard), 0700); err != nil {
-			t.Fatalf("write guard runtime: %v", err)
-		}
-	}
 	writeOptionalCopilotFile(t, configPath, options.userRaw)
 	writeOptionalCopilotFile(t, legacyPath, options.legacyRaw)
+	writeOptionalCopilotFile(t, legacyUserConfig, options.legacyUserConfigRaw)
+	writeOptionalCopilotFile(t, userSettings, options.userSettingsRaw)
+	writeOptionalCopilotFile(t, claudeSettings, options.claudeSettingsRaw)
+	writeOptionalCopilotFile(t, claudeLocalSettings, options.claudeLocalSettingsRaw)
+	writeOptionalCopilotFile(t, repositorySettings, options.repositorySettingsRaw)
+	writeOptionalCopilotFile(t, localSettings, options.localSettingsRaw)
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
 	if options.emptyOverride {
@@ -102,20 +119,26 @@ func prepareCopilotFixture(t *testing.T, options copilotFixtureOptions) *copilot
 		}
 	})
 	return &copilotFixture{
-		plugin:        &CopilotPlugin{},
-		homeDir:       homeDir,
-		projectDir:    projectDir,
-		copilotHome:   copilotHome,
-		agentDir:      agentDir,
-		configPath:    configPath,
-		legacyPath:    legacyPath,
-		guardPath:     guardPath,
-		hookPath:      hookPath,
-		runtimeConfig: filepath.Join(agentDir, "config.json"),
-		privateKey:    filepath.Join(agentDir, "private.key"),
+		plugin:              &CopilotPlugin{},
+		homeDir:             homeDir,
+		projectDir:          projectDir,
+		copilotHome:         copilotHome,
+		agentDir:            agentDir,
+		configPath:          configPath,
+		legacyPath:          legacyPath,
+		guardPath:           guardPath,
+		hookPath:            hookPath,
+		runtimeConfig:       filepath.Join(agentDir, "config.json"),
+		privateKey:          filepath.Join(agentDir, "private.key"),
+		legacyUserConfig:    legacyUserConfig,
+		userSettings:        userSettings,
+		claudeSettings:      claudeSettings,
+		claudeLocalSettings: claudeLocalSettings,
+		repositorySettings:  repositorySettings,
+		localSettings:       localSettings,
 		config: InstallConfig{
 			AgentName: copilotAgentKey, OrgID: "org-1", AgentID: copilotTestAgentID,
-			PrivateKey: "test-key", KID: "kid-1", Token: "token-1",
+			PrivateKey: copilotTestPrivateKey, KID: "kid-1", Token: "token-1",
 			BaseURL: "https://api.elydora.test", GuardScriptPath: guardPath,
 		},
 	}
@@ -215,6 +238,10 @@ func legacyCopilotConfig(fixture *copilotFixture, extraHooks map[string]any) map
 			"powershell": "node " + fixture.guardPath, "timeoutSec": copilotLegacyTimeout,
 		}},
 		"postToolUse": []any{map[string]any{
+			"type": "command", "bash": "node " + fixture.hookPath,
+			"powershell": "node " + fixture.hookPath, "timeoutSec": copilotLegacyTimeout,
+		}},
+		"postToolUseFailure": []any{map[string]any{
 			"type": "command", "bash": "node " + fixture.hookPath,
 			"powershell": "node " + fixture.hookPath, "timeoutSec": copilotLegacyTimeout,
 		}},

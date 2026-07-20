@@ -18,6 +18,11 @@ func TestCopilotRegistryUsesNativeUserHooks(t *testing.T) {
 	if got := SupportedAgents[copilotAgentKey]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Copilot registry = %#v, want %#v", got, want)
 	}
+	plugin := NewPlugin(copilotAgentKey)
+	manager, ok := plugin.(GuardRuntimeManager)
+	if !ok || !manager.ManagesGuardRuntime() {
+		t.Fatal("Copilot must own its generated guard transactionally")
+	}
 }
 
 func TestCopilotInstallPreservesUserHooksMigratesLegacyAndIsIdempotent(t *testing.T) {
@@ -48,7 +53,8 @@ func TestCopilotInstallPreservesUserHooksMigratesLegacyAndIsIdempotent(t *testin
 	}
 	preHooks := requireCopilotArray(t, hooks["preToolUse"])
 	postHooks := requireCopilotArray(t, hooks["postToolUse"])
-	if len(preHooks) != 2 || len(postHooks) != 1 {
+	failureHooks := requireCopilotArray(t, hooks["postToolUseFailure"])
+	if len(preHooks) != 2 || len(postHooks) != 1 || len(failureHooks) != 1 {
 		t.Fatalf("Copilot hooks = %#v", hooks)
 	}
 	if requireCopilotObject(t, preHooks[0])["command"] != "user-pre" {
@@ -59,6 +65,9 @@ func TestCopilotInstallPreservesUserHooksMigratesLegacyAndIsIdempotent(t *testin
 	))
 	assertNativeCopilotHandler(t, managedCopilotTestHandler(
 		t, settings, "postToolUse", copilotAuditScript,
+	))
+	assertNativeCopilotHandler(t, managedCopilotTestHandler(
+		t, settings, "postToolUseFailure", copilotAuditScript,
 	))
 	legacy := readCopilotObject(t, fixture.legacyPath)
 	legacyHooks := requireCopilotObject(t, legacy["hooks"])
@@ -98,6 +107,13 @@ func TestCopilotCommandsBlockAndForwardNativePayloadByteForByte(t *testing.T) {
 	fixture := prepareCopilotFixture(t, copilotFixtureOptions{})
 	installCopilotFixture(t, fixture)
 	capturePath := filepath.Join(t.TempDir(), "captured-event.json")
+	guardScript := "const fs = require('node:fs');\n" +
+		"fs.readFileSync(0);\n" +
+		"process.stderr.write('Agent is frozen by Elydora.');\n" +
+		"process.exit(2);\n"
+	if err := os.WriteFile(fixture.guardPath, []byte(guardScript), 0700); err != nil {
+		t.Fatalf("write blocking guard runtime: %v", err)
+	}
 	captureScript := "const fs = require('node:fs');\n" +
 		"fs.writeFileSync(process.env.ELYDORA_CAPTURE, fs.readFileSync(0));\n"
 	if err := os.WriteFile(fixture.hookPath, []byte(captureScript), 0700); err != nil {
@@ -110,7 +126,7 @@ func TestCopilotCommandsBlockAndForwardNativePayloadByteForByte(t *testing.T) {
 	if guardResult.exitCode != 2 || !strings.Contains(guardResult.stderr, "Agent is frozen by Elydora") {
 		t.Fatalf("guard result = %#v", guardResult)
 	}
-	postPayload := `{"sessionId":"session-1","timestamp":2,"cwd":"project","toolName":"powershell","toolArgs":{"command":"Get-ChildItem"},"toolResult":{"output":"ok"}}` + "\n"
+	postPayload := `{"sessionId":"session-1","timestamp":2,"cwd":"project","toolName":"powershell","toolArgs":{"command":"Get-ChildItem"},"toolResult":{"resultType":"success","textResultForLlm":"ok"}}` + "\n"
 	audit := managedCopilotTestHandler(t, settings, "postToolUse", copilotAuditScript)
 	auditResult := runCopilotHandler(t, audit, postPayload, "ELYDORA_CAPTURE="+capturePath)
 	if auditResult.exitCode != 0 {
@@ -119,6 +135,16 @@ func TestCopilotCommandsBlockAndForwardNativePayloadByteForByte(t *testing.T) {
 	captured, err := os.ReadFile(capturePath)
 	if err != nil || string(captured) != postPayload {
 		t.Fatalf("captured payload = %q, %v", captured, err)
+	}
+	failurePayload := `{"sessionId":"session-1","timestamp":3,"cwd":"project","toolName":"powershell","toolArgs":{"command":"Get-ChildItem"},"error":"command failed"}` + "\n"
+	failure := managedCopilotTestHandler(t, settings, "postToolUseFailure", copilotAuditScript)
+	failureResult := runCopilotHandler(t, failure, failurePayload, "ELYDORA_CAPTURE="+capturePath)
+	if failureResult.exitCode != 0 {
+		t.Fatalf("failure audit result = %#v", failureResult)
+	}
+	captured, err = os.ReadFile(capturePath)
+	if err != nil || string(captured) != failurePayload {
+		t.Fatalf("captured failure payload = %q, %v", captured, err)
 	}
 }
 
@@ -146,7 +172,7 @@ func TestCopilotStatusRequiresEnabledPairIdentityAndRuntimeFiles(t *testing.T) {
 
 	settings := readCopilotObject(t, fixture.configPath)
 	hooks := requireCopilotObject(t, settings["hooks"])
-	delete(hooks, "postToolUse")
+	delete(hooks, "postToolUseFailure")
 	writeCopilotObject(t, fixture.configPath, settings)
 	status, err = fixture.plugin.Status()
 	if err != nil || status.HookConfigured || status.Installed {
@@ -177,7 +203,7 @@ func TestCopilotStatusRequiresEnabledPairIdentityAndRuntimeFiles(t *testing.T) {
 	runtimeConfig["agent_id"] = "another-agent"
 	writeCopilotObject(t, fixture.runtimeConfig, runtimeConfig)
 	status, err = fixture.plugin.Status()
-	if err != nil || status.HookScriptExists || status.Installed {
+	if err == nil || status.HookScriptExists || status.Installed {
 		t.Fatalf("identity mismatch status = %#v, %v", status, err)
 	}
 }
@@ -186,9 +212,24 @@ func TestCopilotStatusRecognizesActiveProjectDelivery(t *testing.T) {
 	fixture := prepareCopilotFixture(t, copilotFixtureOptions{})
 	writeCopilotObject(t, fixture.legacyPath, legacyCopilotConfig(fixture, nil))
 	writeCopilotObject(t, fixture.runtimeConfig, map[string]any{
-		"agent_id": copilotTestAgentID, "agent_name": copilotAgentKey,
+		"org_id": "org-1", "agent_id": copilotTestAgentID, "kid": "kid-1",
+		"base_url": "https://api.elydora.test", "agent_name": copilotAgentKey,
 	})
-	if err := os.WriteFile(fixture.hookPath, []byte("process.stdin.resume();\n"), 0700); err != nil {
+	if err := os.WriteFile(fixture.privateKey, []byte(copilotTestPrivateKey), 0600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+	if err := os.WriteFile(
+		fixture.guardPath,
+		[]byte(generateGuardScript(copilotAgentKey, copilotTestAgentID, "", false, "")),
+		0700,
+	); err != nil {
+		t.Fatalf("write guard runtime: %v", err)
+	}
+	if err := os.WriteFile(
+		fixture.hookPath,
+		[]byte(buildHookScriptWithOutput(copilotAgentKey, copilotTestAgentID, "", false, true)),
+		0700,
+	); err != nil {
 		t.Fatalf("write audit runtime: %v", err)
 	}
 
@@ -237,7 +278,8 @@ func TestCopilotUninstallRemovesExactOwnershipAndPreservesUserEntries(t *testing
 
 	remaining := readCopilotObject(t, fixture.configPath)
 	remainingHooks := requireCopilotObject(t, remaining["hooks"])
-	if remainingHooks["postToolUse"] != nil || len(requireCopilotArray(t, remainingHooks["preToolUse"])) != 2 {
+	if remainingHooks["postToolUse"] != nil || remainingHooks["postToolUseFailure"] != nil ||
+		len(requireCopilotArray(t, remainingHooks["preToolUse"])) != 2 {
 		t.Fatalf("remaining hooks = %#v", remainingHooks)
 	}
 	if len(requireCopilotArray(t, remainingHooks["notification"])) != 1 {

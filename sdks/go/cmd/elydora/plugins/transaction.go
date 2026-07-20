@@ -100,7 +100,12 @@ func prepareSourceChange(
 	}, nil
 }
 
-func writeChanges(changes []*fileChange, label string, rename renameFunc) error {
+func writeChanges(
+	changes []*fileChange,
+	label string,
+	rename renameFunc,
+	preconditions ...filePrecondition,
+) error {
 	filtered := make([]fileChange, 0, len(changes))
 	targets := map[string]bool{}
 	for _, change := range changes {
@@ -117,6 +122,9 @@ func writeChanges(changes []*fileChange, label string, rename renameFunc) error 
 		targets[target] = true
 		filtered = append(filtered, *change)
 	}
+	if err := assertFilePreconditions(preconditions, label); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
 	if len(filtered) == 0 {
 		return nil
 	}
@@ -132,12 +140,26 @@ func writeChanges(changes []*fileChange, label string, rename renameFunc) error 
 		}
 		staged = append(staged, item)
 	}
+	if err := assertFilePreconditions(preconditions, label); err != nil {
+		cleanupErrors := cleanupStaging(staged)
+		return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), cleanupErrors, "cleanup failed")
+	}
 	for index := range staged {
+		if err := assertFilePreconditions(preconditions, label); err != nil {
+			recoveryErrors := rollbackChanges(staged, rename)
+			recoveryErrors = append(recoveryErrors, cleanupStaging(staged)...)
+			return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), recoveryErrors, "recovery failed")
+		}
 		if err := commitChange(&staged[index], rename); err != nil {
 			recoveryErrors := rollbackChanges(staged, rename)
 			recoveryErrors = append(recoveryErrors, cleanupStaging(staged)...)
 			return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), recoveryErrors, "recovery failed")
 		}
+	}
+	if err := assertFilePreconditions(preconditions, label); err != nil {
+		recoveryErrors := rollbackChanges(staged, rename)
+		recoveryErrors = append(recoveryErrors, cleanupStaging(staged)...)
+		return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), recoveryErrors, "recovery failed")
 	}
 	cleanupErrors := cleanupStaging(staged)
 	if len(cleanupErrors) > 0 {

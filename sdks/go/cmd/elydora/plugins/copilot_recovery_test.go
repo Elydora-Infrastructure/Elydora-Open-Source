@@ -64,34 +64,32 @@ func TestCopilotInstallRejectsInvalidProjectSourceBeforeWrites(t *testing.T) {
 	assertCopilotRuntimeAbsent(t, fixture)
 }
 
-func TestCopilotInstallRejectsMissingOrUnmanagedGuardBeforeWrites(t *testing.T) {
-	t.Run("missing", func(t *testing.T) {
-		fixture := prepareCopilotFixture(t, copilotFixtureOptions{skipGuard: true})
-		if err := fixture.plugin.Install(fixture.config); err == nil {
-			t.Fatal("install accepted a missing guard runtime")
-		}
-		assertCopilotRuntimeAbsent(t, fixture)
-	})
-	t.Run("unmanaged path", func(t *testing.T) {
-		fixture := prepareCopilotFixture(t, copilotFixtureOptions{})
-		unmanaged := filepath.Join(fixture.homeDir, "unmanaged-guard.js")
-		if err := os.WriteFile(unmanaged, []byte("process.exit(2);\n"), 0700); err != nil {
-			t.Fatalf("write unmanaged guard: %v", err)
-		}
-		fixture.config.GuardScriptPath = unmanaged
-		if err := fixture.plugin.Install(fixture.config); err == nil {
-			t.Fatal("install accepted an unmanaged guard runtime")
-		}
-		assertCopilotRuntimeAbsent(t, fixture)
-	})
+func TestCopilotInstallGeneratesManagedGuardAndRejectsUnmanagedPath(t *testing.T) {
+	fixture := prepareCopilotFixture(t, copilotFixtureOptions{})
+	installCopilotFixture(t, fixture)
+	expected := generateGuardScript(copilotAgentKey, copilotTestAgentID, "", false, "")
+	actual, err := os.ReadFile(fixture.guardPath)
+	if err != nil || string(actual) != expected {
+		t.Fatalf("generated guard = %q, %v", actual, err)
+	}
+
+	fixture = prepareCopilotFixture(t, copilotFixtureOptions{})
+	fixture.config.GuardScriptPath = filepath.Join(fixture.homeDir, "unmanaged-guard.js")
+	if err := fixture.plugin.Install(fixture.config); err == nil {
+		t.Fatal("install accepted an unmanaged guard runtime")
+	}
+	assertCopilotRuntimeAbsent(t, fixture)
 }
 
 func TestCopilotInstallRejectsSymlinkFiles(t *testing.T) {
 	t.Run("guard runtime", func(t *testing.T) {
-		fixture := prepareCopilotFixture(t, copilotFixtureOptions{skipGuard: true})
+		fixture := prepareCopilotFixture(t, copilotFixtureOptions{})
 		target := filepath.Join(fixture.homeDir, "guard-target.js")
 		if err := os.WriteFile(target, []byte("process.exit(2);\n"), 0700); err != nil {
 			t.Fatalf("write guard target: %v", err)
+		}
+		if err := os.MkdirAll(fixture.agentDir, 0700); err != nil {
+			t.Fatalf("create agent runtime directory: %v", err)
 		}
 		if err := os.Symlink(target, fixture.guardPath); err != nil {
 			t.Skipf("create guard symlink: %v", err)
@@ -99,7 +97,13 @@ func TestCopilotInstallRejectsSymlinkFiles(t *testing.T) {
 		if err := fixture.plugin.Install(fixture.config); err == nil {
 			t.Fatal("install accepted a symlink guard runtime")
 		}
-		assertCopilotRuntimeAbsent(t, fixture)
+		for _, path := range []string{
+			fixture.runtimeConfig, fixture.privateKey, fixture.hookPath,
+		} {
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("runtime file exists at %s: %v", path, err)
+			}
+		}
 	})
 	t.Run("user source", func(t *testing.T) {
 		fixture := prepareCopilotFixture(t, copilotFixtureOptions{})
@@ -248,7 +252,9 @@ func TestCopilotInstallDetectsConcurrentSourceChangeAndRollsBack(t *testing.T) {
 
 func assertCopilotRuntimeAbsent(t *testing.T, fixture *copilotFixture) {
 	t.Helper()
-	for _, path := range []string{fixture.runtimeConfig, fixture.privateKey, fixture.hookPath} {
+	for _, path := range []string{
+		fixture.runtimeConfig, fixture.privateKey, fixture.guardPath, fixture.hookPath,
+	} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("runtime file exists at %s: %v", path, err)
 		}

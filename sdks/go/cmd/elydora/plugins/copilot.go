@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
@@ -11,131 +10,214 @@ type CopilotPlugin struct {
 	rename renameFunc
 }
 
-func (p *CopilotPlugin) Install(config InstallConfig) error {
-	if config.AgentID == "" {
-		return fmt.Errorf("agent ID is required")
-	}
-	sources, err := readCopilotSources()
+// ManagesGuardRuntime reports that Copilot commits its provider guard with the
+// audit runtime and hook documents.
+func (p *CopilotPlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+// PreflightInstall validates hook sources, settings, matchers, credentials,
+// and runtime identity before any write.
+func (p *CopilotPlugin) PreflightInstall(config InstallConfig) error {
+	sources, _, err := readCopilotSources()
 	if err != nil {
 		return err
 	}
-	if sources.user.disabled {
-		return fmt.Errorf(
-			"GitHub Copilot user hooks are disabled by disableAllHooks at %s",
-			sources.user.filePath,
+	_, _, err = preflightCopilotInstallation(config, sources)
+	return err
+}
+
+func renderCopilotInstallation(
+	sources *copilotSources,
+	guardPath string,
+	auditPath string,
+	nodePath string,
+) ([]*copilotRenderedDocument, error) {
+	hooks, err := removeManagedCopilotHooks(sources.user.hooks, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range []struct {
+		event      string
+		scriptPath string
+	}{
+		{"preToolUse", guardPath},
+		{"postToolUse", auditPath},
+		{"postToolUseFailure", auditPath},
+	} {
+		hooks[item.event] = append(
+			hooks[item.event],
+			buildCopilotHandler(nodePath, item.scriptPath),
 		)
 	}
-	runtimeRoot, err := AgentRuntimeRoot()
+	user, err := renderCopilotDocument(sources.user, hooks)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("render GitHub Copilot user hooks: %w", err)
 	}
-	agentDirectory, err := ResolveAgentRuntimeDirectory(config.AgentID)
-	if err != nil {
-		return err
-	}
-	expectedGuard := filepath.Join(agentDirectory, copilotGuardScript)
-	if !sameCopilotPath(config.GuardScriptPath, expectedGuard) {
-		return fmt.Errorf("Elydora guard runtime must use the managed agent directory: %s", expectedGuard)
-	}
-	if err := requireCopilotRuntime(expectedGuard, "Elydora guard runtime"); err != nil {
-		return err
-	}
-	auditPath := filepath.Join(agentDirectory, copilotAuditScript)
-	if config.HookScript != "" && !sameCopilotPath(config.HookScript, auditPath) {
-		return fmt.Errorf("Elydora audit runtime must use the managed agent directory: %s", auditPath)
-	}
-	nodePath, err := resolveNodeRuntime()
-	if err != nil {
-		return err
-	}
-
-	userHooks := removeManagedCopilotHooks(sources.user.hooks, runtimeRoot, "")
-	userHooks["preToolUse"] = append(
-		userHooks["preToolUse"],
-		buildCopilotHandler(nodePath, expectedGuard),
-	)
-	userHooks["postToolUse"] = append(
-		userHooks["postToolUse"],
-		buildCopilotHandler(nodePath, auditPath),
-	)
-	userRendered, err := renderCopilotDocument(sources.user, userHooks)
-	if err != nil {
-		return fmt.Errorf("render GitHub Copilot user hooks: %w", err)
-	}
-	rendered := []*copilotRenderedDocument{userRendered}
+	rendered := []*copilotRenderedDocument{user}
 	if sources.legacy != nil {
-		legacyHooks := removeManagedCopilotHooks(sources.legacy.hooks, runtimeRoot, "")
-		legacyRendered, renderErr := renderCopilotDocument(sources.legacy, legacyHooks)
-		if renderErr != nil {
-			return fmt.Errorf("render GitHub Copilot project hooks: %w", renderErr)
+		legacyHooks, removeErr := removeManagedCopilotHooks(sources.legacy.hooks, "")
+		if removeErr != nil {
+			return nil, removeErr
 		}
-		rendered = append(rendered, legacyRendered)
+		legacy, renderErr := renderCopilotDocument(sources.legacy, legacyHooks)
+		if renderErr != nil {
+			return nil, fmt.Errorf("render GitHub Copilot legacy project hooks: %w", renderErr)
+		}
+		rendered = append(rendered, legacy)
 	}
-	changes, err := prepareCopilotInstallationChanges(
-		config,
-		agentDirectory,
-		auditPath,
-		rendered,
+	return rendered, nil
+}
+
+func (p *CopilotPlugin) Install(config InstallConfig) error {
+	sources, _, err := readCopilotSources()
+	if err != nil {
+		return err
+	}
+	paths, nodePath, err := preflightCopilotInstallation(config, sources)
+	if err != nil {
+		return err
+	}
+	rendered, err := renderCopilotInstallation(
+		sources,
+		paths.guardPath,
+		paths.auditPath,
+		nodePath,
 	)
 	if err != nil {
 		return err
 	}
-	if err := writeChanges(changes, "Install GitHub Copilot hooks", p.rename); err != nil {
+	prepared, err := prepareCopilotInstallation(config, sources, rendered)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("  GitHub Copilot CLI hooks: %s\n", sources.user.filePath)
+	if err := commitCopilotInstallation(prepared, p.rename); err != nil {
+		return err
+	}
+	fmt.Printf("GitHub Copilot CLI hooks: %s\n", sources.user.filePath)
+	fmt.Println("GitHub Copilot CLI: restart active sessions to load updated hooks.")
 	return nil
 }
 
-func (p *CopilotPlugin) Uninstall(agentID string) error {
-	sources, err := readCopilotSources()
-	if err != nil {
-		return err
-	}
-	runtimeRoot, err := AgentRuntimeRoot()
-	if err != nil {
-		return err
-	}
+func renderCopilotUninstall(
+	sources *copilotSources,
+	agentID string,
+) ([]*copilotRenderedDocument, error) {
 	documents := []*copilotDocument{sources.user}
 	if sources.legacy != nil {
 		documents = append(documents, sources.legacy)
 	}
-	changes := make([]*fileChange, 0, len(documents))
+	rendered := make([]*copilotRenderedDocument, 0, len(documents))
 	for _, document := range documents {
-		hooks := removeManagedCopilotHooks(document.hooks, runtimeRoot, agentID)
-		rendered, renderErr := renderCopilotDocument(document, hooks)
-		if renderErr != nil {
-			return fmt.Errorf("render GitHub Copilot hook source: %w", renderErr)
+		hooks, err := removeManagedCopilotHooks(document.hooks, agentID)
+		if err != nil {
+			return nil, err
 		}
-		change, changeErr := prepareRenderedCopilotChange(rendered)
+		item, err := renderCopilotDocument(document, hooks)
+		if err != nil {
+			return nil, fmt.Errorf("render GitHub Copilot hook source: %w", err)
+		}
+		rendered = append(rendered, item)
+	}
+	return rendered, nil
+}
+
+func (p *CopilotPlugin) Uninstall(agentID string) error {
+	sources, _, err := readCopilotSources()
+	if err != nil {
+		return err
+	}
+	rendered, err := renderCopilotUninstall(sources, agentID)
+	if err != nil {
+		return err
+	}
+	changes := make([]*fileChange, 0, len(rendered))
+	for _, document := range rendered {
+		change, changeErr := prepareRenderedCopilotChange(document)
 		if changeErr != nil {
 			return changeErr
 		}
 		changes = append(changes, change)
 	}
-	return writeChanges(changes, "Uninstall GitHub Copilot hooks", p.rename)
+	return writeCopilotChanges(
+		changes,
+		"Uninstall GitHub Copilot hooks",
+		p.rename,
+		"",
+		"",
+		nil,
+	)
+}
+
+func mergedCopilotContracts(
+	sources *copilotSources,
+) ([]copilotRuntimeContract, error) {
+	contracts, err := copilotRuntimeContracts(sources.user.hooks)
+	if err != nil {
+		return nil, err
+	}
+	if sources.legacy != nil {
+		legacy, legacyErr := copilotRuntimeContracts(sources.legacy.hooks)
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		contracts = append(contracts, legacy...)
+	}
+	unique := map[string]copilotRuntimeContract{}
+	for _, contract := range contracts {
+		unique[copilotEntryKey(contract.agentID)] = contract
+	}
+	result := make([]copilotRuntimeContract, 0, len(unique))
+	for _, contract := range unique {
+		result = append(result, contract)
+	}
+	return result, nil
+}
+
+func configuredCopilotPath(
+	sources *copilotSources,
+	defaultPath string,
+) (string, error) {
+	userContracts, err := copilotRuntimeContracts(sources.user.hooks)
+	if err != nil {
+		return "", err
+	}
+	if len(userContracts) > 0 {
+		return sources.user.filePath, nil
+	}
+	if sources.legacy != nil {
+		legacyContracts, legacyErr := copilotRuntimeContracts(sources.legacy.hooks)
+		if legacyErr != nil {
+			return "", legacyErr
+		}
+		if len(legacyContracts) > 0 {
+			return sources.legacy.filePath, nil
+		}
+	}
+	return filepath.Clean(defaultPath), nil
 }
 
 func (p *CopilotPlugin) Status() (PluginStatus, error) {
-	userPath, _, pathErr := copilotConfigPaths()
+	paths, pathErr := resolveCopilotPaths()
 	entry := SupportedAgents[copilotAgentKey]
-	status := PluginStatus{
-		AgentName: copilotAgentKey, DisplayName: entry.Name, ConfigPath: userPath,
-	}
+	status := PluginStatus{AgentName: copilotAgentKey, DisplayName: entry.Name}
 	if pathErr != nil {
 		return status, pathErr
 	}
-	sources, err := readCopilotSources()
+	status.ConfigPath = paths.userHookPath
+	sources, _, err := readCopilotSources()
 	if err != nil {
 		return status, err
 	}
-	runtimeRoot, err := AgentRuntimeRoot()
+	contracts, err := mergedCopilotContracts(sources)
 	if err != nil {
 		return status, err
 	}
-	contracts := activeCopilotContracts(sources, runtimeRoot)
-	status.ConfigPath = configuredCopilotPath(sources, runtimeRoot)
-	status.HookConfigured = len(contracts) > 0
+	status.ConfigPath, err = configuredCopilotPath(sources, paths.userHookPath)
+	if err != nil {
+		return status, err
+	}
+	status.HookConfigured = sources.disabledBy == "" && len(contracts) > 0
 	if !status.HookConfigured {
 		return status, nil
 	}
@@ -145,21 +227,4 @@ func (p *CopilotPlugin) Status() (PluginStatus, error) {
 	}
 	status.Installed = status.HookScriptExists
 	return status, nil
-}
-
-func requireCopilotRuntime(path, label string) error {
-	if path == "" {
-		return fmt.Errorf("%s path is required", label)
-	}
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("%s is missing: %s", label, path)
-	}
-	if err != nil {
-		return fmt.Errorf("read %s at %s: %w", label, path, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("%s path is not a physical file: %s", label, path)
-	}
-	return nil
 }
