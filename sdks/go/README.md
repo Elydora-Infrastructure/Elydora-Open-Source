@@ -69,9 +69,12 @@ elydora install \
   --agent claudecode \
   --org-id org-123 \
   --agent-id agent-456 \
-  --private-key <key> \
+  --private-key-file /secure/path/private.key \
+  --token-file /secure/path/api.token \
   --kid agent-456-key-v1
 ```
+
+Credential options may be omitted in an interactive terminal; the CLI then reads the private key and optional API token without terminal echo. Credential files must contain one UTF-8 line of at most 64 KiB. Unix credential files require owner-only permissions such as `chmod 600`. Installation commits `config.json`, `private.key`, and `hook.js` as one rollback-capable runtime transaction, and the generated scripts validate those protected files at execution time.
 
 Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex after installation and trust the Elydora `PreToolUse` and `PostToolUse` definitions.
 

@@ -2,70 +2,7 @@ package plugins
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 )
-
-// GenerateHookScript writes a self-contained Node.js hook script to disk.
-// The script reads config/key from ~/.elydora/<agentId>/ at runtime, persists
-// chain state, and performs fire-and-forget EOR submission with inline Ed25519 crypto.
-// It always exits 0 so it never blocks the host agent.
-func GenerateHookScript(destPath string, config InstallConfig) error {
-	dir := filepath.Dir(destPath)
-	if err := EnsurePrivateDirectory(dir); err != nil {
-		return fmt.Errorf("create hook script directory: %w", err)
-	}
-
-	// Write the agent config and key files for runtime reading
-	if err := writeAgentConfig(config); err != nil {
-		return fmt.Errorf("write agent config: %w", err)
-	}
-
-	script := buildHookScript(config.AgentName, config.AgentID)
-	if err := os.WriteFile(destPath, []byte(script), 0755); err != nil {
-		return fmt.Errorf("write hook script: %w", err)
-	}
-	return nil
-}
-
-// writeAgentConfig persists the agent configuration and private key to
-// ~/.elydora/<agentId>/config.json and ~/.elydora/<agentId>/private.key so that
-// the generated hook script can read them at runtime without embedding secrets.
-func writeAgentConfig(config InstallConfig) error {
-	agentDir, err := PrepareAgentRuntimeDirectory(config.AgentID)
-	if err != nil {
-		return err
-	}
-
-	baseURL := config.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.elydora.com"
-	}
-
-	configJSON := fmt.Sprintf(`{
-  "org_id": %q,
-  "agent_id": %q,
-  "kid": %q,
-  "base_url": %q,
-  "token": %q,
-  "agent_name": %q
-}
-`, config.OrgID, config.AgentID, config.KID, baseURL, config.Token, config.AgentName)
-
-	configPath := filepath.Join(agentDir, "config.json")
-	// Note: 0600 permissions are a no-op on Windows; Go's os.Chmod only handles the read-only bit on Windows.
-	if err := os.WriteFile(configPath, []byte(configJSON), 0600); err != nil {
-		return fmt.Errorf("write agent config: %w", err)
-	}
-
-	keyPath := filepath.Join(agentDir, "private.key")
-	// Note: 0600 permissions are a no-op on Windows; Go's os.Chmod only handles the read-only bit on Windows.
-	if err := os.WriteFile(keyPath, []byte(config.PrivateKey+"\n"), 0600); err != nil {
-		return fmt.Errorf("write agent key: %w", err)
-	}
-
-	return nil
-}
 
 // GenerateGuardScript returns a self-contained Node.js guard script that checks
 // whether the agent is frozen and blocks tool execution if so.
@@ -91,6 +28,8 @@ const CONFIG_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'config.json');
 const STATUS_CACHE_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'status-cache.json');
 const CACHE_TTL_MS = 60000; // 60 seconds
 
+%s
+
 // Consume stdin so the parent process doesn't block on a full pipe
 process.stdin.resume();
 process.stdin.on('data', () => {});
@@ -99,7 +38,11 @@ async function main() {
   // Read agent config
   let config;
   try {
-    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    config = JSON.parse(readProtectedFile(
+      CONFIG_PATH,
+      'Agent config',
+      MAX_PROTECTED_CONFIG_BYTES,
+    ).toString('utf-8'));
   } catch {
     return; // Can't read config — fail-open (allow)
   }
@@ -166,7 +109,7 @@ async function main() {
 }
 
 main();
-`, agentName, agentName, agentId)
+`, agentName, agentName, agentId, protectedRuntimeFileReader)
 }
 
 func buildHookScript(agentName string, agentId string) string {
@@ -190,6 +133,21 @@ const CONFIG_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'config.json');
 const KEY_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'private.key');
 const CHAIN_STATE_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'chain-state.json');
 const ERROR_LOG_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'error.log');
+
+%s
+
+function parsePrivateKey(raw) {
+  let value = raw.toString('utf-8');
+  if (value.endsWith('\r\n')) {
+    value = value.slice(0, -2);
+  } else if (value.endsWith('\n')) {
+    value = value.slice(0, -1);
+  }
+  if (!value || value.includes('\r') || value.includes('\n') || value.includes('\0')) {
+    throw new Error('Private key file must contain exactly one line');
+  }
+  return value;
+}
 
 // ---------------------------------------------------------------------------
 // Embedded crypto (from @elydora/sdk src/crypto.ts + src/utils.ts)
@@ -369,8 +327,12 @@ async function main() {
     let config;
     let privateKey;
     try {
-      config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-      privateKey = fs.readFileSync(KEY_PATH, 'utf-8').trim();
+      config = JSON.parse(readProtectedFile(
+        CONFIG_PATH,
+        'Agent config',
+        MAX_PROTECTED_CONFIG_BYTES,
+      ).toString('utf-8'));
+      privateKey = parsePrivateKey(readProtectedFile(KEY_PATH, 'Private key'));
     } catch (err) {
       logError(new Error('Failed to read agent config/key: ' + err.message));
       return;
@@ -471,5 +433,5 @@ async function main() {
 }
 
 main();
-`, agentName, agentName, agentId)
+`, agentName, agentName, agentId, protectedRuntimeFileReader)
 }

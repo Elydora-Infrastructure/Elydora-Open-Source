@@ -62,19 +62,24 @@ Run "elydora <command> -h" for details on each command.
 // ---------------------------------------------------------------------------
 
 func cmdInstall(args []string) {
+	if err := rejectLegacySecretArguments(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	agent := fs.String("agent", "", "Agent name (required). Use 'elydora agents' to list.")
 	orgID := fs.String("org-id", "", "Organization ID (required)")
 	agentID := fs.String("agent-id", "", "Agent ID (required)")
-	privateKey := fs.String("private-key", "", "Base64url-encoded Ed25519 private key seed (required)")
+	privateKeyFile := fs.String("private-key-file", "", "Owner-only file containing the Ed25519 private key seed")
 	kid := fs.String("kid", "", "Key ID (defaults to <agent-id>-key-1)")
-	token := fs.String("token", "", "API token for authenticated requests (optional)")
+	tokenFile := fs.String("token-file", "", "Owner-only file containing the optional API token")
 	baseURL := fs.String("base-url", "https://api.elydora.com", "Elydora API base URL")
 
 	fs.Parse(args)
 
-	if *agent == "" || *orgID == "" || *agentID == "" || *privateKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: --agent, --org-id, --agent-id, and --private-key are required.")
+	if *agent == "" || *orgID == "" || *agentID == "" {
+		fmt.Fprintln(os.Stderr, "Error: --agent, --org-id, and --agent-id are required.")
 		fmt.Fprintln(os.Stderr)
 		fs.Usage()
 		os.Exit(1)
@@ -89,6 +94,26 @@ func cmdInstall(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: unsupported agent %q. Run 'elydora agents' to see supported agents.\n", *agent)
 		os.Exit(1)
 	}
+	if _, err := plugins.ResolveAgentRuntimeDirectory(*agentID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	secrets, err := resolveInstallSecrets(
+		installSecretSources{
+			privateKeyFile: *privateKeyFile,
+			tokenFile:      *tokenFile,
+		},
+		newStandardSecretTerminal(),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := validatePrivateKey(secrets.privateKey); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid private key: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Generate guard script (PreToolUse — freeze enforcement)
 	agentDirectory, err := plugins.PrepareAgentRuntimeDirectory(*agentID)
@@ -98,7 +123,12 @@ func cmdInstall(args []string) {
 	}
 	guardScriptPath := filepath.Join(agentDirectory, "guard.js")
 	guardScript := plugins.GenerateGuardScript(*agent, *agentID)
-	if err := os.WriteFile(guardScriptPath, []byte(guardScript), 0755); err != nil {
+	if err := plugins.WriteRuntimeFileAtomic(
+		guardScriptPath,
+		"Elydora guard runtime",
+		[]byte(guardScript),
+		0700,
+	); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing guard script: %v\n", err)
 		os.Exit(1)
 	}
@@ -108,9 +138,9 @@ func cmdInstall(args []string) {
 		AgentName:       *agent,
 		OrgID:           *orgID,
 		AgentID:         *agentID,
-		PrivateKey:      *privateKey,
+		PrivateKey:      secrets.privateKey,
 		KID:             *kid,
-		Token:           *token,
+		Token:           secrets.token,
 		BaseURL:         *baseURL,
 		GuardScriptPath: guardScriptPath,
 	}

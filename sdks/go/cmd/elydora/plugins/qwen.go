@@ -153,7 +153,7 @@ func prepareQwenInstallationChanges(
 		mode        os.FileMode
 	}{
 		{filepath.Join(agentDirectory, "config.json"), "Elydora runtime config", runtimeConfig, 0600},
-		{filepath.Join(agentDirectory, "private.key"), "Elydora private key", []byte(config.PrivateKey + "\n"), 0600},
+		{filepath.Join(agentDirectory, "private.key"), "Elydora private key", []byte(config.PrivateKey), 0600},
 		{auditPath, "Elydora audit runtime", []byte(buildHookScript(qwenAgentKey, config.AgentID)), 0700},
 	}
 	changes := make([]*fileChange, 0, len(items)+1)

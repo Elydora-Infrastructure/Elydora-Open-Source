@@ -4,4 +4,9 @@ go 1.21.0
 
 require github.com/pelletier/go-toml/v2 v2.4.3
 
-require github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a
+require (
+	github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a
+	golang.org/x/term v0.29.0
+)
+
+require golang.org/x/sys v0.30.0 // indirect
