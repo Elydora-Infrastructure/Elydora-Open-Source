@@ -400,18 +400,33 @@ test('high-drift providers retain their verified hook contracts', async () => {
   });
   assert.equal(providers.get('qwen').config_format, 'json');
   assert.deepEqual(providers.get('qwen').config_paths, [
+    '$QWEN_CODE_SYSTEM_DEFAULTS_PATH',
+    '/Library/Application Support/QwenCode/system-defaults.json',
+    '/etc/qwen-code/system-defaults.json',
+    'C:\\ProgramData\\qwen-code\\system-defaults.json',
     '$QWEN_HOME/settings.json',
     '~/.qwen/settings.json',
     '.qwen/settings.json',
+    '$QWEN_CODE_SYSTEM_SETTINGS_PATH',
+    '/Library/Application Support/QwenCode/settings.json',
+    '/etc/qwen-code/settings.json',
+    'C:\\ProgramData\\qwen-code\\settings.json',
+    '$QWEN_CODE_TRUSTED_FOLDERS_PATH',
+    '$QWEN_HOME/trustedFolders.json',
+    '~/.qwen/trustedFolders.json',
   ]);
   assert.deepEqual(providers.get('qwen').events, {
     before_tool: 'PreToolUse',
     after_tool: 'PostToolUse',
+    after_tool_failure: 'PostToolUseFailure',
   });
   assert.deepEqual(providers.get('qwen').event_fields, {
     name: 'tool_name',
     input: 'tool_input',
     session: 'session_id',
+    call_id: 'tool_use_id/tool_call_id',
+    output: 'tool_response',
+    error: 'error',
   });
   assert.deepEqual(providers.get('qwen').blocking, {
     mechanism: 'exit_code_2',
