@@ -95,7 +95,7 @@ Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the genera
 | Kiro CLI | `kirocli` |
 | Kiro IDE | `kiroide` |
 | OpenCode | `opencode` |
-| Copilot CLI | `copilot` |
+| GitHub Copilot CLI | `copilot` |
 | Letta Code | `letta` |
 
 ## API Reference
