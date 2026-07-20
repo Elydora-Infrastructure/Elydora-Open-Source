@@ -38,10 +38,19 @@ export interface ManagedHookSource extends ManagedHookLocation {
   readonly source: string;
 }
 
+export interface ManagedRuntimeFile {
+  readonly fileName: string;
+  readonly label: string;
+  readonly source: string;
+  readonly mode: number;
+  readonly maximumBytes?: number;
+}
+
 export interface ManagedInstallationSpec {
   readonly agentKey: string;
   readonly displayName: string;
   readonly hookSources: readonly ManagedHookSource[];
+  readonly runtimeFiles?: readonly ManagedRuntimeFile[];
   readonly config: InstallConfig;
   readonly guardOptions?: GuardScriptOptions;
   readonly auditOptions?: HookScriptOptions;
@@ -202,6 +211,17 @@ function hookDirectories(sources: readonly ManagedHookSource[]): ManagedDirector
   }));
 }
 
+function runtimeFilePath(paths: ManagedRuntimePaths, fileName: string): string {
+  if (!fileName
+    || fileName === '.'
+    || fileName === '..'
+    || fileName.includes('/')
+    || fileName.includes('\\')) {
+    throw new Error(`Managed runtime fileName must be a basename: ${fileName}`);
+  }
+  return path.join(paths.agentDirectory, fileName);
+}
+
 export async function prepareManagedInstallation(
   spec: ManagedInstallationSpec,
   guardScript: string,
@@ -240,6 +260,13 @@ export async function prepareManagedInstallation(
       next: generateHookScript(spec.agentKey, spec.config.agentId, spec.auditOptions),
       mode: 0o700,
     }),
+    ...(spec.runtimeFiles ?? []).map((runtimeFile) => prepareManagedFileChange({
+      filePath: runtimeFilePath(paths, runtimeFile.fileName),
+      label: runtimeFile.label,
+      next: runtimeFile.source,
+      mode: runtimeFile.mode,
+      maximumBytes: runtimeFile.maximumBytes,
+    })),
     ...spec.hookSources.map((source) => prepareManagedFileChange({
       filePath: source.filePath,
       label: source.label,

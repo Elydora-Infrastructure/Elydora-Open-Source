@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { parseStrictJsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'augment';
 export const GUARD_SCRIPT = 'guard.js';
@@ -40,6 +41,13 @@ export interface AugmentDocument {
   readonly configPath: string;
   readonly root: JsonObject;
   readonly hooks: AugmentHooks;
+  readonly raw?: string;
+}
+
+export interface RenderedAugmentDocument {
+  readonly document: AugmentDocument;
+  readonly changed: boolean;
+  readonly next?: string;
 }
 
 export interface RuntimeContract {
@@ -126,11 +134,10 @@ function sameAgentId(left: string, right: string): boolean {
   return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
-export function wrapperPaths(agentId: string): {
+export function wrapperPaths(agentDirectory: string): {
   readonly guardPath: string;
   readonly auditPath: string;
 } {
-  const agentDirectory = path.join(os.homedir(), '.elydora', agentId);
   return {
     guardPath: path.join(agentDirectory, GUARD_WRAPPER),
     auditPath: path.join(agentDirectory, AUDIT_WRAPPER),
@@ -240,6 +247,30 @@ export function readHooks(root: JsonObject): AugmentHooks {
     hooks[event] = value.map((group, index) => validateGroup(group, event, index));
   }
   return hooks;
+}
+
+export function parseAugmentDocument(configPath: string, raw: string): AugmentDocument {
+  const root = parseStrictJsonObject(raw, `Auggie user settings at ${configPath}`);
+  return { exists: true, configPath, root, hooks: readHooks(root), raw };
+}
+
+export function createAugmentDocument(configPath: string): AugmentDocument {
+  return { exists: false, configPath, root: {}, hooks: {} };
+}
+
+export function renderAugmentDocument(
+  document: AugmentDocument,
+  hooks: AugmentHooks,
+): RenderedAugmentDocument {
+  if (!document.exists && Object.keys(hooks).length === 0) {
+    return { document, changed: false };
+  }
+  const root: JsonObject = { ...document.root };
+  if (Object.keys(hooks).length > 0) root.hooks = hooks;
+  else delete root.hooks;
+  if (Object.keys(root).length === 0) return { document, changed: true };
+  const next = `${JSON.stringify(root, null, 2)}\n`;
+  return { document, changed: next !== document.raw, next };
 }
 
 function removeManaged(

@@ -71,7 +71,7 @@ Grok Build installation writes native global `PreToolUse`, `PostToolUse`, and `P
 
 Qwen Code installation writes user hooks to `$QWEN_HOME/settings.json` (default `~/.qwen/settings.json`). User-level `.qwen/.env` takes precedence over `~/.env` when it defines `QWEN_HOME`; explicit process environment values take highest precedence. Workspace settings remain unchanged. Run `/hooks` to review the definitions. `disableAllHooks` and `--safe-mode` suspend hook execution.
 
-Auggie installation writes user-level hooks to `~/.augment/settings.json` and creates the `.cmd` or `.sh` wrappers required by its command runner. System and workspace settings remain unchanged. Sessions started with `--augment-cache-dir` load settings from that alternate directory.
+Auggie installation commits `~/.augment/settings.json`, both platform wrappers, generated runtimes, runtime config, and private key as one rollback-capable transaction. The managed `PreToolUse` guard propagates exit code `2`; `PostToolUse` preserves Auggie's complete native hook payload. System, workspace, local workspace, and alternate `--augment-cache-dir` settings remain unchanged. Run `auggie tools list` to validate the effective user configuration.
 
 Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
 

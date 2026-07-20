@@ -1,182 +1,167 @@
-import { randomUUID } from 'node:crypto';
-import fsp from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
   AGENT_KEY,
+  AUDIT_SCRIPT,
+  AUDIT_WRAPPER,
+  GUARD_SCRIPT,
+  GUARD_WRAPPER,
+  buildWrapper,
+  createAugmentDocument,
+  parseAugmentDocument,
   type AugmentDocument,
-  type JsonObject,
+  type RenderedAugmentDocument,
   type RuntimeContract,
-  isObject,
-  readHooks,
 } from './augment-contract.js';
+import { inspectPhysicalDirectory, readPhysicalFile } from './managed-files.js';
+import {
+  commitManagedTransaction,
+  prepareManagedFileChange,
+} from './managed-transaction.js';
+import { parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  return isObject(error) && error.code === code;
-}
+const MAX_SECRET_BYTES = 64 * 1024;
+const MAX_CONFIG_BYTES = 512 * 1024;
 
 export function resolveConfigPath(): string {
   return path.join(os.homedir(), '.augment', 'settings.json');
 }
 
-async function readJsonObject(filePath: string, label: string): Promise<JsonObject | undefined> {
-  let raw: string;
-  try {
-    raw = await fsp.readFile(filePath, 'utf-8');
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) return undefined;
-    throw new Error(`Read ${label} at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Failed to parse ${label} at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-  if (!isObject(value)) throw new Error(`${label} at ${filePath} must contain a JSON object`);
-  return value;
-}
-
 export async function readConfig(): Promise<AugmentDocument> {
   const configPath = resolveConfigPath();
-  const root = await readJsonObject(configPath, 'Auggie settings');
-  if (!root) return { exists: false, configPath, root: {}, hooks: {} };
-  return { exists: true, configPath, root, hooks: readHooks(root) };
+  await inspectPhysicalDirectory(path.dirname(configPath), 'Auggie configuration directory');
+  const snapshot = await readPhysicalFile(configPath, 'Auggie user settings', MAX_CONFIG_BYTES);
+  return snapshot
+    ? parseAugmentDocument(configPath, snapshot.contents)
+    : createAugmentDocument(configPath);
 }
 
-async function failWrite(
-  handle: FileHandle | undefined,
-  tempPath: string,
-  label: string,
-  cause: unknown,
-): Promise<never> {
-  const errors = [asError(cause)];
-  if (handle) {
-    try {
-      await handle.close();
-    } catch (error) {
-      errors.push(asError(error));
-    }
-  }
-  try {
-    await fsp.unlink(tempPath);
-  } catch (error) {
-    if (!hasErrorCode(error, 'ENOENT')) errors.push(asError(error));
-  }
-  const message = `Write ${label}: ${errorMessage(cause)}`;
-  if (errors.length > 1) throw new AggregateError(errors, message);
-  throw new Error(message, { cause: errors[0] });
-}
-
-async function writeAtomic(
-  filePath: string,
-  contents: string,
-  mode: number,
-  label: string,
-): Promise<void> {
-  const directory = path.dirname(filePath);
-  await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
-  const tempPath = path.join(directory, `.${path.basename(filePath)}.${randomUUID()}.tmp`);
-  let handle: FileHandle | undefined;
-  try {
-    handle = await fsp.open(tempPath, 'wx', mode);
-    await handle.writeFile(contents, 'utf-8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await fsp.rename(tempPath, filePath);
-  } catch (error) {
-    await failWrite(handle, tempPath, `${label} at ${filePath}`, error);
-  }
-}
-
-export async function writeConfig(configPath: string, root: JsonObject): Promise<void> {
-  await writeAtomic(
-    configPath,
-    JSON.stringify(root, null, 2) + '\n',
-    0o600,
-    'Auggie settings',
-  );
-}
-
-export async function writeWrapper(wrapperPath: string, contents: string): Promise<void> {
-  await writeAtomic(wrapperPath, contents, 0o700, 'Auggie hook wrapper');
-}
-
-export async function removeConfig(configPath: string): Promise<void> {
-  try {
-    await fsp.unlink(configPath);
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) return;
-    throw new Error(`Remove Auggie settings at ${configPath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-}
-
-export async function regularFileExists(filePath: string, label: string): Promise<boolean> {
-  try {
-    return (await fsp.stat(filePath)).isFile();
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT') || hasErrorCode(error, 'ENOTDIR')) return false;
-    throw new Error(`Read ${label} at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-}
-
-export async function requireRuntime(filePath: string, label: string): Promise<void> {
-  if (!filePath) throw new Error(`${label} path is required`);
-  if (!await regularFileExists(filePath, label)) throw new Error(`${label} is missing: ${filePath}`);
+export async function writeAugmentDocument(rendered: RenderedAugmentDocument): Promise<void> {
+  if (!rendered.changed) return;
+  const change = await prepareManagedFileChange({
+    filePath: rendered.document.configPath,
+    label: 'Auggie user settings',
+    next: rendered.next,
+    mode: 0o600,
+    maximumBytes: MAX_CONFIG_BYTES,
+    expectedSource: rendered.document.raw,
+    verifyExpectedSource: true,
+  });
+  if (!change) return;
+  await commitManagedTransaction({
+    displayName: 'Augment Code CLI',
+    operation: 'uninstall',
+    directories: [{
+      path: path.dirname(rendered.document.configPath),
+      label: 'Auggie configuration directory',
+    }],
+    changes: [change],
+  });
 }
 
 function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
 }
 
-export async function runtimeFilesExist(contracts: RuntimeContract[]): Promise<boolean> {
-  const root = path.join(os.homedir(), '.elydora');
-  let entries: Array<{ isDirectory(): boolean; name: string }>;
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function requireNonEmptyString(value: unknown, field: string, configPath: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Elydora runtime config ${field} is invalid: ${configPath}`);
+  }
+  return value;
+}
+
+function validateRuntimeConfig(
+  config: JsonObject,
+  contract: RuntimeContract,
+  configPath: string,
+): void {
+  const supported = new Set(['org_id', 'agent_id', 'kid', 'base_url', 'token', 'agent_name']);
+  const extra = Object.keys(config).find((key) => !supported.has(key));
+  if (extra) throw new Error(`Elydora runtime config has unsupported field "${extra}": ${configPath}`);
+  requireNonEmptyString(config.org_id, 'org_id', configPath);
+  requireNonEmptyString(config.kid, 'kid', configPath);
+  const agentId = requireNonEmptyString(config.agent_id, 'agent_id', configPath);
+  if (!sameAgentId(agentId, contract.agentId) || config.agent_name !== AGENT_KEY) {
+    throw new Error(`Elydora runtime identity does not match Auggie hooks: ${configPath}`);
+  }
+  if (config.token !== undefined) requireNonEmptyString(config.token, 'token', configPath);
+  const rawBaseUrl = requireNonEmptyString(config.base_url, 'base_url', configPath);
+  let baseUrl: URL;
   try {
-    entries = await fsp.readdir(root, { withFileTypes: true });
+    baseUrl = new URL(rawBaseUrl);
   } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) return false;
-    throw new Error(`Read Elydora runtime directory at ${root}: ${errorMessage(error)}`, {
-      cause: asError(error),
+    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`, {
+      cause: error instanceof Error ? error : new Error(String(error)),
     });
   }
+  if (!['http:', 'https:'].includes(baseUrl.protocol)
+    || !baseUrl.hostname
+    || baseUrl.username
+    || baseUrl.password
+    || baseUrl.search
+    || baseUrl.hash) {
+    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`);
+  }
+}
+
+function validatePrivateKey(contents: string, keyPath: string): void {
+  const bytes = Buffer.from(contents, 'base64url');
+  if (bytes.length !== 32 || bytes.toString('base64url') !== contents) {
+    throw new Error(`Elydora private key is invalid: ${keyPath}`);
+  }
+}
+
+function validContractPaths(contract: RuntimeContract, agentDirectory: string): boolean {
+  return samePath(path.dirname(agentDirectory), path.join(os.homedir(), '.elydora'))
+    && samePath(contract.guardPath, path.join(agentDirectory, GUARD_SCRIPT))
+    && samePath(contract.auditPath, path.join(agentDirectory, AUDIT_SCRIPT))
+    && samePath(contract.guardWrapperPath, path.join(agentDirectory, GUARD_WRAPPER))
+    && samePath(contract.auditWrapperPath, path.join(agentDirectory, AUDIT_WRAPPER));
+}
+
+async function runtimeContractExists(contract: RuntimeContract): Promise<boolean> {
+  const runtimeRoot = path.join(os.homedir(), '.elydora');
+  const agentDirectory = path.dirname(contract.guardPath);
+  if (!validContractPaths(contract, agentDirectory)) return false;
+  if (!await inspectPhysicalDirectory(runtimeRoot, 'Elydora runtime directory')) return false;
+  if (!await inspectPhysicalDirectory(agentDirectory, 'Elydora agent runtime directory')) {
+    return false;
+  }
+  const configPath = path.join(agentDirectory, 'config.json');
+  const keyPath = path.join(agentDirectory, 'private.key');
+  const [config, key, guard, audit, guardWrapper, auditWrapper] = await Promise.all([
+    readPhysicalFile(configPath, 'Elydora runtime config', MAX_CONFIG_BYTES),
+    readPhysicalFile(keyPath, 'Elydora private key', MAX_SECRET_BYTES),
+    readPhysicalFile(contract.guardPath, 'Elydora guard runtime'),
+    readPhysicalFile(contract.auditPath, 'Elydora audit runtime'),
+    readPhysicalFile(contract.guardWrapperPath, 'Auggie guard wrapper'),
+    readPhysicalFile(contract.auditWrapperPath, 'Auggie audit wrapper'),
+  ]);
+  if (!config || !key || !guard || !audit || !guardWrapper || !auditWrapper) return false;
+  const parsed = parseStrictJsonObject(config.contents, `Elydora runtime config at ${configPath}`);
+  validateRuntimeConfig(parsed, contract, configPath);
+  validatePrivateKey(key.contents, keyPath);
+  return guard.contents.length > 0
+    && audit.contents.length > 0
+    && guardWrapper.contents === buildWrapper(contract.guardPath)
+    && auditWrapper.contents === buildWrapper(contract.auditPath);
+}
+
+export async function augmentRuntimeFilesExist(
+  contracts: readonly RuntimeContract[],
+): Promise<boolean> {
   for (const contract of contracts) {
-    const directory = entries.find(
-      (item) => item.isDirectory() && sameAgentId(item.name, contract.agentId),
-    );
-    if (!directory) continue;
-    const agentDirectory = path.join(root, directory.name);
-    const runtimeConfigPath = path.join(agentDirectory, 'config.json');
-    const runtimeConfig = await readJsonObject(runtimeConfigPath, 'Elydora runtime config');
-    if (!runtimeConfig || runtimeConfig.agent_name !== AGENT_KEY) continue;
-    const files = [
-      [contract.guardPath, 'Elydora guard runtime'],
-      [contract.auditPath, 'Elydora audit runtime'],
-      [contract.guardWrapperPath, 'Auggie guard wrapper'],
-      [contract.auditWrapperPath, 'Auggie audit wrapper'],
-    ] as const;
-    const existence = await Promise.all(
-      files.map(([filePath, label]) => regularFileExists(filePath, label)),
-    );
-    if (existence.every(Boolean)) return true;
+    if (await runtimeContractExists(contract)) return true;
   }
   return false;
 }
