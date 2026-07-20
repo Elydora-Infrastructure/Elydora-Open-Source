@@ -186,7 +186,7 @@ func prepareKimiInstallationChanges(
 	}{
 		{
 			paths.guardPath, "Elydora guard runtime",
-			[]byte(generateGuardScript(kimiAgentKey, config.AgentID, "", false)), 0700,
+			[]byte(generateGuardScript(kimiAgentKey, config.AgentID, "", false, "")), 0700,
 		},
 		{paths.configPath, "Elydora runtime config", runtimeConfig, 0600},
 		{paths.keyPath, "Elydora private key", []byte(config.PrivateKey), 0600},

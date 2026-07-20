@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-type codexRuntimePaths struct {
+type grokRuntimePaths struct {
 	runtimeRoot    string
 	agentDirectory string
 	configPath     string
@@ -16,7 +17,7 @@ type codexRuntimePaths struct {
 	auditPath      string
 }
 
-func validateCodexInstallConfig(config InstallConfig) error {
+func validateGrokInstallConfig(config InstallConfig) error {
 	for _, field := range []struct{ name, value string }{
 		{"agent name", config.AgentName},
 		{"organization ID", config.OrgID},
@@ -30,8 +31,17 @@ func validateCodexInstallConfig(config InstallConfig) error {
 			return fmt.Errorf("%s is required", field.name)
 		}
 	}
-	if config.AgentName != codexAgentKey {
-		return fmt.Errorf("codex installation requires agent name %s", codexAgentKey)
+	if config.AgentName != grokAgentKey {
+		return fmt.Errorf("grok installation requires agent name %s", grokAgentKey)
+	}
+	if strings.TrimSpace(config.OrgID) == "" {
+		return fmt.Errorf("organization ID is required")
+	}
+	if strings.TrimSpace(config.KID) == "" {
+		return fmt.Errorf("key ID is required")
+	}
+	if config.Token != "" && strings.TrimSpace(config.Token) == "" {
+		return fmt.Errorf("token must contain a non-whitespace value when provided")
 	}
 	if err := validateManagedPrivateKey(config.PrivateKey); err != nil {
 		return err
@@ -39,8 +49,8 @@ func validateCodexInstallConfig(config InstallConfig) error {
 	return validateManagedBaseURL(config.BaseURL)
 }
 
-func codexAgentPaths(config InstallConfig) (*codexRuntimePaths, error) {
-	if err := validateCodexInstallConfig(config); err != nil {
+func grokAgentPaths(config InstallConfig) (*grokRuntimePaths, error) {
+	if err := validateGrokInstallConfig(config); err != nil {
 		return nil, err
 	}
 	runtimeRoot, err := AgentRuntimeRoot()
@@ -51,21 +61,22 @@ func codexAgentPaths(config InstallConfig) (*codexRuntimePaths, error) {
 	if err != nil {
 		return nil, err
 	}
-	paths := &codexRuntimePaths{
-		runtimeRoot:    runtimeRoot,
-		agentDirectory: agentDirectory,
-		configPath:     filepath.Join(agentDirectory, "config.json"),
-		keyPath:        filepath.Join(agentDirectory, "private.key"),
-		guardPath:      filepath.Join(agentDirectory, codexGuardScript),
-		auditPath:      filepath.Join(agentDirectory, codexAuditScript),
+	paths := &grokRuntimePaths{
+		runtimeRoot: runtimeRoot, agentDirectory: agentDirectory,
+		configPath: filepath.Join(agentDirectory, "config.json"),
+		keyPath:    filepath.Join(agentDirectory, "private.key"),
+		guardPath:  filepath.Join(agentDirectory, grokGuardScript),
+		auditPath:  filepath.Join(agentDirectory, grokAuditScript),
 	}
-	if !sameCodexPath(config.GuardScriptPath, paths.guardPath) {
+	if !filepath.IsAbs(config.GuardScriptPath) ||
+		!sameGrokPath(config.GuardScriptPath, paths.guardPath) {
 		return nil, fmt.Errorf(
 			"guard runtime must use the managed Elydora agent directory: %s",
 			paths.guardPath,
 		)
 	}
-	if config.HookScript != "" && !sameCodexPath(config.HookScript, paths.auditPath) {
+	if config.HookScript != "" && (!filepath.IsAbs(config.HookScript) ||
+		!sameGrokPath(config.HookScript, paths.auditPath)) {
 		return nil, fmt.Errorf(
 			"audit runtime must use the managed Elydora agent directory: %s",
 			paths.auditPath,
@@ -74,21 +85,18 @@ func codexAgentPaths(config InstallConfig) (*codexRuntimePaths, error) {
 	return paths, nil
 }
 
-func preflightCodexInstallation(
+func preflightGrokInstallation(
 	config InstallConfig,
-	hooksPath string,
-) (*codexRuntimePaths, string, error) {
-	paths, err := codexAgentPaths(config)
+	document *grokDocument,
+) (*grokRuntimePaths, string, error) {
+	if document == nil {
+		return nil, "", fmt.Errorf("grok installation requires a hook document")
+	}
+	paths, err := grokAgentPaths(config)
 	if err != nil {
 		return nil, "", err
 	}
-	if _, err := managedPhysicalDirectoryExists(
-		filepath.Dir(hooksPath),
-		"Codex hooks directory",
-	); err != nil {
-		return nil, "", err
-	}
-	if err := validateCodexRuntimeIdentity(paths.agentDirectory, config.AgentID); err != nil {
+	if err := validateGrokRuntimeIdentity(paths.agentDirectory, config.AgentID); err != nil {
 		return nil, "", err
 	}
 	nodePath, err := resolveNodeRuntime()
@@ -98,11 +106,15 @@ func preflightCodexInstallation(
 	return paths, nodePath, nil
 }
 
-func buildCodexRuntimeConfig(config InstallConfig) ([]byte, error) {
-	encoded, err := json.MarshalIndent(agentRuntimeConfig{
-		OrgID: config.OrgID, AgentID: config.AgentID, KID: config.KID,
-		BaseURL: config.BaseURL, Token: config.Token, AgentName: codexAgentKey,
-	}, "", "  ")
+func buildGrokRuntimeConfig(config InstallConfig) ([]byte, error) {
+	value := map[string]any{
+		"org_id": config.OrgID, "agent_id": config.AgentID, "kid": config.KID,
+		"base_url": config.BaseURL, "agent_name": grokAgentKey,
+	}
+	if config.Token != "" {
+		value["token"] = config.Token
+	}
+	encoded, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode Elydora runtime config: %w", err)
 	}
@@ -116,12 +128,12 @@ func buildCodexRuntimeConfig(config InstallConfig) ([]byte, error) {
 	return encoded, nil
 }
 
-func prepareCodexInstallationChanges(
+func prepareGrokInstallationChanges(
 	config InstallConfig,
-	paths *codexRuntimePaths,
-	rendered *codexRenderedDocument,
+	paths *grokRuntimePaths,
+	rendered *grokRenderedDocument,
 ) ([]*fileChange, error) {
-	runtimeConfig, err := buildCodexRuntimeConfig(config)
+	runtimeConfig, err := buildGrokRuntimeConfig(config)
 	if err != nil {
 		return nil, err
 	}
@@ -132,31 +144,26 @@ func prepareCodexInstallationChanges(
 	}{
 		{
 			paths.guardPath, "Elydora guard runtime",
-			[]byte(generateGuardScript(codexAgentKey, config.AgentID, "", false, "")), 0700,
+			[]byte(generateGuardScript(grokAgentKey, config.AgentID, "", false, "grok")), 0700,
 		},
 		{paths.configPath, "Elydora runtime config", runtimeConfig, 0600},
 		{paths.keyPath, "Elydora private key", []byte(config.PrivateKey), 0600},
 		{
 			paths.auditPath, "Elydora audit runtime",
 			[]byte(buildHookScriptWithOutput(
-				codexAgentKey, config.AgentID, "", false, true,
+				grokAgentKey, config.AgentID, "", false, true,
 			)), 0700,
 		},
 	}
 	changes := make([]*fileChange, 0, len(items)+1)
 	for _, item := range items {
-		change, err := prepareFileChange(
-			item.path,
-			item.label,
-			item.content,
-			item.mode,
-		)
+		change, err := prepareFileChange(item.path, item.label, item.content, item.mode)
 		if err != nil {
 			return nil, err
 		}
 		changes = append(changes, change)
 	}
-	documentChange, err := prepareRenderedCodexChange(rendered)
+	documentChange, err := prepareRenderedGrokChange(rendered)
 	if err != nil {
 		return nil, err
 	}

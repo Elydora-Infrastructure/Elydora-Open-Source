@@ -1,110 +1,133 @@
 package plugins
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
-// GrokPlugin manages Grok Build native global user hooks.
-type GrokPlugin struct{}
+// GrokPlugin manages Grok global user hooks.
+type GrokPlugin struct {
+	rename renameFunc
+}
+
+// ManagesGuardRuntime reports that Grok commits its provider guard with the
+// audit runtime and user hook document.
+func (p *GrokPlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+// PreflightInstall validates the hook source and runtime identity before any
+// directory or file is created.
+func (p *GrokPlugin) PreflightInstall(config InstallConfig) error {
+	document, err := readGrokDocument()
+	if err != nil {
+		return err
+	}
+	_, _, err = preflightGrokInstallation(config, document)
+	return err
+}
 
 func (p *GrokPlugin) Install(config InstallConfig) error {
-	if config.AgentID == "" {
-		return fmt.Errorf("agent ID is required")
-	}
-	document, err := readGrokConfig()
+	document, err := readGrokDocument()
 	if err != nil {
 		return err
 	}
-	if config.GuardScriptPath == "" {
-		return fmt.Errorf("guard script path is required")
-	}
-	guardExists, err := regularFileExists(config.GuardScriptPath, "Elydora guard runtime")
+	paths, nodePath, err := preflightGrokInstallation(config, document)
 	if err != nil {
 		return err
 	}
-	if !guardExists {
-		return fmt.Errorf("Elydora guard runtime is missing: %s", config.GuardScriptPath)
-	}
-	hookPath, err := hookScriptPath(config.AgentID)
+	guardCommand, err := buildGrokCommand(nodePath, paths.guardPath)
 	if err != nil {
 		return err
 	}
-	if config.HookScript != "" {
-		hookPath = config.HookScript
-	}
-	nodePath, err := resolveNodeRuntime()
+	auditCommand, err := buildGrokCommand(nodePath, paths.auditPath)
 	if err != nil {
 		return err
 	}
-	runtimeRoot, err := grokRuntimeRoot()
+	hooks, err := removeManagedGrokHooks(document.hooks, "")
 	if err != nil {
 		return err
 	}
-	hooks, _ := removeManagedGrokHooks(document.hooks, "", runtimeRoot)
-	hooks["PreToolUse"] = append(hooks["PreToolUse"], buildGrokGroup(
-		buildGrokHandler(buildGrokCommand(nodePath, config.GuardScriptPath)),
-	))
-	hooks["PostToolUse"] = append(hooks["PostToolUse"], buildGrokGroup(
-		buildGrokHandler(buildGrokCommand(nodePath, hookPath)),
-	))
-	next := cloneGrokObject(document.root)
-	next["hooks"] = renderGrokHooks(hooks)
-
-	runtimeConfig := config
-	runtimeConfig.AgentName = grokAgentKey
-	if err := GenerateHookScript(hookPath, runtimeConfig); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
+	for _, item := range []struct{ event, command string }{
+		{"PreToolUse", guardCommand},
+		{"PostToolUse", auditCommand},
+		{"PostToolUseFailure", auditCommand},
+	} {
+		hooks[item.event] = append(hooks[item.event], buildGrokGroup(item.command))
 	}
-	if err := writeHookJSONObjectAtomic(document.configPath, next); err != nil {
-		return fmt.Errorf("write Grok hooks config: %w", err)
+	rendered, err := renderGrokDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Grok user hooks: %w", err)
 	}
-	fmt.Println("Grok Build: global PreToolUse and PostToolUse hooks installed.")
+	changes, err := prepareGrokInstallationChanges(config, paths, rendered)
+	if err != nil {
+		return err
+	}
+	if err := writeGrokChanges(
+		changes,
+		"Install Grok hooks",
+		p.rename,
+		paths.runtimeRoot,
+		paths.agentDirectory,
+		filepath.Dir(document.configPath),
+	); err != nil {
+		return err
+	}
+	fmt.Println(
+		"Grok Build: global PreToolUse, PostToolUse, and PostToolUseFailure hooks installed.",
+	)
 	return nil
 }
 
 func (p *GrokPlugin) Uninstall(agentID string) error {
-	document, err := readGrokConfig()
-	if err != nil || !document.exists {
-		return err
-	}
-	runtimeRoot, err := grokRuntimeRoot()
+	document, err := readGrokDocument()
 	if err != nil {
 		return err
 	}
-	hooks, changed := removeManagedGrokHooks(document.hooks, agentID, runtimeRoot)
-	if !changed {
-		return nil
+	hooks, err := removeManagedGrokHooks(document.hooks, agentID)
+	if err != nil {
+		return err
 	}
-	next := cloneGrokObject(document.root)
-	if len(hooks) == 0 {
-		delete(next, "hooks")
-	} else {
-		next["hooks"] = renderGrokHooks(hooks)
+	rendered, err := renderGrokDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Grok user hooks: %w", err)
 	}
-	if len(next) == 0 {
-		return removeHookFile(document.configPath, "Grok hooks config")
+	change, err := prepareRenderedGrokChange(rendered)
+	if err != nil {
+		return err
 	}
-	return writeHookJSONObjectAtomic(document.configPath, next)
+	return writeGrokChanges(
+		[]*fileChange{change},
+		"Uninstall Grok hooks",
+		p.rename,
+		"",
+		"",
+		filepath.Dir(document.configPath),
+	)
 }
 
 func (p *GrokPlugin) Status() (PluginStatus, error) {
-	document, err := readGrokConfig()
+	configPath, pathErr := grokConfigPath()
+	entry := SupportedAgents[grokAgentKey]
 	status := PluginStatus{
-		AgentName:   grokAgentKey,
-		DisplayName: "Grok Build",
-		ConfigPath:  document.configPath,
+		AgentName: grokAgentKey, DisplayName: entry.Name, ConfigPath: configPath,
 	}
+	if pathErr != nil {
+		return status, pathErr
+	}
+	document, err := readGrokDocument()
 	if err != nil {
 		return status, err
 	}
-	runtimeRoot, err := grokRuntimeRoot()
+	contracts, err := grokRuntimeContracts(document.hooks)
 	if err != nil {
 		return status, err
 	}
-	contracts := grokRuntimeContracts(document.hooks, runtimeRoot)
-	if len(contracts) == 0 {
+	status.HookConfigured = len(contracts) > 0
+	if !status.HookConfigured {
 		return status, nil
 	}
-	status.HookConfigured = true
-	status.HookScriptExists, err = grokRuntimeScriptsExist(contracts, runtimeRoot)
+	status.HookScriptExists, err = grokRuntimeFilesExist(contracts)
 	if err != nil {
 		return status, err
 	}

@@ -4,10 +4,14 @@ import "fmt"
 
 // GenerateGuardScript returns a self-contained agent status guard.
 func GenerateGuardScript(agentName string, agentID string) string {
-	return generateGuardScript(agentName, agentID, "", false)
+	return generateGuardScript(agentName, agentID, "", false, "")
 }
 
-func generateGuardScript(agentName, agentID, successOutput string, failClosed bool) string {
+func generateGuardScript(
+	agentName, agentID, successOutput string,
+	failClosed bool,
+	denyProtocol string,
+) string {
 	return fmt.Sprintf(`#!/usr/bin/env node
 'use strict';
 
@@ -21,6 +25,7 @@ const AGENT_NAME = %q;
 const AGENT_ID = %q;
 const SUCCESS_OUTPUT = %q;
 const FAIL_CLOSED = %t;
+const DENY_PROTOCOL = %q;
 const ELYDORA_DIR = path.join(os.homedir(), '.elydora');
 const CONFIG_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'config.json');
 const STATUS_CACHE_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'status-cache.json');
@@ -38,11 +43,16 @@ function validateStatus(value, source) {
 function blockAgent(status) {
   const state = status === 'frozen' ? 'is frozen by Elydora' : 'is revoked in Elydora';
   const message = 'Agent "' + AGENT_NAME + '" ' + state + '.';
-  if (SUCCESS_OUTPUT) {
+  if (DENY_PROTOCOL === 'cursor') {
     process.stdout.write(JSON.stringify({
       permission: 'deny',
       userMessage: message,
       agentMessage: message + ' Tool execution is blocked.',
+    }) + '\n');
+  } else if (DENY_PROTOCOL === 'grok') {
+    process.stdout.write(JSON.stringify({
+      decision: 'deny',
+      reason: message,
     }) + '\n');
   }
   process.stderr.write('[Elydora guard] ' + message + ' Tool execution blocked.\n');
@@ -221,5 +231,13 @@ main().then(() => {
   );
   process.exitCode = 1;
 });
-`, agentName, agentName, agentID, successOutput, failClosed, protectedRuntimeFileReader)
+`,
+		agentName,
+		agentName,
+		agentID,
+		successOutput,
+		failClosed,
+		denyProtocol,
+		protectedRuntimeFileReader,
+	)
 }

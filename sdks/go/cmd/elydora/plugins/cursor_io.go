@@ -194,6 +194,7 @@ func prepareCursorInstallationChanges(
 				config.AgentID,
 				`{"permission":"allow"}`+"\n",
 				true,
+				"cursor",
 			)), 0700,
 		},
 		{filepath.Join(agentDirectory, "config.json"), "Elydora runtime config", runtimeConfig, 0600},

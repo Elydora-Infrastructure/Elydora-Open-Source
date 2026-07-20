@@ -63,6 +63,14 @@ func prepareSourceChange(
 	if !existed {
 		original = nil
 	}
+	if !remove && int64(len(next)) > maxManagedSourceBytes {
+		return nil, fmt.Errorf(
+			"%s exceeds %d bytes: %s",
+			label,
+			maxManagedSourceBytes,
+			filePath,
+		)
+	}
 	snapshot, err := readManagedFile(filePath, label, maxManagedSourceBytes)
 	if err != nil {
 		return nil, err

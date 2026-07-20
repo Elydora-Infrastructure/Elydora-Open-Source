@@ -1,20 +1,29 @@
 package plugins
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
-	"path/filepath"
+	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 )
 
 const (
-	grokAgentKey        = "grok"
-	grokGuardScript     = "guard.js"
-	grokAuditScript     = "hook.js"
-	grokHookTimeout     = float64(10)
-	grokConfigFile      = "elydora-audit.json"
-	grokPOSIXApostrophe = `'"'"'`
+	grokAgentKey    = "grok"
+	grokGuardScript = "guard.js"
+	grokAuditScript = "hook.js"
+	grokHookTimeout = float64(10)
+	grokConfigFile  = "elydora-audit.json"
+)
+
+var grokMatcherRejectingEvents = stringSet(
+	"SessionStart",
+	"SessionEnd",
+	"Stop",
+	"UserPromptSubmit",
 )
 
 type grokGroup struct {
@@ -29,6 +38,14 @@ type grokDocument struct {
 	configPath string
 	root       map[string]any
 	hooks      grokHooks
+	raw        []byte
+}
+
+type grokRenderedDocument struct {
+	document *grokDocument
+	changed  bool
+	next     []byte
+	remove   bool
 }
 
 type grokRuntimeContract struct {
@@ -45,15 +62,37 @@ func cloneGrokObject(value map[string]any) map[string]any {
 	return clone
 }
 
-func validateGrokHandler(value any, event string, groupIndex, handlerIndex int) (map[string]any, error) {
-	label := fmt.Sprintf("Grok hooks config handler hooks.%s[%d].hooks[%d]", event, groupIndex, handlerIndex)
+func cloneGrokHooks(source grokHooks) grokHooks {
+	clone := make(grokHooks, len(source))
+	for event, groups := range source {
+		clone[event] = append([]grokGroup(nil), groups...)
+	}
+	return clone
+}
+
+func validateGrokHandler(
+	value any,
+	event string,
+	groupIndex int,
+	handlerIndex int,
+) (map[string]any, error) {
+	label := fmt.Sprintf(
+		"Grok user hooks handler hooks.%s[%d].hooks[%d]",
+		event,
+		groupIndex,
+		handlerIndex,
+	)
 	handler, ok := value.(map[string]any)
 	if !ok || handler == nil {
 		return nil, fmt.Errorf("%s must be an object", label)
 	}
 	handlerType, ok := handler["type"].(string)
 	if !ok || (handlerType != "command" && handlerType != "http") {
-		return nil, fmt.Errorf(`%s has unsupported type %q`, label, fmt.Sprint(handler["type"]))
+		return nil, fmt.Errorf(
+			`%s has unsupported type %q`,
+			label,
+			fmt.Sprint(handler["type"]),
+		)
 	}
 	if handlerType == "command" {
 		command, ok := handler["command"].(string)
@@ -67,17 +106,33 @@ func validateGrokHandler(value any, event string, groupIndex, handlerIndex int) 
 			return nil, fmt.Errorf("%s requires a non-empty url", label)
 		}
 	}
-	if timeoutValue, exists := handler["timeout"]; exists {
-		timeout, ok := timeoutValue.(float64)
-		if !ok || math.IsNaN(timeout) || math.IsInf(timeout, 0) || timeout <= 0 {
-			return nil, fmt.Errorf("%s timeout must be a positive finite number", label)
+	if value, exists := handler["timeout"]; exists {
+		timeout, ok := value.(float64)
+		if !ok || math.IsNaN(timeout) || math.IsInf(timeout, 0) ||
+			timeout < 0 || timeout > 9007199254740991 ||
+			math.Trunc(timeout) != timeout {
+			return nil, fmt.Errorf(
+				"%s timeout must be a non-negative integer",
+				label,
+			)
+		}
+	}
+	if value, exists := handler["env"]; exists {
+		environment, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s env must map names to strings", label)
+		}
+		for _, item := range environment {
+			if _, ok := item.(string); !ok {
+				return nil, fmt.Errorf("%s env must map names to strings", label)
+			}
 		}
 	}
 	return cloneGrokObject(handler), nil
 }
 
 func validateGrokGroup(value any, event string, groupIndex int) (grokGroup, error) {
-	label := fmt.Sprintf("Grok hooks config group hooks.%s[%d]", event, groupIndex)
+	label := fmt.Sprintf("Grok user hooks group hooks.%s[%d]", event, groupIndex)
 	object, ok := value.(map[string]any)
 	if !ok || object == nil {
 		return grokGroup{}, fmt.Errorf("%s must be an object", label)
@@ -86,6 +141,13 @@ func validateGrokGroup(value any, event string, groupIndex int) (grokGroup, erro
 		if _, ok := matcher.(string); !ok {
 			return grokGroup{}, fmt.Errorf("%s matcher must be a string", label)
 		}
+		if _, rejects := grokMatcherRejectingEvents[event]; rejects {
+			return grokGroup{}, fmt.Errorf(
+				"%s cannot declare a matcher for %s",
+				label,
+				event,
+			)
+		}
 	}
 	values, ok := object["hooks"].([]any)
 	if !ok {
@@ -93,7 +155,12 @@ func validateGrokGroup(value any, event string, groupIndex int) (grokGroup, erro
 	}
 	handlers := make([]map[string]any, 0, len(values))
 	for handlerIndex, value := range values {
-		handler, err := validateGrokHandler(value, event, groupIndex, handlerIndex)
+		handler, err := validateGrokHandler(
+			value,
+			event,
+			groupIndex,
+			handlerIndex,
+		)
 		if err != nil {
 			return grokGroup{}, err
 		}
@@ -109,13 +176,16 @@ func readGrokHooks(root map[string]any) (grokHooks, error) {
 	}
 	object, ok := value.(map[string]any)
 	if !ok || object == nil {
-		return nil, fmt.Errorf(`Grok hooks config field "hooks" must be an object`)
+		return nil, fmt.Errorf(`Grok user hooks field "hooks" must be an object`)
 	}
 	hooks := make(grokHooks, len(object))
 	for event, groupValue := range object {
 		values, ok := groupValue.([]any)
 		if !ok {
-			return nil, fmt.Errorf(`Grok hooks config field "hooks.%s" must be an array`, event)
+			return nil, fmt.Errorf(
+				`Grok user hooks field "hooks.%s" must be an array`,
+				event,
+			)
 		}
 		groups := make([]grokGroup, 0, len(values))
 		for groupIndex, value := range values {
@@ -128,6 +198,30 @@ func readGrokHooks(root map[string]any) (grokHooks, error) {
 		hooks[event] = groups
 	}
 	return hooks, nil
+}
+
+func parseGrokDocument(configPath string, raw []byte) (*grokDocument, error) {
+	label := fmt.Sprintf("Grok user hooks at %s", configPath)
+	root, err := decodeStrictJSONObject(raw, label)
+	if err != nil {
+		return nil, err
+	}
+	hooks, err := readGrokHooks(root)
+	if err != nil {
+		return nil, err
+	}
+	return &grokDocument{
+		exists: true, configPath: configPath, root: root,
+		hooks: hooks, raw: append([]byte(nil), raw...),
+	}, nil
+}
+
+func createGrokDocument(configPath string) *grokDocument {
+	return &grokDocument{
+		configPath: configPath,
+		root:       map[string]any{},
+		hooks:      grokHooks{},
+	}
 }
 
 func renderGrokHooks(hooks grokHooks) map[string]any {
@@ -148,158 +242,236 @@ func renderGrokHooks(hooks grokHooks) map[string]any {
 	return result
 }
 
-func readGrokWindowsArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '"' {
-		return "", start, false
+func buildGrokHandler(command string) map[string]any {
+	return map[string]any{
+		"type": "command", "command": command, "timeout": grokHookTimeout,
 	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); index++ {
-		if command[index] == '"' {
-			return value.String(), index + 1, true
-		}
-		value.WriteByte(command[index])
-	}
-	return "", start, false
 }
 
-func readGrokPOSIXArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '\'' {
-		return "", start, false
+func buildGrokGroup(command string) grokGroup {
+	return grokGroup{
+		object: map[string]any{}, handlers: []map[string]any{buildGrokHandler(command)},
 	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); {
-		if strings.HasPrefix(command[index:], grokPOSIXApostrophe) {
-			value.WriteByte('\'')
-			index += len(grokPOSIXApostrophe)
-			continue
-		}
-		if command[index] == '\'' {
-			return value.String(), index + 1, true
-		}
-		value.WriteByte(command[index])
-		index++
-	}
-	return "", start, false
 }
 
-func parseGrokCommand(command string) (string, string, bool) {
-	reader := readGrokPOSIXArgument
-	if runtime.GOOS == "windows" {
-		reader = readGrokWindowsArgument
-	}
-	executable, next, ok := reader(command, 0)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := reader(command, next+1)
-	if !ok || end != len(command) || executable == "" || script == "" {
-		return "", "", false
-	}
-	return executable, script, true
+func exactManagedGrokGroup(group grokGroup) bool {
+	_, hasHooks := group.object["hooks"]
+	return len(group.object) == 1 && hasHooks
 }
 
-func normalizeGrokPath(value string) string {
-	absolute, err := filepath.Abs(value)
-	if err == nil {
-		value = absolute
-	}
-	value = filepath.ToSlash(filepath.Clean(value))
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(value)
-	}
-	return value
-}
-
-func sameGrokPath(left, right string) bool {
-	return normalizeGrokPath(left) == normalizeGrokPath(right)
-}
-
-func sameGrokAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameGrokFileName(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func managedGrokAgentID(handler map[string]any, scriptName, runtimeRoot string) (string, bool) {
-	if handler["type"] != "command" || handler["timeout"] != grokHookTimeout {
-		return "", false
+func managedGrokReference(
+	handler map[string]any,
+	scriptName string,
+) (*grokRuntimeReference, error) {
+	if len(handler) != 3 || handler["type"] != "command" ||
+		handler["timeout"] != grokHookTimeout {
+		return nil, nil
 	}
 	command, ok := handler["command"].(string)
 	if !ok {
+		return nil, nil
+	}
+	return grokRuntimeReferenceForCommand(command, scriptName)
+}
+
+func managedGrokEvent(event string) (string, bool) {
+	switch event {
+	case "PreToolUse":
+		return grokGuardScript, true
+	case "PostToolUse", "PostToolUseFailure":
+		return grokAuditScript, true
+	default:
 		return "", false
 	}
-	_, scriptPath, ok := parseGrokCommand(command)
-	if !ok || !sameGrokFileName(filepath.Base(scriptPath), scriptName) {
-		return "", false
-	}
-	agentDirectory := filepath.Dir(scriptPath)
-	if !sameGrokPath(filepath.Dir(agentDirectory), runtimeRoot) {
-		return "", false
-	}
-	agentID := filepath.Base(agentDirectory)
-	return agentID, agentID != "" && agentID != "." && agentID != ".."
 }
 
 func removeManagedGrokGroups(
 	groups []grokGroup,
-	scriptName, agentID, runtimeRoot string,
-) ([]grokGroup, bool) {
+	scriptName string,
+	agentID string,
+) ([]grokGroup, error) {
 	result := make([]grokGroup, 0, len(groups))
-	changed := false
 	for _, group := range groups {
-		if _, hasMatcher := group.object["matcher"]; hasMatcher {
+		if !exactManagedGrokGroup(group) {
 			result = append(result, group)
 			continue
 		}
-		handlers := make([]map[string]any, 0, len(group.handlers))
-		groupChanged := false
+		kept := make([]map[string]any, 0, len(group.handlers))
 		for _, handler := range group.handlers {
-			managedID, managed := managedGrokAgentID(handler, scriptName, runtimeRoot)
-			remove := managed && (agentID == "" || sameGrokAgentID(managedID, agentID))
-			if remove {
-				changed = true
-				groupChanged = true
-				continue
+			reference, err := managedGrokReference(handler, scriptName)
+			if err != nil {
+				return nil, err
 			}
-			handlers = append(handlers, handler)
+			remove := reference != nil &&
+				(agentID == "" || sameGrokAgentID(reference.agentID, agentID))
+			if !remove {
+				kept = append(kept, handler)
+			}
 		}
-		if len(handlers) > 0 || !groupChanged {
-			result = append(result, grokGroup{object: group.object, handlers: handlers})
+		if len(kept) > 0 {
+			result = append(result, grokGroup{
+				object:   map[string]any{"hooks": group.object["hooks"]},
+				handlers: kept,
+			})
 		}
 	}
-	return result, changed
+	return result, nil
 }
 
-func removeManagedGrokHooks(hooks grokHooks, agentID, runtimeRoot string) (grokHooks, bool) {
-	result := make(grokHooks, len(hooks))
-	for event, groups := range hooks {
-		result[event] = groups
-	}
-	changed := false
+func removeManagedGrokHooks(hooks grokHooks, agentID string) (grokHooks, error) {
+	result := cloneGrokHooks(hooks)
 	for _, contract := range []struct{ event, script string }{
 		{"PreToolUse", grokGuardScript},
 		{"PostToolUse", grokAuditScript},
+		{"PostToolUseFailure", grokAuditScript},
 	} {
-		groups, eventChanged := removeManagedGrokGroups(
-			result[contract.event], contract.script, agentID, runtimeRoot,
+		groups, err := removeManagedGrokGroups(
+			result[contract.event],
+			contract.script,
+			agentID,
 		)
-		if !eventChanged {
-			continue
+		if err != nil {
+			return nil, err
 		}
-		changed = true
 		if len(groups) == 0 {
 			delete(result, contract.event)
 		} else {
 			result[contract.event] = groups
 		}
 	}
-	return result, changed
+	return result, nil
+}
+
+func entirelyManagedGrokDocument(document *grokDocument) bool {
+	if !document.exists || len(document.root) != 1 || len(document.hooks) == 0 {
+		return false
+	}
+	if _, hasHooks := document.root["hooks"]; !hasHooks {
+		return false
+	}
+	handlerCount := 0
+	for event, groups := range document.hooks {
+		scriptName, managedEvent := managedGrokEvent(event)
+		if !managedEvent || len(groups) == 0 {
+			return false
+		}
+		for _, group := range groups {
+			if !exactManagedGrokGroup(group) || len(group.handlers) == 0 {
+				return false
+			}
+			for _, handler := range group.handlers {
+				reference, err := managedGrokReference(handler, scriptName)
+				if err != nil || reference == nil {
+					return false
+				}
+				handlerCount++
+			}
+		}
+	}
+	return handlerCount > 0
+}
+
+func renderGrokDocument(
+	document *grokDocument,
+	hooks grokHooks,
+) (*grokRenderedDocument, error) {
+	if !document.exists && len(hooks) == 0 {
+		return &grokRenderedDocument{document: document}, nil
+	}
+	if reflect.DeepEqual(hooks, document.hooks) {
+		return &grokRenderedDocument{document: document}, nil
+	}
+	if len(hooks) == 0 && entirelyManagedGrokDocument(document) {
+		return &grokRenderedDocument{
+			document: document, changed: true, remove: true,
+		}, nil
+	}
+	root := cloneGrokObject(document.root)
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	} else {
+		root["hooks"] = renderGrokHooks(hooks)
+	}
+	next, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode Grok user hooks: %w", err)
+	}
+	next = append(next, '\n')
+	if _, err := parseGrokDocument(document.configPath, next); err != nil {
+		return nil, fmt.Errorf("validate rendered Grok user hooks: %w", err)
+	}
+	return &grokRenderedDocument{
+		document: document,
+		changed:  !document.exists || !bytes.Equal(next, document.raw),
+		next:     next,
+	}, nil
+}
+
+func grokReferenceKey(agentID string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(agentID)
+	}
+	return agentID
+}
+
+func grokReferencesForEvent(
+	groups []grokGroup,
+	scriptName string,
+) (map[string][]grokRuntimeReference, error) {
+	result := map[string][]grokRuntimeReference{}
+	for _, group := range groups {
+		if !exactManagedGrokGroup(group) {
+			continue
+		}
+		for _, handler := range group.handlers {
+			reference, err := managedGrokReference(handler, scriptName)
+			if err != nil {
+				return nil, err
+			}
+			if reference == nil {
+				continue
+			}
+			key := grokReferenceKey(reference.agentID)
+			result[key] = append(result[key], *reference)
+		}
+	}
+	return result, nil
+}
+
+func grokRuntimeContracts(hooks grokHooks) ([]grokRuntimeContract, error) {
+	guards, err := grokReferencesForEvent(hooks["PreToolUse"], grokGuardScript)
+	if err != nil {
+		return nil, err
+	}
+	successes, err := grokReferencesForEvent(hooks["PostToolUse"], grokAuditScript)
+	if err != nil {
+		return nil, err
+	}
+	failures, err := grokReferencesForEvent(
+		hooks["PostToolUseFailure"],
+		grokAuditScript,
+	)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(guards))
+	for key := range guards {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	contracts := make([]grokRuntimeContract, 0, len(keys))
+	for _, key := range keys {
+		guard := guards[key]
+		success := successes[key]
+		failure := failures[key]
+		if len(guard) != 1 || len(success) != 1 || len(failure) != 1 ||
+			!sameGrokPath(success[0].scriptPath, failure[0].scriptPath) {
+			continue
+		}
+		contracts = append(contracts, grokRuntimeContract{
+			agentID: guard[0].agentID, guardPath: guard[0].scriptPath,
+			auditPath: success[0].scriptPath,
+		})
+	}
+	return contracts, nil
 }
