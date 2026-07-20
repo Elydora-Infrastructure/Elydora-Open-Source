@@ -3,6 +3,7 @@ import { PROTECTED_RUNTIME_READER } from './runtime-reader-template.js';
 export interface GuardScriptOptions {
   readonly failClosed?: boolean;
   readonly successOutput?: string;
+  readonly denyProtocol?: 'cursor' | 'grok';
 }
 
 export function generateGuardScript(
@@ -12,6 +13,7 @@ export function generateGuardScript(
 ): string {
   const failClosed = options.failClosed ?? false;
   const successOutput = options.successOutput ?? '';
+  const denyProtocol = options.denyProtocol ?? '';
   return `#!/usr/bin/env node
 'use strict';
 
@@ -25,6 +27,7 @@ const AGENT_NAME = ${JSON.stringify(agentName)};
 const AGENT_ID = ${JSON.stringify(agentId)};
 const SUCCESS_OUTPUT = ${JSON.stringify(successOutput)};
 const FAIL_CLOSED = ${JSON.stringify(failClosed)};
+const DENY_PROTOCOL = ${JSON.stringify(denyProtocol)};
 const ELYDORA_DIR = path.join(os.homedir(), '.elydora');
 const CONFIG_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'config.json');
 const STATUS_CACHE_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'status-cache.json');
@@ -42,12 +45,14 @@ function validateStatus(value, source) {
 function blockAgent(status) {
   const state = status === 'frozen' ? 'frozen' : 'revoked';
   const message = 'Agent "' + AGENT_NAME + '" is ' + state + ' in Elydora.';
-  if (SUCCESS_OUTPUT) {
+  if (DENY_PROTOCOL === 'cursor') {
     process.stdout.write(JSON.stringify({
       permission: 'deny',
       userMessage: message,
       agentMessage: message + ' Tool execution is blocked.',
     }) + '\\n');
+  } else if (DENY_PROTOCOL === 'grok') {
+    process.stdout.write(JSON.stringify({ decision: 'deny', reason: message }) + '\\n');
   }
   process.stderr.write('[Elydora guard] ' + message + ' Tool execution blocked.\\n');
   process.exitCode = 2;

@@ -248,15 +248,22 @@ test('high-drift providers retain their verified hook contracts', async () => {
     name: 'toolName',
     input: 'toolInput',
     session: 'sessionId',
+    call_id: 'toolUseId',
+    output: 'toolResult',
+    error: 'toolResult',
   });
   assert.deepEqual(providers.get('grok').config_paths, [
     '$GROK_HOME/hooks/*.json',
     '~/.grok/hooks/*.json',
+    '~/.grok/hooks-paths',
     '.grok/hooks/*.json',
+    '.claude/settings.json',
+    '.cursor/hooks.json',
   ]);
   assert.deepEqual(providers.get('grok').events, {
     before_tool: 'PreToolUse',
     after_tool: 'PostToolUse',
+    after_tool_failure: 'PostToolUseFailure',
   });
   assert.deepEqual(providers.get('grok').blocking, {
     mechanism: 'exit_code_2',

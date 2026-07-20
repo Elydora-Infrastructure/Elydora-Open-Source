@@ -4,7 +4,7 @@
 
 The provider-level contract represents the default stable runtime. `contract_variants` records opt-in or transitional runtimes with their activation command and release channel. Kiro CLI uses this field for its v2 embedded hooks and v3 standalone hooks.
 
-Grok Build adapters write native user hook files under `$GROK_HOME/hooks` or `~/.grok/hooks`. Project `.grok/hooks` files require `/hooks-trust` or `--trust`; Claude Code and Cursor hook files are read-only compatibility sources for Elydora.
+Grok Build adapters write exact `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` groups under `$GROK_HOME/hooks` or `~/.grok/hooks`. The native camelCase payload includes `toolUseId`, `toolInputTruncated`, and `toolResult`; explicit denials use JSON stdout plus exit code `2`, while hook crashes and timeouts fail open. Project `.grok/hooks` files require `/hooks-trust` or `--trust`; `hooks-paths`, plugin, Claude Code, and Cursor sources remain read-only for Elydora.
 
 GitHub Copilot command `preToolUse` hooks deny on crashes and every non-zero exit. Command timeouts continue through the normal permission flow, so `timeout_failure_mode` records that explicit exception when it differs from `failure_mode`.
 

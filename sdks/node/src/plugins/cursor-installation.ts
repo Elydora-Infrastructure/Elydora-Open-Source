@@ -64,6 +64,7 @@ export async function prepareCursorInstallation(
     guardOptions: {
       failClosed: true,
       successOutput: '{"permission":"allow"}\n',
+      denyProtocol: 'cursor',
     },
     auditOptions: {
       failClosed: true,
