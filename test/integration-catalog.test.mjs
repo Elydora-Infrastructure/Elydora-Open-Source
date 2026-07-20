@@ -277,6 +277,57 @@ test('high-drift providers retain their verified hook contracts', async () => {
     '~/.codex/hooks.json',
     '.codex/hooks.json',
   ]);
+  assert.deepEqual(providers.get('codex').contract_variants, [
+    {
+      id: 'inlinetoml',
+      release_channel: 'stable',
+      activation: 'Hooks configured inline in an active Codex config.toml or managed requirements.toml layer',
+      config_format: 'toml',
+      config_paths: [
+        '~/.codex/config.toml',
+        '.codex/config.toml',
+        'requirements.toml',
+      ],
+      events: {
+        before_tool: 'PreToolUse',
+        after_tool: 'PostToolUse',
+      },
+      event_fields: {
+        name: 'tool_name',
+        input: 'tool_input',
+        session: 'session_id',
+      },
+      blocking: {
+        mechanism: 'exit_code_2',
+        failure_mode: 'fail_open',
+      },
+      source_url: 'https://learn.chatgpt.com/docs/hooks',
+    },
+    {
+      id: 'pluginbundle',
+      release_channel: 'stable',
+      activation: 'An enabled Codex plugin supplies hooks through its manifest or default hooks file',
+      config_format: 'plugin',
+      config_paths: [
+        '.codex-plugin/plugin.json',
+        'hooks/hooks.json',
+      ],
+      events: {
+        before_tool: 'PreToolUse',
+        after_tool: 'PostToolUse',
+      },
+      event_fields: {
+        name: 'tool_name',
+        input: 'tool_input',
+        session: 'session_id',
+      },
+      blocking: {
+        mechanism: 'exit_code_2',
+        failure_mode: 'fail_open',
+      },
+      source_url: 'https://learn.chatgpt.com/docs/hooks',
+    },
+  ]);
   assert.deepEqual(providers.get('copilot').config_paths, [
     '$COPILOT_HOME/hooks/*.json',
     '~/.copilot/hooks/*.json',
