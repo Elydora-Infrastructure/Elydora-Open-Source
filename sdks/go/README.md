@@ -78,6 +78,8 @@ Credential options may be omitted in an interactive terminal; the CLI then reads
 
 Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex after installation and trust the Elydora `PreToolUse` and `PostToolUse` definitions.
 
+GitHub Copilot CLI installation writes native user hooks to `$COPILOT_HOME/hooks/elydora-audit.json` with `~/.copilot/hooks/elydora-audit.json` as the default. Elydora preserves user hooks, migrates exact Elydora-owned entries from project `.github/hooks/hooks.json`, quotes the resolved Node.js runtime for each shell, and propagates the freeze guard's exit code. Installation requires `disableAllHooks` to be false.
+
 Cline installation writes `PreToolUse.mjs` and `PostToolUse.mjs` to `$CLINE_DIR/hooks` (default `~/.cline/hooks`). Elydora leaves the Documents and workspace hook roots unchanged. The wrappers preserve Cline's official payload and translate a frozen guard into JSON stdout cancellation control.
 
 Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
@@ -109,7 +111,7 @@ Qwen Code installation writes native user hooks to `$QWEN_HOME/settings.json` wi
 | Claude Code | `claudecode` |
 | OpenAI Codex | `codex` |
 | Cline | `cline` |
-| Copilot CLI | `copilot` |
+| GitHub Copilot CLI | `copilot` |
 | Cursor | `cursor` |
 | Factory Droid | `droid` |
 | Gemini CLI | `gemini` |

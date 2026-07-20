@@ -21,7 +21,7 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 	"kiroide":    {Name: "Kiro IDE", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.kiro.hook"},
 	"kimi":       {Name: "Kimi Code", ConfigDir: "~/.kimi-code", ConfigFile: "config.toml"},
 	"opencode":   {Name: "OpenCode", ConfigDir: "~/.config/opencode/plugins", ConfigFile: "elydora-audit.mjs"},
-	"copilot":    {Name: "Copilot CLI", ConfigDir: ".github/hooks", ConfigFile: "hooks.json"},
+	"copilot":    {Name: "GitHub Copilot CLI", ConfigDir: "~/.copilot/hooks", ConfigFile: "elydora-audit.json"},
 	"letta":      {Name: "Letta Code", ConfigDir: "~/.letta", ConfigFile: "settings.json"},
 	"qwen":       {Name: "Qwen Code", ConfigDir: "~/.qwen", ConfigFile: "settings.json"},
 }

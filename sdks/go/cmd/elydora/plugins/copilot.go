@@ -4,258 +4,162 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
-// CopilotPlugin manages the Elydora audit hook for GitHub Copilot CLI.
-// It writes/merges into .github/hooks/hooks.json (project-relative) using
-// hooks.preToolUse[]/postToolUse[] with bash/powershell command fields.
-type CopilotPlugin struct{}
-
-func (p *CopilotPlugin) configPath() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve working directory: %w", err)
-	}
-	return filepath.Join(cwd, ".github", "hooks", "hooks.json"), nil
+// CopilotPlugin manages GitHub Copilot CLI native user hooks.
+type CopilotPlugin struct {
+	rename renameFunc
 }
 
 func (p *CopilotPlugin) Install(config InstallConfig) error {
-	scriptPath, err := hookScriptPath(config.AgentID)
+	if config.AgentID == "" {
+		return fmt.Errorf("agent ID is required")
+	}
+	sources, err := readCopilotSources()
 	if err != nil {
 		return err
 	}
-	if config.HookScript != "" {
-		scriptPath = config.HookScript
+	if sources.user.disabled {
+		return fmt.Errorf(
+			"GitHub Copilot user hooks are disabled by disableAllHooks at %s",
+			sources.user.filePath,
+		)
 	}
-
-	if err := GenerateHookScript(scriptPath, config); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
+	runtimeRoot, err := AgentRuntimeRoot()
+	if err != nil {
+		return err
 	}
-
-	guardPath := config.GuardScriptPath
-	if guardPath == "" {
-		guardPath, err = guardScriptPath(config.AgentID)
-		if err != nil {
-			return err
-		}
+	agentDirectory, err := ResolveAgentRuntimeDirectory(config.AgentID)
+	if err != nil {
+		return err
 	}
-
-	configPath, err := p.configPath()
+	expectedGuard := filepath.Join(agentDirectory, copilotGuardScript)
+	if !sameCopilotPath(config.GuardScriptPath, expectedGuard) {
+		return fmt.Errorf("Elydora guard runtime must use the managed agent directory: %s", expectedGuard)
+	}
+	if err := requireCopilotRuntime(expectedGuard, "Elydora guard runtime"); err != nil {
+		return err
+	}
+	auditPath := filepath.Join(agentDirectory, copilotAuditScript)
+	if config.HookScript != "" && !sameCopilotPath(config.HookScript, auditPath) {
+		return fmt.Errorf("Elydora audit runtime must use the managed agent directory: %s", auditPath)
+	}
+	nodePath, err := resolveNodeRuntime()
 	if err != nil {
 		return err
 	}
 
-	settings, err := readJSONFile(configPath)
+	userHooks := removeManagedCopilotHooks(sources.user.hooks, runtimeRoot, "")
+	userHooks["preToolUse"] = append(
+		userHooks["preToolUse"],
+		buildCopilotHandler(nodePath, expectedGuard),
+	)
+	userHooks["postToolUse"] = append(
+		userHooks["postToolUse"],
+		buildCopilotHandler(nodePath, auditPath),
+	)
+	userRendered, err := renderCopilotDocument(sources.user, userHooks)
+	if err != nil {
+		return fmt.Errorf("render GitHub Copilot user hooks: %w", err)
+	}
+	rendered := []*copilotRenderedDocument{userRendered}
+	if sources.legacy != nil {
+		legacyHooks := removeManagedCopilotHooks(sources.legacy.hooks, runtimeRoot, "")
+		legacyRendered, renderErr := renderCopilotDocument(sources.legacy, legacyHooks)
+		if renderErr != nil {
+			return fmt.Errorf("render GitHub Copilot project hooks: %w", renderErr)
+		}
+		rendered = append(rendered, legacyRendered)
+	}
+	changes, err := prepareCopilotInstallationChanges(
+		config,
+		agentDirectory,
+		auditPath,
+		rendered,
+	)
 	if err != nil {
 		return err
 	}
-
-	// Ensure version field is set
-	settings["version"] = float64(1)
-
-	// Ensure hooks object exists
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		hooks = make(map[string]interface{})
-	}
-
-	// --- preToolUse (guard — freeze enforcement) ---
-	preToolUse, _ := hooks["preToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isCopilotElydoraEntry(m) {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
-	}
-	guardEntry := map[string]interface{}{
-		"type":       "command",
-		"bash":       "node " + guardPath,
-		"powershell": "node " + guardPath,
-		"timeoutSec": float64(5),
-	}
-	preFiltered = append(preFiltered, guardEntry)
-	hooks["preToolUse"] = preFiltered
-
-	// --- postToolUse (audit logging) ---
-	postToolUse, _ := hooks["postToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isCopilotElydoraEntry(m) {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	hookEntry := map[string]interface{}{
-		"type":       "command",
-		"bash":       "node " + scriptPath,
-		"powershell": "node " + scriptPath,
-		"timeoutSec": float64(5),
-	}
-	postFiltered = append(postFiltered, hookEntry)
-	hooks["postToolUse"] = postFiltered
-
-	settings["hooks"] = hooks
-
-	if err := writeJSONFile(configPath, settings); err != nil {
+	if err := writeChanges(changes, "Install GitHub Copilot hooks", p.rename); err != nil {
 		return err
 	}
-	fmt.Printf("Installed Elydora hook for Copilot CLI at %s\n", configPath)
+	fmt.Printf("  GitHub Copilot CLI hooks: %s\n", sources.user.filePath)
 	return nil
 }
 
 func (p *CopilotPlugin) Uninstall(agentID string) error {
-	configPath, err := p.configPath()
+	sources, err := readCopilotSources()
 	if err != nil {
 		return err
 	}
-
-	settings, err := readJSONFile(configPath)
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return err
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		fmt.Println("No Copilot CLI hooks found.")
-		return nil
+	documents := []*copilotDocument{sources.user}
+	if sources.legacy != nil {
+		documents = append(documents, sources.legacy)
 	}
-
-	// Remove preToolUse Elydora entries
-	preToolUse, _ := hooks["preToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isCopilotElydoraEntry(m) {
-				continue
-			}
+	changes := make([]*fileChange, 0, len(documents))
+	for _, document := range documents {
+		hooks := removeManagedCopilotHooks(document.hooks, runtimeRoot, agentID)
+		rendered, renderErr := renderCopilotDocument(document, hooks)
+		if renderErr != nil {
+			return fmt.Errorf("render GitHub Copilot hook source: %w", renderErr)
 		}
-		preFiltered = append(preFiltered, entry)
-	}
-	if len(preFiltered) == 0 {
-		delete(hooks, "preToolUse")
-	} else {
-		hooks["preToolUse"] = preFiltered
-	}
-
-	// Remove postToolUse Elydora entries
-	postToolUse, _ := hooks["postToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isCopilotElydoraEntry(m) {
-				continue
-			}
+		change, changeErr := prepareRenderedCopilotChange(rendered)
+		if changeErr != nil {
+			return changeErr
 		}
-		postFiltered = append(postFiltered, entry)
+		changes = append(changes, change)
 	}
-	if len(postFiltered) == 0 {
-		delete(hooks, "postToolUse")
-	} else {
-		hooks["postToolUse"] = postFiltered
-	}
-
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
-	}
-
-	if err := writeJSONFile(configPath, settings); err != nil {
-		return err
-	}
-
-	if agentID != "" {
-		scriptPath, _ := hookScriptPath(agentID)
-		if scriptPath != "" {
-			os.Remove(scriptPath)
-		}
-		gPath, _ := guardScriptPath(agentID)
-		if gPath != "" {
-			os.Remove(gPath)
-		}
-	}
-	fmt.Println("Uninstalled Elydora hook for Copilot CLI.")
-	return nil
+	return writeChanges(changes, "Uninstall GitHub Copilot hooks", p.rename)
 }
 
 func (p *CopilotPlugin) Status() (PluginStatus, error) {
-	configPath, err := p.configPath()
-	if err != nil {
-		return PluginStatus{}, err
-	}
-
+	userPath, _, pathErr := copilotConfigPaths()
+	entry := SupportedAgents[copilotAgentKey]
 	status := PluginStatus{
-		AgentName:   "copilot",
-		DisplayName: "Copilot CLI",
-		ConfigPath:  configPath,
+		AgentName: copilotAgentKey, DisplayName: entry.Name, ConfigPath: userPath,
 	}
-
-	settings, err := readJSONFile(configPath)
+	if pathErr != nil {
+		return status, pathErr
+	}
+	sources, err := readCopilotSources()
 	if err != nil {
+		return status, err
+	}
+	runtimeRoot, err := AgentRuntimeRoot()
+	if err != nil {
+		return status, err
+	}
+	contracts := activeCopilotContracts(sources, runtimeRoot)
+	status.ConfigPath = configuredCopilotPath(sources, runtimeRoot)
+	status.HookConfigured = len(contracts) > 0
+	if !status.HookConfigured {
 		return status, nil
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks != nil {
-		preConfigured := hasCopilotElydoraEntry(hooks["preToolUse"])
-		postConfigured := hasCopilotElydoraEntry(hooks["postToolUse"])
-		status.HookConfigured = preConfigured && postConfigured
-
-		// Extract hook script path from the configured command
-		scriptPath := extractCopilotElydoraScriptPath(hooks["postToolUse"])
-		if scriptPath != "" {
-			if _, err := os.Stat(scriptPath); err == nil {
-				status.HookScriptExists = true
-			}
-		}
+	status.HookScriptExists, err = copilotRuntimeFilesExist(contracts)
+	if err != nil {
+		return status, err
 	}
-
-	status.Installed = status.HookConfigured && status.HookScriptExists
+	status.Installed = status.HookScriptExists
 	return status, nil
 }
 
-// isCopilotElydoraEntry checks if a Copilot hook entry (bash/powershell fields) is an Elydora hook.
-func isCopilotElydoraEntry(m map[string]interface{}) bool {
-	if bash, _ := m["bash"].(string); strings.Contains(bash, "elydora") {
-		return true
+func requireCopilotRuntime(path, label string) error {
+	if path == "" {
+		return fmt.Errorf("%s path is required", label)
 	}
-	if ps, _ := m["powershell"].(string); strings.Contains(ps, "elydora") {
-		return true
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("%s is missing: %s", label, path)
 	}
-	return false
-}
-
-// hasCopilotElydoraEntry checks if a Copilot hook array contains an Elydora entry.
-func hasCopilotElydoraEntry(hookArray interface{}) bool {
-	arr, _ := hookArray.([]interface{})
-	for _, entry := range arr {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isCopilotElydoraEntry(m) {
-				return true
-			}
-		}
+	if err != nil {
+		return fmt.Errorf("read %s at %s: %w", label, path, err)
 	}
-	return false
-}
-
-// extractCopilotElydoraScriptPath extracts the script path from a Copilot hook array's Elydora command.
-func extractCopilotElydoraScriptPath(hookArray interface{}) string {
-	arr, _ := hookArray.([]interface{})
-	for _, entry := range arr {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if bash, _ := m["bash"].(string); strings.Contains(bash, "elydora") {
-				return extractPathFromNodeCommand(bash)
-			}
-			if ps, _ := m["powershell"].(string); strings.Contains(ps, "elydora") {
-				return extractPathFromNodeCommand(ps)
-			}
-		}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("%s path is not a physical file: %s", label, path)
 	}
-	return ""
+	return nil
 }
