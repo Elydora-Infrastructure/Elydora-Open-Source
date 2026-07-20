@@ -67,6 +67,11 @@ export interface PreparedManagedInstallation {
   readonly transaction: PreparedManagedTransaction;
 }
 
+interface RuntimeArtifactLocation {
+  readonly filePath: string;
+  readonly label: string;
+}
+
 export type { RenameFile };
 
 export function samePath(left: string, right: string): boolean {
@@ -145,6 +150,7 @@ function sameAgentId(left: unknown, right: string): boolean {
 async function validateRuntimeIdentity(
   paths: ManagedRuntimePaths,
   agentKey: string,
+  additionalArtifacts: readonly RuntimeArtifactLocation[] = [],
 ): Promise<void> {
   if (!await inspectPhysicalDirectory(paths.runtimeRoot, 'Elydora runtime directory')) return;
   if (!await inspectPhysicalDirectory(paths.agentDirectory, 'Elydora agent runtime directory')) return;
@@ -156,6 +162,10 @@ async function validateRuntimeIdentity(
     readPhysicalFile(path.join(paths.agentDirectory, 'chain-state.json'), 'Elydora chain state'),
     readPhysicalFile(path.join(paths.agentDirectory, 'status-cache.json'), 'Elydora status cache'),
     readPhysicalFile(path.join(paths.agentDirectory, 'error.log'), 'Elydora error log'),
+    ...additionalArtifacts.map((artifact) => readPhysicalFile(
+      artifact.filePath,
+      artifact.label,
+    )),
   ]);
   if (!config) {
     if (artifacts.some(Boolean)) {
@@ -233,6 +243,15 @@ export async function prepareManagedInstallation(
     hookLocations: spec.hookSources,
     config: spec.config,
   }, guardScript, auditScript);
+  const runtimeFiles = (spec.runtimeFiles ?? []).map((runtimeFile) => ({
+    runtimeFile,
+    filePath: runtimeFilePath(paths, runtimeFile.fileName),
+  }));
+  const runtimeArtifacts = runtimeFiles.map(({ runtimeFile, filePath }) => ({
+    filePath,
+    label: runtimeFile.label,
+  }));
+  await validateRuntimeIdentity(paths, spec.agentKey, runtimeArtifacts);
   const changes = await Promise.all([
     prepareManagedFileChange({
       filePath: paths.guardPath,
@@ -260,8 +279,8 @@ export async function prepareManagedInstallation(
       next: generateHookScript(spec.agentKey, spec.config.agentId, spec.auditOptions),
       mode: 0o700,
     }),
-    ...(spec.runtimeFiles ?? []).map((runtimeFile) => prepareManagedFileChange({
-      filePath: runtimeFilePath(paths, runtimeFile.fileName),
+    ...runtimeFiles.map(({ runtimeFile, filePath }) => prepareManagedFileChange({
+      filePath,
       label: runtimeFile.label,
       next: runtimeFile.source,
       mode: runtimeFile.mode,
@@ -276,7 +295,7 @@ export async function prepareManagedInstallation(
       verifyExpectedSource: true,
     })),
   ]);
-  await validateRuntimeIdentity(paths, spec.agentKey);
+  await validateRuntimeIdentity(paths, spec.agentKey, runtimeArtifacts);
   return {
     paths,
     transaction: {

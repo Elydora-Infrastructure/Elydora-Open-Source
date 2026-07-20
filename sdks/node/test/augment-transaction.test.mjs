@@ -197,6 +197,24 @@ test('Auggie rejects orphaned and mismatched runtime identities before writes', 
     }
   });
 
+  await t.test('orphaned wrapper', async () => {
+    const fixture = await createFixture();
+    try {
+      await mkdir(fixture.agentDir, { recursive: true });
+      await writeFile(fixture.guardWrapperPath, 'orphaned wrapper\n');
+      const result = await fixture.install();
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /identity cannot be verified/i);
+      assert.equal(
+        await readFile(fixture.guardWrapperPath, 'utf-8'),
+        'orphaned wrapper\n',
+      );
+      await assertMissing(fixture.settingsPath);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   await t.test('mismatched identity', async () => {
     const fixture = await createFixture();
     try {
