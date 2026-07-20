@@ -2,236 +2,172 @@ package plugins
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 )
 
-// CursorPlugin manages the Elydora audit hook for Cursor.
-// It writes/merges into ~/.cursor/hooks.json using nested settings.hooks.postToolUse[].
-type CursorPlugin struct{}
+// CursorPlugin manages Cursor's native global user hooks.
+type CursorPlugin struct {
+	rename renameFunc
+}
 
-func (p *CursorPlugin) configPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
+// ManagesGuardRuntime reports that Cursor commits its provider-specific guard
+// in the same transaction as the rest of the installation.
+func (p *CursorPlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+func cursorAgentPaths(config InstallConfig) (
+	runtimeRoot, agentDirectory, guardPath, auditPath string,
+	err error,
+) {
+	if config.AgentID == "" {
+		return "", "", "", "", fmt.Errorf("agent ID is required")
 	}
-	return filepath.Join(home, ".cursor", "hooks.json"), nil
+	runtimeRoot, err = AgentRuntimeRoot()
+	if err != nil {
+		return "", "", "", "", err
+	}
+	agentDirectory, err = ResolveAgentRuntimeDirectory(config.AgentID)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	guardPath = filepath.Join(agentDirectory, cursorGuardScript)
+	if !sameCursorPath(config.GuardScriptPath, guardPath) {
+		return "", "", "", "", fmt.Errorf(
+			"Elydora guard runtime must use the managed agent directory: %s",
+			guardPath,
+		)
+	}
+	auditPath = filepath.Join(agentDirectory, cursorAuditScript)
+	if config.HookScript != "" && !sameCursorPath(config.HookScript, auditPath) {
+		return "", "", "", "", fmt.Errorf(
+			"Elydora audit runtime must use the managed agent directory: %s",
+			auditPath,
+		)
+	}
+	return runtimeRoot, agentDirectory, guardPath, auditPath, nil
+}
+
+// PreflightInstall validates every existing source before the CLI creates a
+// runtime directory or guard file.
+func (p *CursorPlugin) PreflightInstall(config InstallConfig) error {
+	if _, err := readCursorDocument(); err != nil {
+		return err
+	}
+	_, agentDirectory, _, _, err := cursorAgentPaths(config)
+	if err != nil {
+		return err
+	}
+	if err := preflightCursorRuntime(agentDirectory, config.AgentID); err != nil {
+		return err
+	}
+	_, err = resolveNodeRuntime()
+	return err
 }
 
 func (p *CursorPlugin) Install(config InstallConfig) error {
-	scriptPath, err := hookScriptPath(config.AgentID)
+	document, err := readCursorDocument()
 	if err != nil {
 		return err
 	}
-	if config.HookScript != "" {
-		scriptPath = config.HookScript
-	}
-
-	if err := GenerateHookScript(scriptPath, config); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
-	}
-
-	guardPath := config.GuardScriptPath
-	if guardPath == "" {
-		guardPath, err = guardScriptPath(config.AgentID)
-		if err != nil {
-			return err
-		}
-	}
-
-	configPath, err := p.configPath()
+	runtimeRoot, agentDirectory, guardPath, auditPath, err := cursorAgentPaths(config)
 	if err != nil {
 		return err
 	}
-
-	settings, err := readJSONFile(configPath)
+	if err := preflightCursorRuntime(agentDirectory, config.AgentID); err != nil {
+		return err
+	}
+	nodePath, err := resolveNodeRuntime()
 	if err != nil {
 		return err
 	}
-
-	// Ensure hooks object exists
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		hooks = make(map[string]interface{})
+	hooks := removeManagedCursorHooks(document.hooks, runtimeRoot, "")
+	hooks["preToolUse"] = append(
+		hooks["preToolUse"],
+		buildCursorHandler(nodePath, guardPath),
+	)
+	hooks["postToolUse"] = append(
+		hooks["postToolUse"],
+		buildCursorHandler(nodePath, auditPath),
+	)
+	hooks["postToolUseFailure"] = append(
+		hooks["postToolUseFailure"],
+		buildCursorHandler(nodePath, auditPath),
+	)
+	rendered, err := renderCursorDocument(document, hooks, runtimeRoot)
+	if err != nil {
+		return fmt.Errorf("render Cursor user hooks: %w", err)
 	}
-
-	// --- preToolUse (guard — freeze enforcement) ---
-	preToolUse, _ := hooks["preToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
-	}
-	guardEntry := map[string]interface{}{
-		"command": "node " + guardPath,
-	}
-	preFiltered = append(preFiltered, guardEntry)
-	hooks["preToolUse"] = preFiltered
-
-	// --- postToolUse (audit logging) ---
-	postToolUse, _ := hooks["postToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	hookEntry := map[string]interface{}{
-		"command": "node " + scriptPath,
-	}
-	postFiltered = append(postFiltered, hookEntry)
-	hooks["postToolUse"] = postFiltered
-
-	settings["hooks"] = hooks
-
-	if err := writeJSONFile(configPath, settings); err != nil {
+	changes, err := prepareCursorInstallationChanges(config, agentDirectory, rendered)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Installed Elydora hook for Cursor at %s\n", configPath)
+	if err := writeCursorChanges(
+		changes,
+		"Install Cursor hooks",
+		p.rename,
+		runtimeRoot,
+		agentDirectory,
+	); err != nil {
+		return err
+	}
+	fmt.Printf("  Cursor hooks: %s\n", document.filePath)
 	return nil
 }
 
 func (p *CursorPlugin) Uninstall(agentID string) error {
-	configPath, err := p.configPath()
+	document, err := readCursorDocument()
 	if err != nil {
 		return err
 	}
-
-	settings, err := readJSONFile(configPath)
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return err
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		fmt.Println("No Cursor hooks found.")
-		return nil
+	hooks := removeManagedCursorHooks(document.hooks, runtimeRoot, agentID)
+	rendered, err := renderCursorDocument(document, hooks, runtimeRoot)
+	if err != nil {
+		return fmt.Errorf("render Cursor user hooks: %w", err)
 	}
-
-	// Remove preToolUse Elydora entries
-	preToolUse, _ := hooks["preToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
-	}
-	if len(preFiltered) == 0 {
-		delete(hooks, "preToolUse")
-	} else {
-		hooks["preToolUse"] = preFiltered
-	}
-
-	// Remove postToolUse Elydora entries
-	postToolUse, _ := hooks["postToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	if len(postFiltered) == 0 {
-		delete(hooks, "postToolUse")
-	} else {
-		hooks["postToolUse"] = postFiltered
-	}
-
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
-	}
-
-	if err := writeJSONFile(configPath, settings); err != nil {
+	change, err := prepareRenderedCursorChange(rendered)
+	if err != nil {
 		return err
 	}
-
-	if agentID != "" {
-		scriptPath, _ := hookScriptPath(agentID)
-		if scriptPath != "" {
-			os.Remove(scriptPath)
-		}
-		gPath, _ := guardScriptPath(agentID)
-		if gPath != "" {
-			os.Remove(gPath)
-		}
-	}
-	fmt.Println("Uninstalled Elydora hook for Cursor.")
-	return nil
+	return writeCursorChanges(
+		[]*fileChange{change},
+		"Uninstall Cursor hooks",
+		p.rename,
+		"",
+		"",
+	)
 }
 
 func (p *CursorPlugin) Status() (PluginStatus, error) {
-	configPath, err := p.configPath()
-	if err != nil {
-		return PluginStatus{}, err
-	}
-
+	configPath, pathErr := cursorConfigPath()
+	entry := SupportedAgents[cursorAgentKey]
 	status := PluginStatus{
-		AgentName:   "cursor",
-		DisplayName: "Cursor",
-		ConfigPath:  configPath,
+		AgentName: cursorAgentKey, DisplayName: entry.Name, ConfigPath: configPath,
 	}
-
-	settings, err := readJSONFile(configPath)
+	if pathErr != nil {
+		return status, pathErr
+	}
+	document, err := readCursorDocument()
 	if err != nil {
+		return status, err
+	}
+	runtimeRoot, err := AgentRuntimeRoot()
+	if err != nil {
+		return status, err
+	}
+	contracts := cursorRuntimeContracts(document.hooks, runtimeRoot)
+	status.HookConfigured = len(contracts) > 0
+	if !status.HookConfigured {
 		return status, nil
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks != nil {
-		preConfigured := hasCursorElydoraEntry(hooks["preToolUse"])
-		postConfigured := hasCursorElydoraEntry(hooks["postToolUse"])
-		status.HookConfigured = preConfigured && postConfigured
-
-		// Extract hook script path from the configured command
-		scriptPath := extractCursorElydoraScriptPath(hooks["postToolUse"])
-		if scriptPath != "" {
-			if _, err := os.Stat(scriptPath); err == nil {
-				status.HookScriptExists = true
-			}
-		}
+	status.HookScriptExists, err = cursorRuntimeFilesExist(contracts)
+	if err != nil {
+		return status, err
 	}
-
-	status.Installed = status.HookConfigured && status.HookScriptExists
+	status.Installed = status.HookScriptExists
 	return status, nil
-}
-
-// extractCursorElydoraScriptPath extracts the script path from a Cursor hook array's Elydora command entry.
-func extractCursorElydoraScriptPath(hookArray interface{}) string {
-	arr, _ := hookArray.([]interface{})
-	for _, entry := range arr {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-				return extractPathFromNodeCommand(cmd)
-			}
-		}
-	}
-	return ""
-}
-
-// hasCursorElydoraEntry checks if a Cursor hook array (flat format) contains an Elydora entry.
-func hasCursorElydoraEntry(hookArray interface{}) bool {
-	arr, _ := hookArray.([]interface{})
-	for _, entry := range arr {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-				return true
-			}
-		}
-	}
-	return false
 }

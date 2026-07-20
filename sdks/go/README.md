@@ -78,6 +78,8 @@ Credential options may be omitted in an interactive terminal; the CLI then reads
 
 Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex after installation and trust the Elydora `PreToolUse` and `PostToolUse` definitions.
 
+Cursor installation writes native global `preToolUse`, `postToolUse`, and `postToolUseFailure` handlers to `~/.cursor/hooks.json`. Elydora preserves unrelated user hooks, leaves project and enterprise sources unchanged, emits valid JSON hook responses, fails closed when enforcement or audit execution cannot complete, and commits its 10-second hook contract with all managed runtime files as one rollback-capable transaction.
+
 GitHub Copilot CLI installation writes native user hooks to `$COPILOT_HOME/hooks/elydora-audit.json` with `~/.copilot/hooks/elydora-audit.json` as the default. Elydora preserves user hooks, migrates exact Elydora-owned entries from project `.github/hooks/hooks.json`, quotes the resolved Node.js runtime for each shell, and propagates the freeze guard's exit code. Installation requires `disableAllHooks` to be false.
 
 Cline installation writes `PreToolUse.mjs` and `PostToolUse.mjs` to `$CLINE_DIR/hooks` (default `~/.cline/hooks`). Elydora leaves the Documents and workspace hook roots unchanged. The wrappers preserve Cline's official payload and translate a frozen guard into JSON stdout cancellation control.

@@ -15,12 +15,12 @@ type InstallConfig struct {
 
 // PluginStatus describes the current state of a plugin installation.
 type PluginStatus struct {
-	Installed       bool
-	AgentName       string
-	DisplayName     string
-	HookConfigured  bool
+	Installed        bool
+	AgentName        string
+	DisplayName      string
+	HookConfigured   bool
 	HookScriptExists bool
-	ConfigPath      string
+	ConfigPath       string
 }
 
 // AgentPlugin is the interface that every agent integration must implement.
@@ -28,4 +28,14 @@ type AgentPlugin interface {
 	Install(config InstallConfig) error
 	Uninstall(agentID string) error
 	Status() (PluginStatus, error)
+}
+
+// InstallPreflighter validates provider and runtime sources before CLI writes.
+type InstallPreflighter interface {
+	PreflightInstall(config InstallConfig) error
+}
+
+// GuardRuntimeManager owns provider-specific guard generation transactionally.
+type GuardRuntimeManager interface {
+	ManagesGuardRuntime() bool
 }

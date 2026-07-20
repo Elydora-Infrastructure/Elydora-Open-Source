@@ -94,7 +94,8 @@ func cmdInstall(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: unsupported agent %q. Run 'elydora agents' to see supported agents.\n", *agent)
 		os.Exit(1)
 	}
-	if _, err := plugins.ResolveAgentRuntimeDirectory(*agentID); err != nil {
+	agentDirectory, err := plugins.ResolveAgentRuntimeDirectory(*agentID)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -115,25 +116,7 @@ func cmdInstall(args []string) {
 		os.Exit(1)
 	}
 
-	// Generate guard script (PreToolUse — freeze enforcement)
-	agentDirectory, err := plugins.PrepareAgentRuntimeDirectory(*agentID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 	guardScriptPath := filepath.Join(agentDirectory, "guard.js")
-	guardScript := plugins.GenerateGuardScript(*agent, *agentID)
-	if err := plugins.WriteRuntimeFileAtomic(
-		guardScriptPath,
-		"Elydora guard runtime",
-		[]byte(guardScript),
-		0700,
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing guard script: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("  Guard script: %s\n", guardScriptPath)
-
 	config := plugins.InstallConfig{
 		AgentName:       *agent,
 		OrgID:           *orgID,
@@ -144,11 +127,37 @@ func cmdInstall(args []string) {
 		BaseURL:         *baseURL,
 		GuardScriptPath: guardScriptPath,
 	}
+	if preflighter, ok := plugin.(plugins.InstallPreflighter); ok {
+		if err := preflighter.PreflightInstall(config); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	manager, managesGuard := plugin.(plugins.GuardRuntimeManager)
+	if !managesGuard || !manager.ManagesGuardRuntime() {
+		agentDirectory, err = plugins.PrepareAgentRuntimeDirectory(*agentID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		guardScript := plugins.GenerateGuardScript(*agent, *agentID)
+		if err := plugins.WriteRuntimeFileAtomic(
+			guardScriptPath,
+			"Elydora guard runtime",
+			[]byte(guardScript),
+			0700,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing guard script: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	if err := plugin.Install(config); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("  Guard script: %s\n", guardScriptPath)
 }
 
 // ---------------------------------------------------------------------------
