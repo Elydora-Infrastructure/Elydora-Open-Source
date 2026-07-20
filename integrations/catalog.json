@@ -17,19 +17,9 @@
         ".augment/settings.json",
         "~/.augment/settings.json"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "conversation_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "conversation_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://docs.augmentcode.com/cli/hooks"
@@ -42,19 +32,9 @@
       "integration_mode": "command_hooks",
       "config_format": "json",
       "config_paths": ["~/.claude/settings.json", ".claude/settings.json", ".claude/settings.local.json"],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "session_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://code.claude.com/docs/en/hooks"
@@ -72,19 +52,9 @@
         ".clinerules/hooks/",
         ".cline/hooks/"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "tool_call.name/tool_result.name",
-        "input": "tool_call.input/tool_result.input",
-        "session": "taskId"
-      },
-      "blocking": {
-        "mechanism": "json_stdout_cancel",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "tool_call.name/tool_result.name", "input": "tool_call.input/tool_result.input", "session": "taskId" },
+      "blocking": { "mechanism": "json_stdout_cancel", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://github.com/cline/cline/blob/main/sdk/examples/hooks/README.md"
@@ -96,20 +66,10 @@
       "surface": "cli",
       "integration_mode": "command_hooks",
       "config_format": "json",
-      "config_paths": ["~/.codex/hooks.json", ".codex/hooks.json"],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "session_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "config_paths": ["$CODEX_HOME/hooks.json", "~/.codex/hooks.json", ".codex/hooks.json"],
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "contract_variants": [
         {
           "id": "inlinetoml",
@@ -117,23 +77,14 @@
           "activation": "Hooks configured inline in an active Codex config.toml or managed requirements.toml layer",
           "config_format": "toml",
           "config_paths": [
+            "$CODEX_HOME/config.toml",
             "~/.codex/config.toml",
             ".codex/config.toml",
             "requirements.toml"
           ],
-          "events": {
-            "before_tool": "PreToolUse",
-            "after_tool": "PostToolUse"
-          },
-          "event_fields": {
-            "name": "tool_name",
-            "input": "tool_input",
-            "session": "session_id"
-          },
-          "blocking": {
-            "mechanism": "exit_code_2",
-            "failure_mode": "fail_open"
-          },
+          "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+          "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+          "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
           "source_url": "https://learn.chatgpt.com/docs/hooks"
         },
         {
@@ -145,19 +96,9 @@
             ".codex-plugin/plugin.json",
             "hooks/hooks.json"
           ],
-          "events": {
-            "before_tool": "PreToolUse",
-            "after_tool": "PostToolUse"
-          },
-          "event_fields": {
-            "name": "tool_name",
-            "input": "tool_input",
-            "session": "session_id"
-          },
-          "blocking": {
-            "mechanism": "exit_code_2",
-            "failure_mode": "fail_open"
-          },
+          "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+          "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+          "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
           "source_url": "https://learn.chatgpt.com/docs/hooks"
         }
       ],
@@ -177,15 +118,8 @@
         "~/.copilot/hooks/*.json",
         ".github/hooks/*.json"
       ],
-      "events": {
-        "before_tool": "preToolUse",
-        "after_tool": "postToolUse"
-      },
-      "event_fields": {
-        "name": "toolName",
-        "input": "toolArgs",
-        "session": "sessionId"
-      },
+      "events": { "before_tool": "preToolUse", "after_tool": "postToolUse" },
+      "event_fields": { "name": "toolName", "input": "toolArgs", "session": "sessionId" },
       "blocking": {
         "mechanism": "any_nonzero_exit",
         "failure_mode": "fail_closed",
@@ -209,19 +143,9 @@
         ".cursor/hooks.json",
         "~/.cursor/hooks.json"
       ],
-      "events": {
-        "before_tool": "preToolUse",
-        "after_tool": "postToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "conversation_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "configurable"
-      },
+      "events": { "before_tool": "preToolUse", "after_tool": "postToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "conversation_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "configurable" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://cursor.com/docs/hooks"
@@ -239,19 +163,9 @@
         ".factory/hooks.json",
         ".factory/settings.json"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "session_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://docs.factory.ai/reference/hooks-reference",
@@ -265,19 +179,9 @@
             "~/.factory/hooks/hooks.json",
             ".factory/hooks/hooks.json"
           ],
-          "events": {
-            "before_tool": "PreToolUse",
-            "after_tool": "PostToolUse"
-          },
-          "event_fields": {
-            "name": "tool_name",
-            "input": "tool_input",
-            "session": "session_id"
-          },
-          "blocking": {
-            "mechanism": "exit_code_2",
-            "failure_mode": "fail_open"
-          },
+          "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+          "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+          "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
           "source_url": "https://docs.factory.ai/reference/hooks-reference"
         }
       ]
@@ -293,19 +197,9 @@
         "~/.gemini/settings.json",
         ".gemini/settings.json"
       ],
-      "events": {
-        "before_tool": "BeforeTool",
-        "after_tool": "AfterTool"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "session_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "BeforeTool", "after_tool": "AfterTool" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://geminicli.com/docs/hooks/reference/"
@@ -322,19 +216,9 @@
         "~/.grok/hooks/*.json",
         ".grok/hooks/*.json"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "toolName",
-        "input": "toolInput",
-        "session": "sessionId"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "toolName", "input": "toolInput", "session": "sessionId" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://docs.x.ai/build/features/hooks"
@@ -350,19 +234,9 @@
         "$KIMI_CODE_HOME/config.toml",
         "~/.kimi-code/config.toml"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "session_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://moonshotai.github.io/kimi-code/en/customization/hooks",
@@ -375,19 +249,9 @@
           "config_paths": [
             "~/.kimi/config.toml"
           ],
-          "events": {
-            "before_tool": "PreToolUse",
-            "after_tool": "PostToolUse"
-          },
-          "event_fields": {
-            "name": "tool_name",
-            "input": "tool_input",
-            "session": "session_id"
-          },
-          "blocking": {
-            "mechanism": "exit_code_2",
-            "failure_mode": "fail_open"
-          },
+          "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+          "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+          "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
           "source_url": "https://moonshotai.github.io/kimi-cli/en/customization/hooks.html"
         }
       ]
@@ -403,19 +267,9 @@
         "~/.kiro/agents/*.json",
         ".kiro/agents/*.json"
       ],
-      "events": {
-        "before_tool": "preToolUse",
-        "after_tool": "postToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "session_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "preToolUse", "after_tool": "postToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://kiro.dev/docs/cli/hooks/",
@@ -429,19 +283,9 @@
             "~/.kiro/hooks/*.json",
             ".kiro/hooks/*.json"
           ],
-          "events": {
-            "before_tool": "PreToolUse",
-            "after_tool": "PostToolUse"
-          },
-          "event_fields": {
-            "name": "tool_name",
-            "input": "tool_input",
-            "session": "session_id"
-          },
-          "blocking": {
-            "mechanism": "exit_code_2",
-            "failure_mode": "fail_open"
-          },
+          "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+          "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+          "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
           "source_url": "https://kiro.dev/docs/cli/v3/hooks/"
         }
       ]
@@ -456,14 +300,8 @@
       "config_paths": [
         ".kiro/hooks/*.json"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://kiro.dev/docs/hooks/"
@@ -480,14 +318,8 @@
         ".letta/settings.json",
         ".letta/settings.local.json"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://docs.letta.com/letta-agent/hooks"
@@ -503,19 +335,9 @@
         "~/.config/opencode/plugins/*.{js,ts,mjs}",
         ".opencode/plugins/*.{js,ts,mjs}"
       ],
-      "events": {
-        "before_tool": "tool.execute.before",
-        "after_tool": "tool.execute.after"
-      },
-      "event_fields": {
-        "name": "tool",
-        "input": "args",
-        "session": "sessionID"
-      },
-      "blocking": {
-        "mechanism": "exception",
-        "failure_mode": "fail_closed"
-      },
+      "events": { "before_tool": "tool.execute.before", "after_tool": "tool.execute.after" },
+      "event_fields": { "name": "tool", "input": "args", "session": "sessionID" },
+      "blocking": { "mechanism": "exception", "failure_mode": "fail_closed" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://opencode.ai/docs/plugins/"
@@ -532,19 +354,9 @@
         "~/.qwen/settings.json",
         ".qwen/settings.json"
       ],
-      "events": {
-        "before_tool": "PreToolUse",
-        "after_tool": "PostToolUse"
-      },
-      "event_fields": {
-        "name": "tool_name",
-        "input": "tool_input",
-        "session": "session_id"
-      },
-      "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
-      },
+      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
       "source_url": "https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/"

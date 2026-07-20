@@ -130,7 +130,7 @@ function logError(error) {
   try {
     const message = new Date().toISOString() + ' [' + AGENT_NAME + '] ' +
       (error.stack || error.message || String(error)) + '\\n';
-    fs.appendFileSync(ERROR_LOG_PATH, message, { encoding: 'utf-8', mode: 0o600 });
+    appendProtectedText(ERROR_LOG_PATH, 'Error log', message);
   } catch (logFailure) {
     process.stderr.write('[Elydora audit] Failed to write error log: ' + logFailure.message + '\\n');
   }
@@ -139,9 +139,13 @@ function logError(error) {
 function readChainState() {
   let raw;
   try {
-    raw = fs.readFileSync(CHAIN_STATE_PATH, 'utf-8');
+    raw = readProtectedFile(
+      CHAIN_STATE_PATH,
+      'Chain state',
+      MAX_PROTECTED_CONFIG_BYTES,
+    ).toString('utf-8');
   } catch (error) {
-    if (error.code === 'ENOENT') return ZERO_CHAIN_HASH;
+    if (hasRuntimeErrorCode(error, 'ENOENT')) return ZERO_CHAIN_HASH;
     throw new Error('Failed to read chain state: ' + error.message);
   }
   let state;
@@ -158,29 +162,7 @@ function readChainState() {
 }
 
 function writeChainState(chainHash) {
-  const temporaryPath = CHAIN_STATE_PATH + '.' + process.pid + '.tmp';
-  let descriptor;
-  try {
-    descriptor = fs.openSync(temporaryPath, 'wx', 0o600);
-    fs.writeFileSync(descriptor, JSON.stringify({ prev_chain_hash: chainHash }), 'utf-8');
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    try {
-      fs.renameSync(temporaryPath, CHAIN_STATE_PATH);
-    } catch (error) {
-      if (process.platform !== 'win32' || !['EEXIST', 'EPERM'].includes(error.code)) throw error;
-      try { fs.unlinkSync(CHAIN_STATE_PATH); } catch (unlinkError) {
-        if (unlinkError.code !== 'ENOENT') throw unlinkError;
-      }
-      fs.renameSync(temporaryPath, CHAIN_STATE_PATH);
-    }
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-    try { fs.unlinkSync(temporaryPath); } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
+  writeProtectedJson(CHAIN_STATE_PATH, 'Chain state', { prev_chain_hash: chainHash });
 }
 
 function readConfigAndKey() {

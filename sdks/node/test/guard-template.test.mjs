@@ -14,6 +14,7 @@ async function createFixture(status) {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-guard-'));
   const agentDir = path.join(homeDir, '.elydora', AGENT_ID);
   await mkdir(agentDir, { recursive: true });
+
   const server = http.createServer((_request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ agent: { status } }));
@@ -21,12 +22,15 @@ async function createFixture(status) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   assert(address && typeof address === 'object');
+
   await writeFile(
     path.join(agentDir, 'config.json'),
     JSON.stringify({ agent_id: AGENT_ID, base_url: `http://127.0.0.1:${address.port}` }),
   );
+
   const scriptPath = path.join(homeDir, 'guard.cjs');
   await writeFile(scriptPath, generateGuardScript('claudecode', AGENT_ID));
+
   return {
     homeDir,
     scriptPath,
@@ -39,11 +43,11 @@ async function createFixture(status) {
   };
 }
 
-function runGuard(scriptPath, homeDir) {
+function runGuard(scriptPath, homeDir, input = '{}') {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [scriptPath], {
       env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
@@ -51,6 +55,7 @@ function runGuard(scriptPath, homeDir) {
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.once('error', reject);
     child.once('close', (code) => resolve({ code, stdout, stderr }));
+    child.stdin.end(input);
   });
 }
 
@@ -58,6 +63,7 @@ test('frozen agents use the blocking exit code required by hook CLIs', async () 
   const fixture = await createFixture('frozen');
   try {
     const result = await runGuard(fixture.scriptPath, fixture.homeDir);
+
     assert.equal(result.code, 2);
     assert.match(result.stderr, /Tool execution blocked/);
     assert.equal(result.stdout, '');
@@ -70,6 +76,7 @@ test('active agents allow tool execution', async () => {
   const fixture = await createFixture('active');
   try {
     const result = await runGuard(fixture.scriptPath, fixture.homeDir);
+
     assert.equal(result.code, 0);
     assert.equal(result.stderr, '');
     assert.equal(result.stdout, '');
@@ -85,9 +92,24 @@ test('cached frozen status keeps the blocking exit code', async () => {
       path.join(fixture.homeDir, '.elydora', AGENT_ID, 'status-cache.json'),
       JSON.stringify({ status: 'frozen', cached_at: Date.now() }),
     );
+
     const result = await runGuard(fixture.scriptPath, fixture.homeDir);
+
     assert.equal(result.code, 2);
     assert.match(result.stderr, /Tool execution blocked/);
+    assert.equal(result.stdout, '');
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('fail-open guards report malformed hook input', async () => {
+  const fixture = await createFixture('active');
+  try {
+    const result = await runGuard(fixture.scriptPath, fixture.homeDir, '{ malformed');
+
+    assert.equal(result.code, 0);
+    assert.match(result.stderr, /invalid JSON.*fail-open/i);
     assert.equal(result.stdout, '');
   } finally {
     await fixture.close();

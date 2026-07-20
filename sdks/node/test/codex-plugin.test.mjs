@@ -1,120 +1,35 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
+import {
+  VALID_PRIVATE_KEY,
+  assertNativeHandler,
+  createFixture,
+  installConfig,
+  legacyHandler,
+  managedHandler,
+  registryModuleUrl,
+  runNode,
+  runPlugin,
+  writeJson,
+} from '../test-support/codex-test-helpers.mjs';
 
-const pluginModuleUrl = pathToFileURL(path.resolve('dist/plugins/codex.js')).href;
-const registryModuleUrl = pathToFileURL(path.resolve('dist/plugins/registry.js')).href;
+const GUARD_STATUS = 'Checking Elydora agent state';
+const AUDIT_STATUS = 'Recording Elydora tool use';
 
-function runNode(args, env, input = '') {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, {
-      env: { ...process.env, ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
-function runCommand(command, input = '') {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, {
-      shell: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
-function findHandler(settings, event, statusMessage) {
-  for (const group of settings.hooks?.[event] ?? []) {
-    const handler = group.hooks?.find((item) => item.statusMessage === statusMessage);
-    if (handler) return handler;
-  }
-  return undefined;
-}
-
-async function runPlugin(homeDir, method, argument) {
-  const script = `
-    import { codexPlugin } from ${JSON.stringify(pluginModuleUrl)};
-    const argument = JSON.parse(process.env.ELYDORA_TEST_ARGUMENT);
-    const result = await codexPlugin[process.env.ELYDORA_TEST_METHOD](argument);
-    if (result !== undefined) console.log(JSON.stringify(result));
-  `;
-  return runNode(
-    ['--input-type=module', '--eval', script],
-    {
-      HOME: homeDir,
-      USERPROFILE: homeDir,
-      ELYDORA_TEST_ARGUMENT: JSON.stringify(argument),
-      ELYDORA_TEST_METHOD: method,
-    },
-  );
-}
-
-async function createFixture({ guardSource, hookSource, existingSettings } = {}) {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-codex-'));
-  const agentDir = path.join(homeDir, '.elydora', 'agent-1');
-  const configDir = path.join(homeDir, '.codex');
-  await mkdir(agentDir, { recursive: true });
-  await mkdir(configDir, { recursive: true });
-
-  const guardScriptPath = path.join(agentDir, 'guard.js');
-  const hookScriptPath = path.join(agentDir, 'hook.js');
-  await writeFile(
-    guardScriptPath,
-    guardSource ?? "process.stderr.write('Agent is frozen by Elydora.'); process.exit(2);\n",
-  );
-  await writeFile(hookScriptPath, hookSource ?? 'process.exit(0);\n');
-  await writeFile(path.join(agentDir, 'config.json'), JSON.stringify({
-    agent_id: 'agent-1',
-    agent_name: 'codex',
-  }));
-
-  const configPath = path.join(configDir, 'hooks.json');
-  if (existingSettings !== undefined) {
-    await writeFile(configPath, typeof existingSettings === 'string'
-      ? existingSettings
-      : JSON.stringify(existingSettings, null, 2));
-  }
-
-  const installResult = await runPlugin(homeDir, 'install', {
-    agentName: 'codex',
-    agentId: 'agent-1',
-    baseUrl: 'https://api.elydora.com',
-    guardScriptPath,
-    hookScriptPath,
-  });
-
-  return {
-    agentDir,
-    configPath,
-    guardScriptPath,
-    homeDir,
-    hookScriptPath,
-    installResult,
-    async close() {
-      await rm(homeDir, { recursive: true, force: true });
-    },
-  };
-}
-
-test('Codex is registered as a native hook integration', async () => {
+test('Codex is registered with the native user hooks file', async () => {
   const { SUPPORTED_AGENTS } = await import(registryModuleUrl);
   assert.deepEqual(SUPPORTED_AGENTS.get('codex'), {
     name: 'OpenAI Codex',
@@ -123,162 +38,162 @@ test('Codex is registered as a native hook integration', async () => {
   });
 });
 
-test('Codex install preserves existing hooks and is idempotent', async () => {
-  const existing = {
-    description: 'Workspace hooks',
-    hooks: {
-      SessionStart: [{ hooks: [{ type: 'command', command: 'existing-command' }] }],
-    },
-  };
-  const fixture = await createFixture({ existingSettings: existing });
+test('Codex follows and canonicalizes the official CODEX_HOME root', async () => {
+  const fixture = await createFixture();
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    assert.match(fixture.installResult.stdout, /run \/hooks to review and trust/i);
-    const secondInstall = await runPlugin(fixture.homeDir, 'install', {
-      agentName: 'codex',
-      agentId: 'agent-1',
-      baseUrl: 'https://api.elydora.com',
-      guardScriptPath: fixture.guardScriptPath,
-      hookScriptPath: fixture.hookScriptPath,
+    const target = path.join(fixture.rootDir, 'custom Codex home');
+    const configured = path.join(fixture.rootDir, 'codex-home-link');
+    await mkdir(target, { recursive: true });
+    let codexHome = target;
+    try {
+      await symlink(target, configured, 'junction');
+      codexHome = configured;
+    } catch (error) {
+      if (error?.code !== 'EPERM') throw error;
+    }
+    const install = await runPlugin(
+      fixture,
+      'install',
+      installConfig(fixture),
+      { CODEX_HOME: codexHome },
+    );
+    assert.equal(install.code, 0, install.stderr);
+    const expectedPath = path.join(await realpath(target), 'hooks.json');
+    assert.match(await readFile(expectedPath, 'utf-8'), /PreToolUse/);
+    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
+
+    const status = await runPlugin(fixture, 'status', null, { CODEX_HOME: codexHome });
+    assert.equal(status.code, 0, status.stderr);
+    assert.equal(JSON.parse(status.stdout).configPath, expectedPath);
+    assert.equal(JSON.parse(status.stdout).installed, true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Codex rejects missing and file-backed CODEX_HOME values before writes', async () => {
+  const fixture = await createFixture();
+  try {
+    const missing = path.join(fixture.rootDir, 'missing-codex-home');
+    let result = await runPlugin(
+      fixture,
+      'install',
+      installConfig(fixture),
+      { CODEX_HOME: missing },
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Resolve CODEX_HOME/i);
+    await assert.rejects(lstat(path.join(fixture.homeDir, '.elydora')), { code: 'ENOENT' });
+
+    const filePath = path.join(fixture.rootDir, 'codex-home-file');
+    await writeFile(filePath, 'file');
+    result = await runPlugin(
+      fixture,
+      'install',
+      installConfig(fixture),
+      { CODEX_HOME: filePath },
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /CODEX_HOME is not a directory/i);
+    await assert.rejects(lstat(path.join(fixture.homeDir, '.elydora')), { code: 'ENOENT' });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Codex install preserves sources, migrates legacy handlers, and is idempotent', async () => {
+  const fixture = await createFixture();
+  try {
+    await writeJson(fixture.configPath, {
+      description: 'User hooks',
+      custom: { keep: true },
+      hooks: {
+        SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: 'keep' }] }],
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [{ type: 'command', command: 'user-pre' }] },
+          { matcher: '*', hooks: [legacyHandler(fixture.guardScriptPath, GUARD_STATUS)] },
+        ],
+        PostToolUse: [
+          { matcher: '*', hooks: [legacyHandler(fixture.hookScriptPath, AUDIT_STATUS)] },
+        ],
+      },
     });
-    assert.equal(secondInstall.code, 0, secondInstall.stderr);
+    const first = await fixture.install();
+    assert.equal(first.code, 0, first.stderr);
+    assert.match(first.stdout, /run \/hooks and approve both/i);
+    const second = await fixture.install();
+    assert.equal(second.code, 0, second.stderr);
 
-    const settings = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    assert.equal(settings.description, 'Workspace hooks');
-    assert.equal(settings.hooks.SessionStart[0].hooks[0].command, 'existing-command');
-    assert.equal(settings.hooks.PreToolUse.length, 1);
-    assert.equal(settings.hooks.PostToolUse.length, 1);
-    assert.equal(settings.hooks.PreToolUse[0].matcher, '*');
-    assert.equal(settings.hooks.PostToolUse[0].matcher, '*');
+    const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
+    assert.equal(config.description, 'User hooks');
+    assert.deepEqual(config.custom, { keep: true });
+    assert.equal(config.hooks.SessionStart[0].hooks[0].command, 'keep');
+    assert.equal(config.hooks.PreToolUse.length, 2);
+    assert.equal(config.hooks.PostToolUse.length, 1);
+    assert.deepEqual(config.hooks.PreToolUse[0].hooks, [{ type: 'command', command: 'user-pre' }]);
+    assertNativeHandler(managedHandler(config, 'PreToolUse', GUARD_STATUS), GUARD_STATUS);
+    assertNativeHandler(managedHandler(config, 'PostToolUse', AUDIT_STATUS), AUDIT_STATUS);
   } finally {
     await fixture.close();
   }
 });
 
-test('Codex hook commands enforce freezes and forward the official event payload', async () => {
-  const capturePath = path.join(os.tmpdir(), `elydora-codex-event-${process.pid}-${Date.now()}.json`);
-  const hookSource = `
-    const fs = require('node:fs');
-    const chunks = [];
-    process.stdin.on('data', (chunk) => chunks.push(chunk));
-    process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(capturePath)}, Buffer.concat(chunks)));
-  `;
-  const fixture = await createFixture({ hookSource });
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const settings = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    const guard = findHandler(settings, 'PreToolUse', 'Checking Elydora agent state');
-    const audit = findHandler(settings, 'PostToolUse', 'Recording Elydora tool use');
-    assert(guard);
-    assert(audit);
-
-    const commandKey = process.platform === 'win32' ? 'commandWindows' : 'command';
-    const guardResult = await runCommand(guard[commandKey], JSON.stringify({
-      hook_event_name: 'PreToolUse',
-      session_id: 'session-1',
-      tool_name: 'Bash',
-      tool_input: { command: 'echo test' },
-    }));
-    assert.equal(guardResult.code, 2);
-    assert.match(guardResult.stderr, /Agent is frozen by Elydora/);
-
-    const payload = {
-      hook_event_name: 'PostToolUse',
-      session_id: 'session-1',
-      tool_name: 'Bash',
-      tool_use_id: 'call-1',
-      tool_input: { command: 'echo test' },
-      tool_response: { output: 'test' },
-    };
-    const auditResult = await runCommand(audit[commandKey], JSON.stringify(payload));
-    assert.equal(auditResult.code, 0, auditResult.stderr);
-    assert.deepEqual(JSON.parse(await readFile(capturePath, 'utf-8')), payload);
-  } finally {
-    await fixture.close();
-    await rm(capturePath, { force: true });
+test('Codex rejects malformed and ambiguous JSON before creating runtime files', async () => {
+  const invalidConfigs = [
+    '{ malformed',
+    '[]\n',
+    '{"hooks":null}\n',
+    '{"hooks":{"PreToolUse":null}}\n',
+    '{"hooks":{"PreToolUse":[null]}}\n',
+    '{"hooks":{"PreToolUse":[{"hooks":null}]}}\n',
+    '{"hooks":{"PreToolUse":[{"hooks":[null]}]}}\n',
+    '{"hooks":{},"hooks":{}}\n',
+    '{"hooks":{},}\n',
+  ];
+  for (const existingConfig of invalidConfigs) {
+    const fixture = await createFixture({ existingConfig });
+    try {
+      const before = await readFile(fixture.configPath, 'utf-8');
+      const result = await fixture.install();
+      assert.equal(result.code, 1, `accepted ${existingConfig}`);
+      assert.equal(await readFile(fixture.configPath, 'utf-8'), before);
+      await assert.rejects(lstat(path.join(fixture.homeDir, '.elydora')), { code: 'ENOENT' });
+    } finally {
+      await fixture.close();
+    }
   }
 });
 
-test('Codex status requires both runtime scripts and uninstall preserves other hooks', async () => {
-  const fixture = await createFixture({ existingSettings: {
-    hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'existing-command' }] }] },
-  } });
+test('Codex status requires an exact hook pair, matching identity, and runtime secrets', async () => {
+  const fixture = await createFixture();
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const status = await runPlugin(fixture.homeDir, 'status', null);
+    assert.equal((await fixture.install()).code, 0);
+    let status = await runPlugin(fixture, 'status', null);
     assert.equal(status.code, 0, status.stderr);
     assert.equal(JSON.parse(status.stdout).installed, true);
 
-    await rm(fixture.guardScriptPath);
-    const degradedStatus = await runPlugin(fixture.homeDir, 'status', null);
-    assert.equal(JSON.parse(degradedStatus.stdout).installed, false);
+    const keyPath = path.join(fixture.agentDir, 'private.key');
+    await rm(keyPath);
+    status = await runPlugin(fixture, 'status', null);
+    assert.equal(JSON.parse(status.stdout).installed, false);
 
-    const uninstall = await runPlugin(fixture.homeDir, 'uninstall', 'agent-1');
-    assert.equal(uninstall.code, 0, uninstall.stderr);
-    const settings = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    assert.equal(settings.hooks.PreToolUse.length, 1);
-    assert.equal(settings.hooks.PreToolUse[0].hooks[0].command, 'existing-command');
-    assert.deepEqual(settings.hooks.PostToolUse, []);
-  } finally {
-    await fixture.close();
-  }
-});
+    assert.equal((await fixture.install()).code, 0);
+    const hooks = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
+    managedHandler(hooks, 'PreToolUse', GUARD_STATUS).group.matcher = 'Bash';
+    await writeJson(fixture.configPath, hooks);
+    status = await runPlugin(fixture, 'status', null);
+    assert.equal(JSON.parse(status.stdout).hookConfigured, false);
 
-test('Codex install preserves user handlers that reuse Elydora status text', async () => {
-  const userGuard = {
-    type: 'command',
-    command: 'user-guard',
-    statusMessage: 'Checking Elydora agent state',
-  };
-  const userAudit = {
-    type: 'command',
-    command: 'user-audit',
-    statusMessage: 'Recording Elydora tool use',
-  };
-  const fixture = await createFixture({ existingSettings: {
-    hooks: {
-      PreToolUse: [{ matcher: 'Bash', hooks: [userGuard] }],
-      PostToolUse: [{ matcher: 'Bash', hooks: [userAudit] }],
-    },
-  } });
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const settings = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    assert.deepEqual(settings.hooks.PreToolUse[0].hooks[0], userGuard);
-    assert.deepEqual(settings.hooks.PostToolUse[0].hooks[0], userAudit);
-    assert.equal(settings.hooks.PreToolUse.length, 2);
-    assert.equal(settings.hooks.PostToolUse.length, 2);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Codex install rejects missing runtimes before writing hooks config', async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-codex-missing-runtime-'));
-  const agentDir = path.join(homeDir, '.elydora', 'agent-1');
-  const configPath = path.join(homeDir, '.codex', 'hooks.json');
-  try {
-    const install = await runPlugin(homeDir, 'install', {
-      agentName: 'codex',
-      agentId: 'agent-1',
-      baseUrl: 'https://api.elydora.com',
-      guardScriptPath: path.join(agentDir, 'guard.js'),
-      hookScriptPath: path.join(agentDir, 'hook.js'),
+    assert.equal((await fixture.install()).code, 0);
+    await writeJson(path.join(fixture.agentDir, 'config.json'), {
+      agent_id: 'another-agent',
+      agent_name: 'codex',
     });
-    assert.equal(install.code, 1);
-    assert.match(install.stderr, /runtime is missing/i);
-    await assert.rejects(readFile(configPath), { code: 'ENOENT' });
-  } finally {
-    await rm(homeDir, { recursive: true, force: true });
-  }
-});
+    status = await runPlugin(fixture, 'status', null);
+    assert.equal(JSON.parse(status.stdout).installed, false);
 
-test('Codex status surfaces malformed referenced runtime metadata', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
     await writeFile(path.join(fixture.agentDir, 'config.json'), '{ malformed');
-    const status = await runPlugin(fixture.homeDir, 'status', null);
+    status = await runPlugin(fixture, 'status', null);
     assert.equal(status.code, 1);
     assert.match(status.stderr, /parse Elydora runtime config/i);
   } finally {
@@ -286,58 +201,237 @@ test('Codex status surfaces malformed referenced runtime metadata', async () => 
   }
 });
 
-test('Codex status surfaces malformed hook matcher groups', async () => {
-  const fixture = await createFixture();
+test('Codex uninstall removes exact ownership and preserves lookalike handlers', async () => {
+  const fixture = await createFixture({
+    existingConfig: {
+      hooks: {
+        SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: 'keep' }] }],
+      },
+    },
+  });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const settings = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    settings.hooks.PreToolUse[0].hooks = null;
-    await writeFile(fixture.configPath, JSON.stringify(settings, null, 2));
-    const status = await runPlugin(fixture.homeDir, 'status', null);
-    assert.equal(status.code, 1);
-    assert.match(status.stderr, /matcher group must contain a hooks array/i);
+    assert.equal((await fixture.install()).code, 0);
+    const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
+    const otherGuard = legacyHandler(
+      path.join(fixture.homeDir, '.elydora', 'agent-10', 'guard.js'),
+      GUARD_STATUS,
+    );
+    const otherAudit = legacyHandler(
+      path.join(fixture.homeDir, '.elydora', 'agent-10', 'hook.js'),
+      AUDIT_STATUS,
+    );
+    const lookalike = {
+      type: 'command',
+      command: `inspect ${fixture.guardScriptPath}`,
+      commandWindows: `inspect ${fixture.guardScriptPath}`,
+      timeout: 10,
+      statusMessage: GUARD_STATUS,
+    };
+    const modifiedGroup = {
+      matcher: 'Bash',
+      hooks: [structuredClone(managedHandler(config, 'PreToolUse', GUARD_STATUS).handler)],
+    };
+    config.hooks.PreToolUse.push(
+      { matcher: '*', hooks: [otherGuard] },
+      { matcher: '*', hooks: [lookalike] },
+      modifiedGroup,
+    );
+    config.hooks.PostToolUse.push({ matcher: '*', hooks: [otherAudit] });
+    await writeJson(fixture.configPath, config);
+
+    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
+    assert.equal(result.code, 0, result.stderr);
+    const remaining = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
+    assert.equal(remaining.hooks.SessionStart[0].hooks[0].command, 'keep');
+    assert.equal(remaining.hooks.PreToolUse.length, 3);
+    assert.equal(remaining.hooks.PostToolUse.length, 1);
+    assert.match(remaining.hooks.PreToolUse[0].hooks[0].command, /agent-10/);
+    assert.deepEqual(remaining.hooks.PreToolUse[1].hooks[0], lookalike);
+    assert.deepEqual(remaining.hooks.PreToolUse[2], { matcher: 'Bash', hooks: [] });
   } finally {
     await fixture.close();
   }
 });
 
-test('Codex uninstall removes a hooks config owned entirely by Elydora', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const uninstall = await runPlugin(fixture.homeDir, 'uninstall', 'agent-1');
-    assert.equal(uninstall.code, 0, uninstall.stderr);
-    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Codex install preserves invalid contract shapes before writing', async () => {
-  for (const existingSettings of [
-    { hooks: null },
-    { hooks: { PreToolUse: null } },
-    { hooks: { PreToolUse: [{ hooks: null }] } },
-  ]) {
-    const fixture = await createFixture({ existingSettings });
+test('Codex confines generated runtimes to the managed agent directory', async () => {
+  for (const field of ['guardScriptPath', 'hookScriptPath']) {
+    const fixture = await createFixture();
     try {
-      assert.equal(fixture.installResult.code, 1);
-      assert.deepEqual(
-        JSON.parse(await readFile(fixture.configPath, 'utf-8')),
-        existingSettings,
-      );
+      const result = await runPlugin(fixture, 'install', installConfig(fixture, {
+        [field]: path.join(fixture.homeDir, `unmanaged-${field}.js`),
+      }));
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /managed agent directory/i);
+      await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
     } finally {
       await fixture.close();
     }
   }
 });
 
-test('Codex install preserves malformed config for recovery', async () => {
-  const fixture = await createFixture({ existingSettings: '{ malformed' });
+test('Codex validates runtime identity, credentials, and API origin before writes', async () => {
+  const invalidOverrides = [
+    { agentName: 'cursor' },
+    { privateKey: 'invalid' },
+    { token: '' },
+    { baseUrl: 'file:///tmp/elydora' },
+    { baseUrl: 'https://user:secret@api.elydora.com' },
+    { baseUrl: 'https://api.elydora.com?tenant=one' },
+  ];
+  for (const overrides of invalidOverrides) {
+    const fixture = await createFixture();
+    try {
+      const result = await runPlugin(fixture, 'install', installConfig(fixture, overrides));
+      assert.equal(result.code, 1, JSON.stringify(overrides));
+      await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
+      await assert.rejects(lstat(path.join(fixture.homeDir, '.elydora')), { code: 'ENOENT' });
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test('Codex rejects linked hook and runtime files', async (t) => {
+  for (const kind of ['hooks', 'config', 'key', 'guard', 'audit']) {
+    const fixture = await createFixture();
+    try {
+      if (kind === 'hooks') {
+        const target = path.join(fixture.homeDir, 'hooks-target.json');
+        const original = '{"hooks":{}}\n';
+        await mkdir(path.dirname(fixture.configPath), { recursive: true });
+        await writeFile(target, original);
+        try {
+          await symlink(target, fixture.configPath);
+        } catch (error) {
+          if (error?.code === 'EPERM') {
+            t.skip(`symbolic links unavailable: ${error.message}`);
+            return;
+          }
+          throw error;
+        }
+        const result = await fixture.install();
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /physical file/i);
+        assert.equal(await readFile(target, 'utf-8'), original);
+        continue;
+      }
+
+      assert.equal((await fixture.install()).code, 0);
+      const filePath = {
+        config: path.join(fixture.agentDir, 'config.json'),
+        key: path.join(fixture.agentDir, 'private.key'),
+        guard: fixture.guardScriptPath,
+        audit: fixture.hookScriptPath,
+      }[kind];
+      const contents = await readFile(filePath);
+      const target = path.join(fixture.homeDir, `${kind}-target`);
+      await writeFile(target, contents);
+      await rm(filePath);
+      try {
+        await symlink(target, filePath);
+      } catch (error) {
+        if (error?.code === 'EPERM') {
+          t.skip(`symbolic links unavailable: ${error.message}`);
+          return;
+        }
+        throw error;
+      }
+      const status = await runPlugin(fixture, 'status', null);
+      assert.equal(status.code, 1);
+      assert.match(status.stderr, /physical file/i);
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test('Codex removes an entirely managed file and leaves absent hooks absent', async () => {
+  const fixture = await createFixture();
   try {
-    assert.equal(fixture.installResult.code, 1);
-    assert.match(fixture.installResult.stderr, /parse Codex hooks config/i);
-    assert.equal(await readFile(fixture.configPath, 'utf-8'), '{ malformed');
+    assert.equal((await fixture.install()).code, 0);
+    assert.equal((await runPlugin(fixture, 'uninstall', 'agent-1')).code, 0);
+    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
+    assert.equal((await runPlugin(fixture, 'uninstall', 'agent-1')).code, 0);
+    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Codex uninstall rejects a linked default hooks directory', async (t) => {
+  const fixture = await createFixture();
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const codexDirectory = path.dirname(fixture.configPath);
+    const target = path.join(fixture.rootDir, 'codex-hooks-target');
+    await rename(codexDirectory, target);
+    try {
+      await symlink(target, codexDirectory, 'junction');
+    } catch (error) {
+      if (error?.code === 'EPERM') {
+        t.skip(`symbolic links unavailable: ${error.message}`);
+        return;
+      }
+      throw error;
+    }
+
+    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /physical directory/i);
+    assert.match(await readFile(path.join(target, 'hooks.json'), 'utf-8'), /PreToolUse/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Codex installation protects credentials and cleans transaction files', async () => {
+  const fixture = await createFixture();
+  try {
+    const result = await fixture.install();
+    assert.equal(result.code, 0, result.stderr);
+    const names = [
+      ...await readdir(fixture.agentDir),
+      ...await readdir(path.dirname(fixture.configPath)),
+    ];
+    assert.equal(names.some((name) => /\.(tmp|rollback)$/.test(name)), false);
+    if (process.platform !== 'win32') {
+      for (const filePath of [
+        fixture.configPath,
+        path.join(fixture.agentDir, 'config.json'),
+        path.join(fixture.agentDir, 'private.key'),
+      ]) {
+        assert.equal((await stat(filePath)).mode & 0o777, 0o600);
+      }
+      for (const filePath of [fixture.guardScriptPath, fixture.hookScriptPath]) {
+        assert.equal((await stat(filePath)).mode & 0o777, 0o700);
+      }
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Codex CLI preflight preserves malformed hooks before runtime creation', async () => {
+  const fixture = await createFixture({ existingConfig: '{ malformed' });
+  try {
+    const privateKeyPath = path.join(fixture.rootDir, 'private.key');
+    await writeFile(privateKeyPath, VALID_PRIVATE_KEY, { mode: 0o600 });
+    const result = await runNode([
+      path.resolve('dist/cli.js'),
+      'install',
+      '--agent', 'codex',
+      '--org_id', 'org-1',
+      '--agent_id', 'agent-1',
+      '--private_key_file', privateKeyPath,
+      '--kid', 'kid-1',
+      '--base_url', fixture.baseUrl,
+    ], {
+      HOME: fixture.homeDir,
+      USERPROFILE: fixture.homeDir,
+    }, fixture.projectDir);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Codex user hooks/i);
+    await assert.rejects(lstat(path.join(fixture.homeDir, '.elydora')), { code: 'ENOENT' });
   } finally {
     await fixture.close();
   }

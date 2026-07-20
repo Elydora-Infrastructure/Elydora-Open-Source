@@ -1,5 +1,11 @@
 import type { InstallConfig } from './base.js';
 import {
+  AGENT_KEY,
+  AUDIT_SCRIPT,
+  GUARD_SCRIPT,
+  type RenderedDocument,
+} from './codex-contract.js';
+import {
   commitManagedInstallation,
   managedRuntimePaths,
   preflightManagedInstallation,
@@ -8,46 +14,40 @@ import {
   type PreparedManagedInstallation,
   type RenameFile,
 } from './managed-installation.js';
-import {
-  AGENT_KEY,
-  AUDIT_SCRIPT,
-  GUARD_SCRIPT,
-  type RenderedDocument,
-} from './cursor-contract.js';
-import { cursorConfigPath } from './cursor-io.js';
 
-const DISPLAY_NAME = 'Cursor';
-const HOOKS_DIRECTORY_LABEL = 'Cursor hooks directory';
-const HOOKS_LABEL = 'Cursor user hooks';
+const DISPLAY_NAME = 'Codex';
+const HOOKS_DIRECTORY_LABEL = 'Codex hooks directory';
+const HOOKS_LABEL = 'Codex user hooks';
 
-export type CursorRuntimePaths = ManagedRuntimePaths;
-export type PreparedCursorInstallation = PreparedManagedInstallation;
+export type CodexRuntimePaths = ManagedRuntimePaths;
+export type PreparedCodexInstallation = PreparedManagedInstallation;
 export type { RenameFile };
 
-export function cursorRuntimePaths(config: InstallConfig): CursorRuntimePaths {
+export function codexRuntimePaths(config: InstallConfig): CodexRuntimePaths {
   return managedRuntimePaths(config, AGENT_KEY, GUARD_SCRIPT, AUDIT_SCRIPT);
 }
 
-export async function preflightCursorInstallation(
+export async function preflightCodexInstallation(
   config: InstallConfig,
-): Promise<CursorRuntimePaths> {
+  hooksPath: string,
+): Promise<CodexRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hooksDirectoryLabel: HOOKS_DIRECTORY_LABEL,
-    hooksPath: cursorConfigPath(),
+    hooksPath,
     config,
   }, GUARD_SCRIPT, AUDIT_SCRIPT);
 }
 
-export async function prepareCursorInstallation(
+export async function prepareCodexInstallation(
   config: InstallConfig,
   rendered: RenderedDocument,
-): Promise<PreparedCursorInstallation> {
+): Promise<PreparedCodexInstallation> {
   if (!rendered.changed && rendered.document.raw === undefined) {
-    throw new Error('Cursor hook installation did not produce a configuration document');
+    throw new Error('Codex hook installation did not produce a configuration document');
   }
   const hooksSource = rendered.next ?? rendered.document.raw;
-  if (hooksSource === undefined) throw new Error('Cursor hook configuration is missing');
+  if (hooksSource === undefined) throw new Error('Codex hook configuration is missing');
   return prepareManagedInstallation({
     agentKey: AGENT_KEY,
     displayName: DISPLAY_NAME,
@@ -57,20 +57,12 @@ export async function prepareCursorInstallation(
     expectedHooksSource: rendered.document.raw,
     hooksSource,
     config,
-    guardOptions: {
-      failClosed: true,
-      successOutput: '{"permission":"allow"}\n',
-    },
-    auditOptions: {
-      failClosed: true,
-      nativePayload: true,
-      successOutput: '{}\n',
-    },
+    auditOptions: { nativePayload: true },
   }, GUARD_SCRIPT, AUDIT_SCRIPT);
 }
 
-export async function commitCursorInstallation(
-  prepared: PreparedCursorInstallation,
+export async function commitCodexInstallation(
+  prepared: PreparedCodexInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);
