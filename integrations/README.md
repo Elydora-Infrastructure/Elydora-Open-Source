@@ -6,6 +6,8 @@ The provider-level contract represents the default stable runtime. `contract_var
 
 Grok Build adapters write exact `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` groups under `$GROK_HOME/hooks` or `~/.grok/hooks`. The native camelCase payload includes `toolUseId`, `toolInputTruncated`, and `toolResult`; explicit denials use JSON stdout plus exit code `2`, while hook crashes and timeouts fail open. Project `.grok/hooks` files require `/hooks-trust` or `--trust`; `hooks-paths`, plugin, Claude Code, and Cursor sources remain read-only for Elydora.
 
+Cline CLI 3 and Cline IDE use separate file-hook loaders. SDK adapters target CLI 3, write only `$CLINE_DIR/hooks`, preserve its hybrid `tool_call`/`preToolUse` and `tool_result`/`postToolUse` payload, and emit pure JSON cancellation controls. The IDE variant discovers runtime `--hooks-dir`, Documents, and `.clinerules/hooks` roots; Windows selects exact `.ps1` files and macOS/Linux select executable extensionless files. Both runtimes continue after hook crashes, timeouts, and invalid controls while recording the failure.
+
 GitHub Copilot command `preToolUse` hooks deny on crashes and every non-zero exit. Command timeouts continue through the normal permission flow, so `timeout_failure_mode` records that explicit exception when it differs from `failure_mode`.
 
 Cursor uses the same `preToolUse` and `postToolUse` contract across its CLI and IDE. User, project, and enterprise hook sources merge by documented priority; command exit code `2` denies an action, while per-script `failClosed` controls crash, timeout, and invalid-output behavior.

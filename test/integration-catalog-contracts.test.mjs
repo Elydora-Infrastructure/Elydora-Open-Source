@@ -242,14 +242,47 @@ test('high-drift providers retain their verified hook contracts', async () => {
     after_tool: 'PostToolUse',
   });
   assert.deepEqual(providers.get('cline').event_fields, {
-    name: 'tool_call.name/tool_result.name',
-    input: 'tool_call.input/tool_result.input',
+    name: 'tool_call.name/preToolUse.toolName/tool_result.name/postToolUse.toolName',
+    input: 'tool_call.input/preToolUse.parameters/tool_result.input/postToolUse.parameters',
     session: 'taskId',
+    call_id: 'tool_call.id/tool_result.id',
+    output: 'tool_result.output/postToolUse.result',
+    error: 'tool_result.error',
   });
   assert.deepEqual(providers.get('cline').blocking, {
     mechanism: 'json_stdout_cancel',
     failure_mode: 'fail_open',
   });
+  assert.deepEqual(providers.get('cline').contract_variants, [
+    {
+      id: 'idefilehooks',
+      release_channel: 'stable',
+      activation:
+        'Hooks enabled in Cline IDE settings; Windows uses <HookName>.ps1 and macOS/Linux use executable extensionless files',
+      config_format: 'script',
+      config_paths: [
+        '--hooks-dir <path>',
+        '~/Documents/Cline/Hooks/',
+        '.clinerules/hooks/',
+      ],
+      events: {
+        before_tool: 'PreToolUse',
+        after_tool: 'PostToolUse',
+      },
+      event_fields: {
+        name: 'preToolUse.toolName/postToolUse.toolName',
+        input: 'preToolUse.parameters/postToolUse.parameters',
+        session: 'taskId',
+        output: 'postToolUse.result',
+      },
+      blocking: {
+        mechanism: 'json_stdout_cancel',
+        failure_mode: 'fail_open',
+      },
+      source_url:
+        'https://github.com/cline/cline/blob/main/apps/vscode/src/core/hooks/hook-factory.ts',
+    },
+  ]);
   assert.deepEqual(providers.get('kimi').events, {
     before_tool: 'PreToolUse',
     after_tool: 'PostToolUse',

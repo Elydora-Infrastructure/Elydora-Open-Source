@@ -1,53 +1,34 @@
-import { randomUUID } from 'node:crypto';
-import fsp from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {
   AGENT_KEY,
+  AUDIT_SCRIPT,
+  GUARD_SCRIPT,
   type ClineHookFile,
   type ClineRuntimeContract,
   parseMetadata,
   sameAgentId,
 } from './cline-contract.js';
+import { generateGuardScript } from './guard-template.js';
+import { generateHookScript } from './hook-template.js';
+import { inspectPhysicalDirectory, readPhysicalFile } from './managed-files.js';
+import { parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
-type JsonObject = Record<string, unknown>;
-
-interface StagedFile {
-  readonly state: ClineHookFile;
-  readonly tempPath: string;
-}
-
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  return isObject(error) && error.code === code;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
+const MAX_SECRET_BYTES = 64 * 1024;
+const MAX_CONFIG_BYTES = 512 * 1024;
 
 export async function readHookFile(filePath: string): Promise<ClineHookFile> {
-  let source: string;
-  try {
-    source = await fsp.readFile(filePath, 'utf-8');
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) return { exists: false, filePath };
-    throw new Error(`Read Cline hook at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
+  const directory = path.dirname(filePath);
+  if (!await inspectPhysicalDirectory(directory, 'Cline hooks directory')) {
+    return { exists: false, filePath };
   }
+  const snapshot = await readPhysicalFile(filePath, 'Cline hook');
+  if (!snapshot) return { exists: false, filePath };
   return {
     exists: true,
     filePath,
-    source,
-    metadata: parseMetadata(filePath, source),
+    source: snapshot.contents,
+    metadata: parseMetadata(filePath, snapshot.contents),
   };
 }
 
@@ -57,193 +38,91 @@ export function requireAvailableHookFile(file: ClineHookFile): void {
   }
 }
 
-async function removeTemporary(tempPath: string): Promise<void> {
-  try {
-    await fsp.unlink(tempPath);
-  } catch (error) {
-    if (!hasErrorCode(error, 'ENOENT')) throw error;
-  }
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
 }
 
-async function failStage(
-  handle: FileHandle | undefined,
-  tempPath: string,
-  cause: unknown,
-): Promise<never> {
-  const errors = [asError(cause)];
-  if (handle) {
-    try {
-      await handle.close();
-    } catch (error) {
-      errors.push(asError(error));
-    }
+function requireString(value: unknown, field: string, configPath: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Elydora runtime config ${field} is invalid: ${configPath}`);
   }
-  try {
-    await removeTemporary(tempPath);
-  } catch (error) {
-    errors.push(asError(error));
-  }
-  const message = `Stage Cline hook at ${tempPath}: ${errorMessage(cause)}`;
-  if (errors.length > 1) throw new AggregateError(errors, message);
-  throw new Error(message, { cause: errors[0] });
-}
-
-async function stageFile(state: ClineHookFile, source: string): Promise<StagedFile> {
-  const directory = path.dirname(state.filePath);
-  await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
-  const tempPath = path.join(directory, `.${path.basename(state.filePath)}.${randomUUID()}.tmp`);
-  let handle: FileHandle | undefined;
-  try {
-    handle = await fsp.open(tempPath, 'wx', 0o700);
-    await handle.writeFile(source, 'utf-8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    return { state, tempPath };
-  } catch (error) {
-    return failStage(handle, tempPath, error);
-  }
-}
-
-async function writeAtomic(filePath: string, source: string): Promise<void> {
-  const staged = await stageFile({ exists: false, filePath }, source);
-  try {
-    await fsp.rename(staged.tempPath, filePath);
-  } catch (error) {
-    const errors = [asError(error)];
-    try {
-      await removeTemporary(staged.tempPath);
-    } catch (cleanupError) {
-      errors.push(asError(cleanupError));
-    }
-    throw new AggregateError(errors, `Restore Cline hook at ${filePath}: ${errorMessage(error)}`);
-  }
-}
-
-async function rollbackFile(state: ClineHookFile): Promise<void> {
-  if (state.exists) {
-    await writeAtomic(state.filePath, state.source!);
-    return;
-  }
-  try {
-    await fsp.unlink(state.filePath);
-  } catch (error) {
-    if (!hasErrorCode(error, 'ENOENT')) throw error;
-  }
-}
-
-export async function writeHookPair(
-  guard: { readonly state: ClineHookFile; readonly source: string },
-  audit: { readonly state: ClineHookFile; readonly source: string },
-): Promise<void> {
-  const staged: StagedFile[] = [];
-  try {
-    staged.push(await stageFile(guard.state, guard.source));
-    staged.push(await stageFile(audit.state, audit.source));
-  } catch (error) {
-    const errors = [asError(error)];
-    for (const item of staged) {
-      try {
-        await removeTemporary(item.tempPath);
-      } catch (cleanupError) {
-        errors.push(asError(cleanupError));
-      }
-    }
-    throw new AggregateError(errors, `Stage Cline hook pair: ${errorMessage(error)}`);
-  }
-
-  const committed: StagedFile[] = [];
-  try {
-    for (const item of staged) {
-      await fsp.rename(item.tempPath, item.state.filePath);
-      committed.push(item);
-    }
-  } catch (error) {
-    const errors = [asError(error)];
-    for (const item of [...committed].reverse()) {
-      try {
-        await rollbackFile(item.state);
-      } catch (rollbackError) {
-        errors.push(asError(rollbackError));
-      }
-    }
-    for (const item of staged.slice(committed.length)) {
-      try {
-        await removeTemporary(item.tempPath);
-      } catch (cleanupError) {
-        errors.push(asError(cleanupError));
-      }
-    }
-    throw new AggregateError(errors, `Write Cline hook pair: ${errorMessage(error)}`);
-  }
-}
-
-export async function removeOwnedHooks(
-  files: readonly ClineHookFile[],
-  agentId?: string,
-): Promise<void> {
-  for (const file of files) {
-    const ownedAgentId = file.metadata?.agentId;
-    if (!ownedAgentId || (agentId && !sameAgentId(ownedAgentId, agentId))) continue;
-    try {
-      await fsp.unlink(file.filePath);
-    } catch (error) {
-      if (hasErrorCode(error, 'ENOENT')) continue;
-      throw new Error(`Remove Cline hook at ${file.filePath}: ${errorMessage(error)}`, {
-        cause: asError(error),
-      });
-    }
-  }
-}
-
-export async function regularFileExists(filePath: string, label: string): Promise<boolean> {
-  try {
-    return (await fsp.stat(filePath)).isFile();
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT') || hasErrorCode(error, 'ENOTDIR')) return false;
-    throw new Error(`Read ${label} at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-}
-
-export async function requireRuntime(filePath: string, label: string): Promise<void> {
-  if (!filePath) throw new Error(`${label} path is required`);
-  if (!await regularFileExists(filePath, label)) throw new Error(`${label} is missing: ${filePath}`);
-}
-
-async function readRuntimeConfig(filePath: string): Promise<JsonObject | undefined> {
-  let raw: string;
-  try {
-    raw = await fsp.readFile(filePath, 'utf-8');
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) return undefined;
-    throw new Error(`Read Elydora runtime config at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Failed to parse Elydora runtime config at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-  if (!isObject(value)) throw new Error(`Elydora runtime config at ${filePath} must be a JSON object`);
   return value;
 }
 
+function validateRuntimeConfig(
+  config: JsonObject,
+  contract: ClineRuntimeContract,
+  configPath: string,
+): void {
+  const supported = new Set(['org_id', 'agent_id', 'kid', 'base_url', 'token', 'agent_name']);
+  const extra = Object.keys(config).find((key) => !supported.has(key));
+  if (extra) throw new Error(`Elydora runtime config has unsupported field "${extra}": ${configPath}`);
+  requireString(config.org_id, 'org_id', configPath);
+  requireString(config.kid, 'kid', configPath);
+  const agentId = requireString(config.agent_id, 'agent_id', configPath);
+  if (!sameAgentId(agentId, contract.agentId) || config.agent_name !== AGENT_KEY) {
+    throw new Error(`Elydora runtime identity does not match Cline hooks: ${configPath}`);
+  }
+  if (config.token !== undefined) requireString(config.token, 'token', configPath);
+  const rawBaseUrl = requireString(config.base_url, 'base_url', configPath);
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(rawBaseUrl);
+  } catch (error) {
+    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`, {
+      cause: error instanceof Error ? error : new Error(String(error)),
+    });
+  }
+  if (!['http:', 'https:'].includes(baseUrl.protocol)
+    || !baseUrl.hostname
+    || baseUrl.username
+    || baseUrl.password
+    || baseUrl.search
+    || baseUrl.hash) {
+    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`);
+  }
+}
+
+function validatePrivateKey(contents: string, keyPath: string): void {
+  const bytes = Buffer.from(contents, 'base64url');
+  if (bytes.length !== 32 || bytes.toString('base64url') !== contents) {
+    throw new Error(`Elydora private key is invalid: ${keyPath}`);
+  }
+}
+
+function validContractPaths(contract: ClineRuntimeContract): boolean {
+  return samePath(path.dirname(contract.agentDirectory), path.join(os.homedir(), '.elydora'))
+    && samePath(contract.guardPath, path.join(contract.agentDirectory, GUARD_SCRIPT))
+    && samePath(contract.auditPath, path.join(contract.agentDirectory, AUDIT_SCRIPT));
+}
+
 export async function runtimeFilesExist(contract: ClineRuntimeContract): Promise<boolean> {
+  if (!validContractPaths(contract)) return false;
+  const runtimeRoot = path.join(os.homedir(), '.elydora');
+  if (!await inspectPhysicalDirectory(runtimeRoot, 'Elydora runtime directory')) return false;
+  if (!await inspectPhysicalDirectory(contract.agentDirectory, 'Elydora agent runtime directory')) {
+    return false;
+  }
   const configPath = path.join(contract.agentDirectory, 'config.json');
-  const config = await readRuntimeConfig(configPath);
-  if (!config
-    || config.agent_name !== AGENT_KEY
-    || typeof config.agent_id !== 'string'
-    || !sameAgentId(config.agent_id, contract.agentId)) return false;
-  const existence = await Promise.all([
-    regularFileExists(contract.guardPath, 'Elydora guard runtime'),
-    regularFileExists(contract.auditPath, 'Elydora audit runtime'),
+  const keyPath = path.join(contract.agentDirectory, 'private.key');
+  const [config, key, guard, audit] = await Promise.all([
+    readPhysicalFile(configPath, 'Elydora runtime config', MAX_CONFIG_BYTES),
+    readPhysicalFile(keyPath, 'Elydora private key', MAX_SECRET_BYTES),
+    readPhysicalFile(contract.guardPath, 'Elydora guard runtime'),
+    readPhysicalFile(contract.auditPath, 'Elydora audit runtime'),
   ]);
-  return existence.every(Boolean);
+  if (!config || !key || !guard || !audit) return false;
+  const parsed = parseStrictJsonObject(config.contents, `Elydora runtime config at ${configPath}`);
+  validateRuntimeConfig(parsed, contract, configPath);
+  validatePrivateKey(key.contents, keyPath);
+  return guard.contents === generateGuardScript(AGENT_KEY, contract.agentId)
+    && audit.contents === generateHookScript(
+      AGENT_KEY,
+      contract.agentId,
+      { nativePayload: true },
+    );
 }

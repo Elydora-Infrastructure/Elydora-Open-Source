@@ -2,6 +2,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const AGENT_KEY = 'cline';
+export const GUARD_SCRIPT = 'guard.js';
+export const AUDIT_SCRIPT = 'hook.js';
 export const GUARD_FILE_NAME = 'PreToolUse.mjs';
 export const AUDIT_FILE_NAME = 'PostToolUse.mjs';
 
@@ -140,7 +142,7 @@ async function main() {
 
   if (hookKind === 'guard' && result.code === 2) {
     const errorMessage = result.stderr.trim() || 'Agent is frozen by Elydora.';
-    process.stdout.write('HOOK_CONTROL\\t' + JSON.stringify({ cancel: true, errorMessage }) + '\\n');
+    process.stdout.write(JSON.stringify({ cancel: true, errorMessage }) + '\\n');
     return;
   }
   if (result.signal) throw new Error('runtime terminated by signal ' + result.signal);
@@ -218,8 +220,8 @@ export function runtimeContract(
   }
   validateAgentSegment(guard.agentId);
   const agentDirectory = path.join(os.homedir(), '.elydora', guard.agentId);
-  const expectedGuard = path.join(agentDirectory, 'guard.js');
-  const expectedAudit = path.join(agentDirectory, 'hook.js');
+  const expectedGuard = path.join(agentDirectory, GUARD_SCRIPT);
+  const expectedAudit = path.join(agentDirectory, AUDIT_SCRIPT);
   if (!samePath(guard.runtimePath, expectedGuard) || !samePath(audit.runtimePath, expectedAudit)) {
     throw new Error('Elydora Cline hook metadata references an unexpected runtime path');
   }
