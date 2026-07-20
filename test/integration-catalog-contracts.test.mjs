@@ -32,6 +32,29 @@ test('high-drift providers retain their verified hook contracts', async () => {
     mechanism: 'exit_code_2',
     failure_mode: 'fail_open',
   });
+  assert.deepEqual(providers.get('claudecode').config_paths, [
+    '$CLAUDE_CONFIG_DIR/settings.json',
+    '~/.claude/settings.json',
+    '.claude/settings.json',
+    '.claude/settings.local.json',
+  ]);
+  assert.deepEqual(providers.get('claudecode').events, {
+    before_tool: 'PreToolUse',
+    after_tool: 'PostToolUse',
+    after_tool_failure: 'PostToolUseFailure',
+  });
+  assert.deepEqual(providers.get('claudecode').event_fields, {
+    name: 'tool_name',
+    input: 'tool_input',
+    session: 'session_id',
+    call_id: 'tool_use_id',
+    output: 'tool_response',
+    error: 'error',
+  });
+  assert.deepEqual(providers.get('claudecode').blocking, {
+    mechanism: 'exit_code_2',
+    failure_mode: 'fail_open',
+  });
   assert.deepEqual(providers.get('codex').config_paths, [
     '$CODEX_HOME/hooks.json',
     '~/.codex/hooks.json',

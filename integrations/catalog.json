@@ -31,9 +31,25 @@
       "surface": "cli",
       "integration_mode": "command_hooks",
       "config_format": "json",
-      "config_paths": ["~/.claude/settings.json", ".claude/settings.json", ".claude/settings.local.json"],
-      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
-      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "config_paths": [
+        "$CLAUDE_CONFIG_DIR/settings.json",
+        "~/.claude/settings.json",
+        ".claude/settings.json",
+        ".claude/settings.local.json"
+      ],
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse",
+        "after_tool_failure": "PostToolUseFailure"
+      },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id",
+        "call_id": "tool_use_id",
+        "output": "tool_response",
+        "error": "error"
+      },
       "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
