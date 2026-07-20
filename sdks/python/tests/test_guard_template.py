@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Thread
+import time
 
 from elydora.plugins.hook_template import generate_guard_script
 
@@ -36,6 +37,7 @@ def create_guard(tmp_path: Path, status: str) -> tuple[Path, ThreadingHTTPServer
     StatusHandler.request_path = ""
     server = ThreadingHTTPServer(("127.0.0.1", 0), StatusHandler)
     Thread(target=server.serve_forever, daemon=True).start()
+
     agent_dir = tmp_path / ".elydora" / AGENT_ID
     agent_dir.mkdir(parents=True)
     config = {
@@ -43,6 +45,7 @@ def create_guard(tmp_path: Path, status: str) -> tuple[Path, ThreadingHTTPServer
         "base_url": f"http://127.0.0.1:{server.server_port}",
     }
     (agent_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
     script_path = tmp_path / "guard.py"
     script_path.write_text(
         generate_guard_script("claudecode", AGENT_ID),
@@ -74,6 +77,7 @@ def test_remote_frozen_status_blocks_tool_execution(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
     assert result.returncode == 2
     assert "Tool execution blocked" in result.stderr
     assert StatusHandler.request_path == "/v1/agents/agent%201"
@@ -86,6 +90,7 @@ def test_active_status_allows_tool_execution(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
     assert result.returncode == 0
     assert result.stderr == ""
 
@@ -94,7 +99,7 @@ def test_cached_frozen_status_uses_blocking_exit_code(tmp_path: Path) -> None:
     script_path, server = create_guard(tmp_path, "active")
     cache_path = tmp_path / ".elydora" / AGENT_ID / "status-cache.json"
     cache_path.write_text(
-        json.dumps({"status": "frozen", "cached_at": 4_102_444_800}),
+        json.dumps({"status": "frozen", "cached_at": time.time()}),
         encoding="utf-8",
     )
     try:
@@ -102,5 +107,6 @@ def test_cached_frozen_status_uses_blocking_exit_code(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
     assert result.returncode == 2
     assert "Tool execution blocked" in result.stderr
