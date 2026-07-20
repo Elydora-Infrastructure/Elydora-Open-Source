@@ -2,280 +2,147 @@ package plugins
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 )
 
-// ClaudeCodePlugin manages the Elydora audit hook for Claude Code.
-// It merges a PostToolUse hook into ~/.claude/settings.json.
-type ClaudeCodePlugin struct{}
+// ClaudeCodePlugin manages Claude Code global user hooks.
+type ClaudeCodePlugin struct {
+	rename renameFunc
+}
+
+// ManagesGuardRuntime reports that Claude Code commits its provider guard with
+// the audit runtime and user settings document.
+func (p *ClaudeCodePlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+func requireClaudeHooksEnabled(document *claudeDocument) error {
+	if document.hooksDisabled {
+		return fmt.Errorf(
+			"Claude Code hooks are disabled by disableAllHooks: %s",
+			document.filePath,
+		)
+	}
+	return nil
+}
+
+// PreflightInstall validates settings and runtime identity before any write.
+func (p *ClaudeCodePlugin) PreflightInstall(config InstallConfig) error {
+	document, err := readClaudeDocument()
+	if err != nil {
+		return err
+	}
+	if err := requireClaudeHooksEnabled(document); err != nil {
+		return err
+	}
+	_, _, err = preflightClaudeInstallation(config, document)
+	return err
+}
 
 func (p *ClaudeCodePlugin) Install(config InstallConfig) error {
-	scriptPath, err := hookScriptPath(config.AgentID)
+	document, err := readClaudeDocument()
 	if err != nil {
 		return err
 	}
-	if config.HookScript != "" {
-		scriptPath = config.HookScript
+	if err := requireClaudeHooksEnabled(document); err != nil {
+		return err
 	}
-
-	if err := GenerateHookScript(scriptPath, config); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
-	}
-
-	guardPath := config.GuardScriptPath
-	if guardPath == "" {
-		guardPath, err = guardScriptPath(config.AgentID)
-		if err != nil {
-			return err
-		}
-	}
-
-	configDir, err := expandHome("~/.claude")
+	paths, nodePath, err := preflightClaudeInstallation(config, document)
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(configDir, "settings.json")
-
-	settings, err := readJSONFile(configPath)
+	hooks, err := removeManagedClaudeHooks(document.hooks, "")
 	if err != nil {
 		return err
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		hooks = make(map[string]interface{})
+	for _, item := range []struct{ event, script, status string }{
+		{"PreToolUse", paths.guardPath, claudeGuardStatusMessage},
+		{"PostToolUse", paths.auditPath, claudeAuditStatusMessage},
+		{"PostToolUseFailure", paths.auditPath, claudeAuditStatusMessage},
+	} {
+		hooks[item.event] = append(
+			hooks[item.event],
+			buildClaudeGroup(nodePath, item.script, item.status),
+		)
 	}
-
-	// --- PreToolUse (guard — freeze enforcement) ---
-	preToolUse, _ := hooks["PreToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
+	rendered, err := renderClaudeDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Claude Code user settings: %w", err)
 	}
-	guardEntry := map[string]interface{}{
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": "node " + guardPath,
-			},
-		},
-	}
-	preFiltered = append(preFiltered, guardEntry)
-	hooks["PreToolUse"] = preFiltered
-
-	// --- PostToolUse (audit logging) ---
-	postToolUse, _ := hooks["PostToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	hookEntry := map[string]interface{}{
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": "node " + scriptPath,
-			},
-		},
-	}
-	postFiltered = append(postFiltered, hookEntry)
-	hooks["PostToolUse"] = postFiltered
-
-	settings["hooks"] = hooks
-
-	if err := writeJSONFile(configPath, settings); err != nil {
+	changes, err := prepareClaudeInstallationChanges(config, paths, rendered)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Installed Elydora hook for Claude Code at %s\n", configPath)
+	if err := writeClaudeChanges(
+		changes,
+		"Install Claude Code hooks",
+		p.rename,
+		paths.runtimeRoot,
+		paths.agentDirectory,
+		filepath.Dir(document.filePath),
+	); err != nil {
+		return err
+	}
+	fmt.Printf("Claude Code hooks installed at %s.\n", document.filePath)
+	fmt.Println("Claude Code verification: run /hooks and claude doctor.")
 	return nil
 }
 
 func (p *ClaudeCodePlugin) Uninstall(agentID string) error {
-	configDir, err := expandHome("~/.claude")
+	document, err := readClaudeDocument()
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(configDir, "settings.json")
-
-	settings, err := readJSONFile(configPath)
+	hooks, err := removeManagedClaudeHooks(document.hooks, agentID)
 	if err != nil {
 		return err
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		fmt.Println("No Claude Code hooks found.")
-		return nil
+	rendered, err := renderClaudeDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Claude Code user settings: %w", err)
 	}
-
-	// Remove PreToolUse Elydora entries
-	preToolUse, _ := hooks["PreToolUse"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range preToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
-	}
-	if len(preFiltered) == 0 {
-		delete(hooks, "PreToolUse")
-	} else {
-		hooks["PreToolUse"] = preFiltered
-	}
-
-	// Remove PostToolUse Elydora entries
-	postToolUse, _ := hooks["PostToolUse"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range postToolUse {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	if len(postFiltered) == 0 {
-		delete(hooks, "PostToolUse")
-	} else {
-		hooks["PostToolUse"] = postFiltered
-	}
-
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
-	}
-
-	if err := writeJSONFile(configPath, settings); err != nil {
+	change, err := prepareRenderedClaudeChange(rendered)
+	if err != nil {
 		return err
 	}
-
-	if agentID != "" {
-		scriptPath, _ := hookScriptPath(agentID)
-		if scriptPath != "" {
-			os.Remove(scriptPath)
-		}
-		gPath, _ := guardScriptPath(agentID)
-		if gPath != "" {
-			os.Remove(gPath)
-		}
-	}
-	fmt.Println("Uninstalled Elydora hook for Claude Code.")
-	return nil
+	return writeClaudeChanges(
+		[]*fileChange{change},
+		"Uninstall Claude Code hooks",
+		p.rename,
+		"",
+		"",
+		filepath.Dir(document.filePath),
+	)
 }
 
 func (p *ClaudeCodePlugin) Status() (PluginStatus, error) {
-	configDir, err := expandHome("~/.claude")
-	if err != nil {
-		return PluginStatus{}, err
-	}
-	configPath := filepath.Join(configDir, "settings.json")
-
+	configPath, pathErr := claudeSettingsPath()
+	entry := SupportedAgents[claudeAgentKey]
 	status := PluginStatus{
-		AgentName:   "claudecode",
-		DisplayName: "Claude Code",
-		ConfigPath:  configPath,
+		AgentName: claudeAgentKey, DisplayName: entry.Name, ConfigPath: configPath,
 	}
-
-	// Check if hook is configured in settings and extract hook script path
-	settings, err := readJSONFile(configPath)
+	if pathErr != nil {
+		return status, pathErr
+	}
+	document, err := readClaudeDocument()
 	if err != nil {
+		return status, err
+	}
+	if document.hooksDisabled {
 		return status, nil
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks != nil {
-		preConfigured := hasElydoraEntry(hooks["PreToolUse"])
-		postConfigured := hasElydoraEntry(hooks["PostToolUse"])
-		status.HookConfigured = preConfigured && postConfigured
-
-		// Extract hook script path from the configured command
-		scriptPath := extractElydoraScriptPath(hooks["PostToolUse"])
-		if scriptPath != "" {
-			if _, err := os.Stat(scriptPath); err == nil {
-				status.HookScriptExists = true
-			}
-		}
+	contracts, err := claudeRuntimeContracts(document.hooks)
+	if err != nil {
+		return status, err
 	}
-
-	status.Installed = status.HookConfigured && status.HookScriptExists
+	status.HookConfigured = len(contracts) > 0
+	if !status.HookConfigured {
+		return status, nil
+	}
+	status.HookScriptExists, err = claudeRuntimeFilesExist(contracts)
+	if err != nil {
+		return status, err
+	}
+	status.Installed = status.HookScriptExists
 	return status, nil
-}
-
-// extractElydoraScriptPath extracts the script path from a hook array's Elydora command entry.
-func extractElydoraScriptPath(hookArray interface{}) string {
-	arr, _ := hookArray.([]interface{})
-	for _, entry := range arr {
-		if m, ok := entry.(map[string]interface{}); ok {
-			// New format: { "hooks": [{ "type": "command", "command": "node /path/to/hook.js" }] }
-			if innerHooks, ok := m["hooks"].([]interface{}); ok {
-				for _, h := range innerHooks {
-					if hm, ok := h.(map[string]interface{}); ok {
-						if cmd, _ := hm["command"].(string); strings.Contains(cmd, "elydora") {
-							return extractPathFromNodeCommand(cmd)
-						}
-					}
-				}
-			}
-			// Old format: { "command": "node /path/to/hook.js" }
-			if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-				return extractPathFromNodeCommand(cmd)
-			}
-		}
-	}
-	return ""
-}
-
-// extractPathFromNodeCommand extracts the file path from a "node /path/to/script.js" command.
-func extractPathFromNodeCommand(cmd string) string {
-	cmd = strings.TrimSpace(cmd)
-	if strings.HasPrefix(cmd, "node ") {
-		return strings.TrimSpace(cmd[5:])
-	}
-	return ""
-}
-
-// hasElydoraEntry checks if a hook array (interface{}) contains an Elydora entry.
-func hasElydoraEntry(hookArray interface{}) bool {
-	arr, _ := hookArray.([]interface{})
-	for _, entry := range arr {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// isElydoraHookEntry checks if a hook entry (old or new format) is an Elydora hook.
-func isElydoraHookEntry(m map[string]interface{}) bool {
-	// New format: { "matcher": {}, "hooks": [{ "type": "command", "command": "..." }] }
-	if innerHooks, ok := m["hooks"].([]interface{}); ok {
-		for _, h := range innerHooks {
-			if hm, ok := h.(map[string]interface{}); ok {
-				if cmd, _ := hm["command"].(string); strings.Contains(cmd, "elydora") {
-					return true
-				}
-			}
-		}
-	}
-	// Old format: { "command": "..." }
-	if cmd, _ := m["command"].(string); strings.Contains(cmd, "elydora") {
-		return true
-	}
-	return false
 }

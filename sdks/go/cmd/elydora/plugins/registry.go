@@ -10,7 +10,7 @@ type AgentRegistryEntry struct {
 // SupportedAgents is the canonical registry of all supported agent integrations.
 var SupportedAgents = map[string]AgentRegistryEntry{
 	"augment":    {Name: "Augment Code CLI", ConfigDir: "~/.augment", ConfigFile: "settings.json"},
-	"claudecode": {Name: "Claude Code", ConfigDir: "~/.claude", ConfigFile: "settings.json"},
+	"claudecode": {Name: "Claude Code", ConfigDir: "$CLAUDE_CONFIG_DIR", ConfigFile: "settings.json"},
 	"codex":      {Name: "OpenAI Codex", ConfigDir: "~/.codex", ConfigFile: "hooks.json"},
 	"cline":      {Name: "Cline", ConfigDir: "~/.cline/hooks", ConfigFile: "PreToolUse.mjs"},
 	"cursor":     {Name: "Cursor", ConfigDir: "~/.cursor", ConfigFile: "hooks.json"},
