@@ -17,37 +17,72 @@ func TestClineRegistryUsesNativeGlobalHookDirectory(t *testing.T) {
 	if entry.Name != "Cline" || entry.ConfigDir != "~/.cline/hooks" || entry.ConfigFile != "PreToolUse.mjs" {
 		t.Fatalf("Cline registry entry = %#v", entry)
 	}
-	if _, ok := NewPlugin("cline").(*ClinePlugin); !ok {
+	plugin, ok := NewPlugin("cline").(*ClinePlugin)
+	if !ok {
 		t.Fatalf("Cline plugin is not registered")
+	}
+	if !plugin.ManagesGuardRuntime() {
+		t.Fatal("Cline plugin must own its runtime transaction")
 	}
 }
 
-func TestClineInstallWritesOnlyNativeGlobalHooksAndIsIdempotent(t *testing.T) {
+func TestClineInstallWritesAllSixManagedFilesAtomicallyAndIsIdempotent(t *testing.T) {
 	fixture := prepareClineFixture(t, clineFixtureOptions{})
 	installClineFixture(t, fixture)
-	originalGuard := readClineTestFile(t, fixture.guardWrapper)
-	originalAudit := readClineTestFile(t, fixture.auditWrapper)
+	files := []string{
+		fixture.guardPath,
+		fixture.runtimeConfig,
+		fixture.privateKey,
+		fixture.hookPath,
+		fixture.guardWrapper,
+		fixture.auditWrapper,
+	}
+	original := make(map[string]string, len(files))
+	for _, path := range files {
+		original[path] = readClineTestFile(t, path)
+	}
 
 	installClineFixture(t, fixture)
 
-	if readClineTestFile(t, fixture.guardWrapper) != originalGuard {
-		t.Fatalf("guard wrapper changed during idempotent install")
-	}
-	if readClineTestFile(t, fixture.auditWrapper) != originalAudit {
-		t.Fatalf("audit wrapper changed during idempotent install")
-	}
-	if !strings.HasPrefix(originalGuard, "#!/usr/bin/env node\n// @elydora-cline-hook ") {
-		t.Fatalf("guard wrapper has unexpected header: %q", originalGuard)
-	}
-	entries, err := os.ReadDir(fixture.hooksDir)
-	if err != nil {
-		t.Fatalf("read Cline hook directory: %v", err)
-	}
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".tmp") {
-			t.Fatalf("temporary hook file remains: %s", entry.Name())
+	for path, source := range original {
+		if readClineTestFile(t, path) != source {
+			t.Fatalf("%s changed during idempotent install", path)
 		}
 	}
+	if !strings.HasPrefix(original[fixture.guardWrapper], "#!/usr/bin/env node\n// @elydora-cline-hook ") {
+		t.Fatalf("guard wrapper has unexpected header: %q", original[fixture.guardWrapper])
+	}
+	if original[fixture.guardPath] != generateGuardScript(
+		clineAgentKey,
+		clineTestAgentID,
+		"",
+		false,
+		"",
+	) {
+		t.Fatal("guard runtime does not match the generated source")
+	}
+	if original[fixture.hookPath] != buildHookScriptWithOutput(
+		clineAgentKey,
+		clineTestAgentID,
+		"",
+		false,
+		true,
+	) {
+		t.Fatal("audit runtime does not preserve the native payload")
+	}
+	if original[fixture.privateKey] != clinePrivateKey {
+		t.Fatal("private key changed during installation")
+	}
+	config := readClineTestObject(t, fixture.runtimeConfig)
+	wantConfig := map[string]any{
+		"org_id": "org-1", "agent_id": clineTestAgentID, "kid": "kid-1",
+		"base_url": "https://api.elydora.test", "token": "token-1",
+		"agent_name": clineAgentKey,
+	}
+	if !reflect.DeepEqual(config, wantConfig) {
+		t.Fatalf("runtime config = %#v", config)
+	}
+	assertNoClineTransactionArtifacts(t, fixture.homeDir)
 	requireMissingClineTestFile(t, filepath.Join(fixture.homeDir, "Documents", "Cline", "Hooks", "PreToolUse.mjs"))
 	requireMissingClineTestFile(t, filepath.Join(fixture.workspaceDir, ".cline", "hooks", "PreToolUse.mjs"))
 	requireMissingClineTestFile(t, filepath.Join(fixture.workspaceDir, ".clinerules", "hooks", "PreToolUse.mjs"))
@@ -67,6 +102,13 @@ func TestClineInstallUsesOfficialDefaultWhenClineDirIsEmpty(t *testing.T) {
 func TestClineWrappersTranslateFreezeAndForwardPayloadByteForByte(t *testing.T) {
 	fixture := prepareClineFixture(t, clineFixtureOptions{})
 	installClineFixture(t, fixture)
+	if err := os.WriteFile(
+		fixture.guardPath,
+		[]byte("process.stdin.resume(); process.stderr.write('Agent is frozen by Elydora.\\n'); process.exit(2);\n"),
+		0700,
+	); err != nil {
+		t.Fatalf("write frozen guard runtime: %v", err)
+	}
 	capturePath := filepath.Join(t.TempDir(), "captured-event.json")
 	captureJSON, err := json.Marshal(capturePath)
 	if err != nil {
@@ -123,7 +165,32 @@ func TestClineAuditRuntimeMapsOfficialNestedFields(t *testing.T) {
 	fixture := prepareClineFixture(t, clineFixtureOptions{})
 	fixture.config.BaseURL = server.URL
 	installClineFixture(t, fixture)
-	payload := []byte(`{"hookName":"tool_result","taskId":"task-1","tool_result":{"name":"read_file","input":{"path":"README.md"},"output":"ok"}}`)
+	payloadObject := map[string]any{
+		"clineVersion": "3.0.46",
+		"hookName":     "tool_result",
+		"timestamp":    "2026-07-19T12:00:00.000Z",
+		"taskId":       "task-1",
+		"workspaceRoots": []any{
+			fixture.workspaceDir,
+		},
+		"userId":          "user-1",
+		"agent_id":        "cline-agent",
+		"parent_agent_id": nil,
+		"tool_result": map[string]any{
+			"id": "call-1", "name": "read_file",
+			"input":  map[string]any{"path": "README.md"},
+			"output": "ok", "durationMs": float64(5),
+		},
+		"postToolUse": map[string]any{
+			"toolName":   "read_file",
+			"parameters": map[string]any{"path": "README.md"},
+			"result":     "ok", "success": true, "executionTimeMs": float64(5),
+		},
+	}
+	payload, err := json.Marshal(payloadObject)
+	if err != nil {
+		t.Fatalf("marshal Cline payload: %v", err)
+	}
 	result := runClineWrapper(t, fixture, fixture.auditWrapper, payload)
 	if result.exitCode != 0 {
 		t.Fatalf("audit wrapper result = %#v", result)
@@ -135,12 +202,7 @@ func TestClineAuditRuntimeMapsOfficialNestedFields(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for Elydora operation")
 	}
-	wantPayload := map[string]any{
-		"tool_name":  "read_file",
-		"tool_input": map[string]any{"path": "README.md"},
-		"session_id": "task-1",
-	}
-	if !reflect.DeepEqual(requireClineTestObject(t, operation["payload"]), wantPayload) {
+	if !reflect.DeepEqual(requireClineTestObject(t, operation["payload"]), payloadObject) {
 		t.Fatalf("operation payload = %#v", operation["payload"])
 	}
 	if !reflect.DeepEqual(requireClineTestObject(t, operation["action"]), map[string]any{"tool": "read_file"}) {
@@ -152,10 +214,11 @@ func TestClineAuditRuntimeMapsOfficialNestedFields(t *testing.T) {
 }
 
 func TestClineWrappersKeepPassesQuietAndSurfaceRuntimeFailures(t *testing.T) {
-	passing := prepareClineFixture(t, clineFixtureOptions{
-		GuardSource: clineString("process.stdin.resume();\n"),
-	})
+	passing := prepareClineFixture(t, clineFixtureOptions{})
 	installClineFixture(t, passing)
+	if err := os.WriteFile(passing.guardPath, []byte("process.stdin.resume();\n"), 0700); err != nil {
+		t.Fatalf("write passing guard runtime: %v", err)
+	}
 	passResult := runClineWrapper(t, passing, passing.guardWrapper, []byte(`{}`))
 	if passResult.exitCode != 0 || passResult.stdout != "" {
 		t.Fatalf("passing guard result = %#v", passResult)

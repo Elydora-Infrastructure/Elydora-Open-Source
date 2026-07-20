@@ -8,119 +8,174 @@ import (
 	"testing"
 )
 
-func TestClineStatusRequiresIntactHooksAndRuntimes(t *testing.T) {
-	fixture := prepareClineFixture(t, clineFixtureOptions{})
-	installClineFixture(t, fixture)
-	status, err := fixture.plugin.Status()
-	if err != nil || !status.Installed || !status.HookConfigured || !status.HookScriptExists {
-		t.Fatalf("installed status = %#v, %v", status, err)
-	}
-	if status.AgentName != "cline" || status.DisplayName != "Cline" || status.ConfigPath != fixture.hooksDir {
-		t.Fatalf("status metadata = %#v", status)
-	}
-	if err := os.Remove(fixture.guardPath); err != nil {
-		t.Fatalf("remove guard runtime: %v", err)
-	}
-	status, err = fixture.plugin.Status()
-	if err != nil || status.Installed || !status.HookConfigured || status.HookScriptExists {
-		t.Fatalf("degraded status = %#v, %v", status, err)
-	}
-	if err := os.WriteFile(fixture.guardPath, []byte("process.exit(0);\n"), 0700); err != nil {
-		t.Fatalf("restore guard runtime: %v", err)
-	}
-	if err := os.Remove(fixture.auditWrapper); err != nil {
-		t.Fatalf("remove audit wrapper: %v", err)
-	}
-	status, err = fixture.plugin.Status()
-	if err != nil || status.Installed || status.HookConfigured {
-		t.Fatalf("partial status = %#v, %v", status, err)
-	}
-}
-
-func TestClineStatusSurfacesCorruptHooksAndRuntimeMetadata(t *testing.T) {
-	fixture := prepareClineFixture(t, clineFixtureOptions{})
-	installClineFixture(t, fixture)
-	guard := readClineTestFile(t, fixture.guardWrapper)
-	if err := os.WriteFile(fixture.guardWrapper, []byte(guard+"\n// tampered\n"), 0700); err != nil {
-		t.Fatalf("tamper guard wrapper: %v", err)
-	}
-	if _, err := fixture.plugin.Status(); err == nil || !strings.Contains(err.Error(), "managed template") {
-		t.Fatalf("tampered status error = %v", err)
-	}
-	installClineFixture(t, fixture)
-	if err := os.WriteFile(fixture.runtimeConfig, []byte("{ malformed"), 0600); err != nil {
-		t.Fatalf("corrupt runtime config: %v", err)
-	}
-	if _, err := fixture.plugin.Status(); err == nil || !strings.Contains(err.Error(), "parse Elydora runtime config") {
-		t.Fatalf("runtime status error = %v", err)
-	}
-}
-
-func TestClineInstallRejectsUserFilenameCollisionsBeforeWrites(t *testing.T) {
-	for _, collision := range []string{"guard", "audit"} {
-		t.Run(collision, func(t *testing.T) {
-			options := clineFixtureOptions{}
-			if collision == "guard" {
-				options.ExistingGuard = clineString("// user PreToolUse hook\n")
-			} else {
-				options.ExistingAudit = clineString("// user PostToolUse hook\n")
+func TestClineStatusRequiresExactPhysicalInstallation(t *testing.T) {
+	for _, target := range []string{
+		"config", "key", "guard", "audit", "guard-wrapper", "audit-wrapper",
+	} {
+		t.Run("missing "+target, func(t *testing.T) {
+			fixture := prepareClineFixture(t, clineFixtureOptions{})
+			installClineFixture(t, fixture)
+			status, err := fixture.plugin.Status()
+			if err != nil || !status.Installed || !status.HookConfigured || !status.HookScriptExists {
+				t.Fatalf("installed status = %#v, %v", status, err)
 			}
-			fixture := prepareClineFixture(t, options)
-			err := fixture.plugin.Install(fixture.config)
-			if err == nil || !strings.Contains(err.Error(), "owned by another integration") {
-				t.Fatalf("install error = %v", err)
+			paths := map[string]string{
+				"config": fixture.runtimeConfig, "key": fixture.privateKey,
+				"guard": fixture.guardPath, "audit": fixture.hookPath,
+				"guard-wrapper": fixture.guardWrapper,
+				"audit-wrapper": fixture.auditWrapper,
 			}
-			for _, path := range []string{fixture.hookPath, fixture.runtimeConfig, fixture.privateKey} {
-				requireMissingClineTestFile(t, path)
+			if err := os.Remove(paths[target]); err != nil {
+				t.Fatalf("remove %s: %v", target, err)
 			}
-			if options.ExistingGuard != nil && readClineTestFile(t, fixture.guardWrapper) != *options.ExistingGuard {
-				t.Fatalf("user guard wrapper changed")
+			status, err = fixture.plugin.Status()
+			if err != nil || status.Installed || status.HookScriptExists {
+				t.Fatalf("missing %s status = %#v, %v", target, status, err)
 			}
-			if options.ExistingAudit != nil && readClineTestFile(t, fixture.auditWrapper) != *options.ExistingAudit {
-				t.Fatalf("user audit wrapper changed")
+			if strings.Contains(target, "wrapper") && status.HookConfigured {
+				t.Fatalf("missing wrapper remains configured: %#v", status)
 			}
 		})
 	}
 }
 
-func TestClineInstallPreservesCorruptOwnedMetadataForRecovery(t *testing.T) {
-	corrupt := "#!/usr/bin/env node\n// @elydora-cline-hook invalid\n"
-	fixture := prepareClineFixture(t, clineFixtureOptions{ExistingGuard: &corrupt})
-	err := fixture.plugin.Install(fixture.config)
-	if err == nil || !strings.Contains(err.Error(), "parse Elydora Cline hook metadata") {
-		t.Fatalf("install error = %v", err)
+func TestClineStatusSurfacesTamperingAndInvalidRuntimeMetadata(t *testing.T) {
+	tests := []struct {
+		name, target, source, want string
+	}{
+		{"guard-source", "guard", "tampered\n", ""},
+		{"audit-source", "audit", "tampered\n", ""},
+		{"private-key", "key", "invalid", "canonical 32-byte"},
+		{"config-malformed", "config", "{ malformed", "parse Elydora runtime config"},
+		{"config-duplicate", "config", `{"agent_name":"cline","agent_name":"cline"}`, "duplicate key"},
+		{"config-unsupported", "config", `{"org_id":"o","agent_id":"agent-1","kid":"k","base_url":"https://api.test","agent_name":"cline","extra":true}`, "unsupported field"},
+		{"config-identity", "config", `{"org_id":"o","agent_id":"other","kid":"k","base_url":"https://api.test","agent_name":"cline"}`, "identity does not match"},
+		{"guard-wrapper", "guard-wrapper", "tamper", "managed template"},
 	}
-	if readClineTestFile(t, fixture.guardWrapper) != corrupt {
-		t.Fatalf("corrupt hook changed")
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := prepareClineFixture(t, clineFixtureOptions{})
+			installClineFixture(t, fixture)
+			paths := map[string]string{
+				"guard": fixture.guardPath, "audit": fixture.hookPath,
+				"key": fixture.privateKey, "config": fixture.runtimeConfig,
+				"guard-wrapper": fixture.guardWrapper,
+			}
+			source := testCase.source
+			if testCase.target == "guard-wrapper" {
+				source = readClineTestFile(t, paths[testCase.target]) + testCase.source
+			}
+			writeClineTestFile(t, paths[testCase.target], []byte(source), 0600)
+			status, err := fixture.plugin.Status()
+			if testCase.want == "" {
+				if err != nil || status.Installed || status.HookScriptExists {
+					t.Fatalf("tampered status = %#v, %v", status, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("status error = %v, want %q", err, testCase.want)
+			}
+		})
 	}
-	requireMissingClineTestFile(t, fixture.auditWrapper)
-	requireMissingClineTestFile(t, fixture.hookPath)
 }
 
-func TestClineInstallRejectsMissingGuardBeforeWrites(t *testing.T) {
-	fixture := prepareClineFixture(t, clineFixtureOptions{SkipGuard: true})
-	err := fixture.plugin.Install(fixture.config)
-	if err == nil || !strings.Contains(err.Error(), "guard runtime is missing") {
-		t.Fatalf("install error = %v", err)
-	}
-	for _, path := range []string{
-		fixture.guardWrapper,
-		fixture.auditWrapper,
-		fixture.hookPath,
-		fixture.runtimeConfig,
-		fixture.privateKey,
+func TestClineStatusRejectsInvalidHookContracts(t *testing.T) {
+	for _, testCase := range []struct {
+		name, kind, agentID, runtimePath, want string
+	}{
+		{"kind", "guard", clineTestAgentID, "", "mismatched event metadata"},
+		{"agent", "audit", "agent-2", "", "different agents"},
+		{"path", "audit", clineTestAgentID, "outside", "unexpected runtime path"},
+		{"segment", "audit", "..", "", "invalid agentId"},
 	} {
-		requireMissingClineTestFile(t, path)
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := prepareClineFixture(t, clineFixtureOptions{})
+			installClineFixture(t, fixture)
+			runtimePath := testCase.runtimePath
+			if runtimePath == "outside" {
+				runtimePath = filepath.Join(filepath.Dir(filepath.Dir(fixture.agentDir)), "outside", clineAuditScript)
+			}
+			if runtimePath == "" {
+				runtimePath = fixture.hookPath
+				if testCase.agentID == "agent-2" {
+					runtimePath = filepath.Join(filepath.Dir(fixture.agentDir), "agent-2", clineAuditScript)
+				}
+			}
+			metadata, err := buildClineMetadata(
+				testCase.kind,
+				testCase.agentID,
+				runtimePath,
+			)
+			if err != nil {
+				t.Fatalf("build invalid contract metadata: %v", err)
+			}
+			source, err := buildClineWrapper(metadata)
+			if err != nil {
+				t.Fatalf("build invalid contract wrapper: %v", err)
+			}
+			writeClineTestFile(t, fixture.auditWrapper, []byte(source), 0700)
+			if testCase.name == "segment" {
+				guardMetadata, buildErr := buildClineMetadata(
+					"guard",
+					testCase.agentID,
+					fixture.guardPath,
+				)
+				if buildErr != nil {
+					t.Fatalf("build invalid guard metadata: %v", buildErr)
+				}
+				guardSource, buildErr := buildClineWrapper(guardMetadata)
+				if buildErr != nil {
+					t.Fatalf("build invalid guard wrapper: %v", buildErr)
+				}
+				writeClineTestFile(t, fixture.guardWrapper, []byte(guardSource), 0700)
+			}
+			_, err = fixture.plugin.Status()
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("contract error = %v, want %q", err, testCase.want)
+			}
+		})
 	}
 }
 
-func TestClineUninstallRemovesExactOwnershipAndPreservesOtherHooks(t *testing.T) {
+func TestClineInstallRejectsCollisionsAndCorruptOwnershipBeforeWrites(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		opts clineFixtureOptions
+		want string
+	}{
+		{"guard-collision", clineFixtureOptions{ExistingGuard: clineString("// user PreToolUse hook\n")}, "owned by another integration"},
+		{"audit-collision", clineFixtureOptions{ExistingAudit: clineString("// user PostToolUse hook\n")}, "owned by another integration"},
+		{"corrupt-metadata", clineFixtureOptions{ExistingGuard: clineString("#!/usr/bin/env node\n// @elydora-cline-hook invalid\n")}, "parse Elydora Cline hook metadata"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := prepareClineFixture(t, testCase.opts)
+			err := fixture.plugin.Install(fixture.config)
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("install error = %v", err)
+			}
+			for path, expected := range map[string]*string{
+				fixture.guardWrapper: testCase.opts.ExistingGuard,
+				fixture.auditWrapper: testCase.opts.ExistingAudit,
+			} {
+				if expected != nil && readClineTestFile(t, path) != *expected {
+					t.Fatalf("existing hook changed at %s", path)
+				}
+			}
+			for _, path := range []string{
+				fixture.guardPath, fixture.hookPath, fixture.runtimeConfig, fixture.privateKey,
+			} {
+				requireMissingClineTestFile(t, path)
+			}
+		})
+	}
+}
+
+func TestClineUninstallRemovesExactOwnershipAndPreservesAdjacentHooks(t *testing.T) {
 	fixture := prepareClineFixture(t, clineFixtureOptions{})
 	installClineFixture(t, fixture)
 	userHook := filepath.Join(fixture.hooksDir, "PreToolUse.py")
-	if err := os.WriteFile(userHook, []byte("# user hook\n"), 0600); err != nil {
-		t.Fatalf("write user hook: %v", err)
-	}
+	writeClineTestFile(t, userHook, []byte("# user hook\n"), 0600)
 	if err := fixture.plugin.Uninstall("agent-10"); err != nil {
 		t.Fatalf("uninstall other agent: %v", err)
 	}
@@ -129,78 +184,21 @@ func TestClineUninstallRemovesExactOwnershipAndPreservesOtherHooks(t *testing.T)
 	if err := fixture.plugin.Uninstall(clineTestAgentID); err != nil {
 		t.Fatalf("uninstall Cline hooks: %v", err)
 	}
-	requireMissingClineTestFile(t, fixture.guardWrapper)
-	requireMissingClineTestFile(t, fixture.auditWrapper)
+	for _, path := range []string{fixture.guardWrapper, fixture.auditWrapper} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("managed hook remains at %s: %v", path, err)
+		}
+	}
 	if readClineTestFile(t, userHook) != "# user hook\n" {
-		t.Fatalf("user hook changed")
+		t.Fatal("adjacent user hook changed")
 	}
 }
 
-func TestClineHookPairRollsBackFirstCommitWhenSecondCommitFails(t *testing.T) {
+func TestClineRuntimeConfigOmitsEmptyToken(t *testing.T) {
 	fixture := prepareClineFixture(t, clineFixtureOptions{})
+	fixture.config.Token = ""
 	installClineFixture(t, fixture)
-	originalGuard := readClineTestFile(t, fixture.guardWrapper)
-	originalAudit := readClineTestFile(t, fixture.auditWrapper)
-	guardState, err := readClineHookFile(fixture.guardWrapper)
-	if err != nil {
-		t.Fatalf("read guard state: %v", err)
+	if _, exists := readClineTestObject(t, fixture.runtimeConfig)["token"]; exists {
+		t.Fatal("empty token persisted")
 	}
-	auditState, err := readClineHookFile(fixture.auditWrapper)
-	if err != nil {
-		t.Fatalf("read audit state: %v", err)
-	}
-	guardMetadata, err := buildClineMetadata("guard", "agent-2", fixture.guardPath)
-	if err != nil {
-		t.Fatalf("build replacement guard metadata: %v", err)
-	}
-	auditMetadata, err := buildClineMetadata("audit", "agent-2", fixture.hookPath)
-	if err != nil {
-		t.Fatalf("build replacement audit metadata: %v", err)
-	}
-	replacementGuard, err := buildClineWrapper(guardMetadata)
-	if err != nil {
-		t.Fatalf("build replacement guard: %v", err)
-	}
-	replacementAudit, err := buildClineWrapper(auditMetadata)
-	if err != nil {
-		t.Fatalf("build replacement audit: %v", err)
-	}
-	failureInjected := false
-	rename := func(source, destination string) error {
-		if !failureInjected && sameClineTestPath(destination, fixture.auditWrapper) {
-			failureInjected = true
-			return errors.New("simulated audit commit failure")
-		}
-		return os.Rename(source, destination)
-	}
-	err = writeClineHookPairWithRename(
-		clinePendingWrite{state: guardState, source: replacementGuard},
-		clinePendingWrite{state: auditState, source: replacementAudit},
-		rename,
-	)
-	if err == nil || !strings.Contains(err.Error(), "write Cline hook pair") {
-		t.Fatalf("write pair error = %v", err)
-	}
-	if !failureInjected {
-		t.Fatalf("audit commit failure was not injected")
-	}
-	if readClineTestFile(t, fixture.guardWrapper) != originalGuard ||
-		readClineTestFile(t, fixture.auditWrapper) != originalAudit {
-		t.Fatalf("hook pair was not restored")
-	}
-	entries, err := os.ReadDir(fixture.hooksDir)
-	if err != nil {
-		t.Fatalf("read hook directory: %v", err)
-	}
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".tmp") {
-			t.Fatalf("temporary hook remains: %s", entry.Name())
-		}
-	}
-}
-
-func sameClineTestPath(left, right string) bool {
-	leftPath, leftErr := filepath.Abs(left)
-	rightPath, rightErr := filepath.Abs(right)
-	return leftErr == nil && rightErr == nil && strings.EqualFold(leftPath, rightPath)
 }

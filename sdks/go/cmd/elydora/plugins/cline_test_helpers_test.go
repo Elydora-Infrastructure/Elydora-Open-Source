@@ -8,17 +8,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
 
-const clineTestAgentID = "agent-1"
+const (
+	clineTestAgentID = "agent-1"
+	clinePrivateKey  = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+)
 
 type clineFixtureOptions struct {
 	ExistingAudit *string
 	ExistingGuard *string
-	GuardSource   *string
-	SkipGuard     bool
 }
 
 type clineFixture struct {
@@ -60,18 +63,9 @@ func prepareClineFixture(t *testing.T, options clineFixtureOptions) *clineFixtur
 	guardWrapper := filepath.Join(hooksDir, "PreToolUse.mjs")
 	auditWrapper := filepath.Join(hooksDir, "PostToolUse.mjs")
 
-	for _, directory := range []string{workspaceDir, agentDir} {
+	for _, directory := range []string{workspaceDir} {
 		if err := os.MkdirAll(directory, 0755); err != nil {
 			t.Fatalf("create fixture directory %s: %v", directory, err)
-		}
-	}
-	if !options.SkipGuard {
-		guardSource := "process.stdin.resume(); process.stderr.write('Agent is frozen by Elydora.\\n'); process.exit(2);\n"
-		if options.GuardSource != nil {
-			guardSource = *options.GuardSource
-		}
-		if err := os.WriteFile(guardPath, []byte(guardSource), 0700); err != nil {
-			t.Fatalf("write guard runtime: %v", err)
 		}
 	}
 	writeOptionalClineTestFile(t, guardWrapper, options.ExistingGuard)
@@ -97,8 +91,9 @@ func prepareClineFixture(t *testing.T, options clineFixtureOptions) *clineFixtur
 			AgentName:       "cline",
 			OrgID:           "org-1",
 			AgentID:         clineTestAgentID,
-			PrivateKey:      "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+			PrivateKey:      clinePrivateKey,
 			KID:             "kid-1",
+			Token:           "token-1",
 			BaseURL:         "https://api.elydora.test",
 			GuardScriptPath: guardPath,
 		},
@@ -193,13 +188,97 @@ func requireClineTestObject(t *testing.T, value any) map[string]any {
 
 func decodeClineControl(t *testing.T, stdout string) map[string]any {
 	t.Helper()
-	const marker = "HOOK_CONTROL\t"
-	if len(stdout) < len(marker) || stdout[:len(marker)] != marker {
-		t.Fatalf("Cline control output = %q", stdout)
-	}
 	var control map[string]any
-	if err := json.Unmarshal([]byte(stdout[len(marker):]), &control); err != nil {
+	if err := json.Unmarshal([]byte(stdout), &control); err != nil {
 		t.Fatalf("decode Cline control output: %v", err)
 	}
 	return control
+}
+
+func writeClineTestFile(
+	t *testing.T,
+	path string,
+	contents []byte,
+	mode os.FileMode,
+) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatalf("create parent directory for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, contents, mode); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func writeClineTestObject(t *testing.T, path string, value map[string]any) {
+	t.Helper()
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal Cline test object: %v", err)
+	}
+	writeClineTestFile(t, path, append(encoded, '\n'), 0600)
+}
+
+func readClineTestObject(t *testing.T, path string) map[string]any {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal([]byte(readClineTestFile(t, path)), &value); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return value
+}
+
+func assertNoClineRuntimeWrites(t *testing.T, fixture *clineFixture) {
+	t.Helper()
+	for _, path := range []string{
+		fixture.guardPath,
+		fixture.runtimeConfig,
+		fixture.privateKey,
+		fixture.hookPath,
+		fixture.guardWrapper,
+		fixture.auditWrapper,
+	} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("managed file exists at %s: %v", path, err)
+		}
+	}
+}
+
+func assertNoClineTransactionArtifacts(t *testing.T, root string) {
+	t.Helper()
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".tmp") || strings.HasSuffix(name, ".rollback") {
+			t.Errorf("transaction artifact remains at %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk Cline fixture: %v", err)
+	}
+}
+
+func clineSymlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symbolic links unavailable: %v", err)
+		}
+		return
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+}
+
+func sameClineTestPath(left, right string) bool {
+	leftPath, leftErr := filepath.Abs(left)
+	rightPath, rightErr := filepath.Abs(right)
+	return leftErr == nil && rightErr == nil && strings.EqualFold(leftPath, rightPath)
 }

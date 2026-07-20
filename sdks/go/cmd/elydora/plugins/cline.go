@@ -3,83 +3,61 @@ package plugins
 import "fmt"
 
 // ClinePlugin manages Cline's native global file hooks.
-type ClinePlugin struct{}
+type ClinePlugin struct {
+	rename renameFunc
+}
+
+// ManagesGuardRuntime reports that Cline commits both generated runtimes and
+// both native hook files in one transaction.
+func (p *ClinePlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+// PreflightInstall validates hook ownership and runtime identity before writes.
+func (p *ClinePlugin) PreflightInstall(config InstallConfig) error {
+	paths, guard, audit, err := readClineHookPair()
+	if err != nil {
+		return err
+	}
+	if err := requireAvailableClineHook(guard); err != nil {
+		return err
+	}
+	if err := requireAvailableClineHook(audit); err != nil {
+		return err
+	}
+	_, err = preflightClineInstallation(config, paths)
+	return err
+}
 
 func (p *ClinePlugin) Install(config InstallConfig) error {
-	if config.AgentID == "" {
-		return fmt.Errorf("agent ID is required")
-	}
-	paths, err := resolveClineHookFiles()
+	paths, guard, audit, err := readClineHookPair()
 	if err != nil {
 		return err
 	}
-	guardState, err := readClineHookFile(paths.guardPath)
+	if err := requireAvailableClineHook(guard); err != nil {
+		return err
+	}
+	if err := requireAvailableClineHook(audit); err != nil {
+		return err
+	}
+	runtimePaths, err := preflightClineInstallation(config, paths)
 	if err != nil {
 		return err
 	}
-	auditState, err := readClineHookFile(paths.auditPath)
+	changes, err := prepareClineInstallationChanges(
+		config,
+		runtimePaths,
+		guard,
+		audit,
+	)
 	if err != nil {
 		return err
 	}
-	if err := requireAvailableClineHook(guardState); err != nil {
-		return err
-	}
-	if err := requireAvailableClineHook(auditState); err != nil {
-		return err
-	}
-	if config.GuardScriptPath == "" {
-		return fmt.Errorf("guard script path is required")
-	}
-	guardExists, err := regularFileExists(config.GuardScriptPath, "Elydora guard runtime")
-	if err != nil {
-		return err
-	}
-	if !guardExists {
-		return fmt.Errorf("Elydora guard runtime is missing: %s", config.GuardScriptPath)
-	}
-	hookPath, err := hookScriptPath(config.AgentID)
-	if err != nil {
-		return err
-	}
-	if config.HookScript != "" {
-		hookPath = config.HookScript
-	}
-	guardMetadata, err := buildClineMetadata("guard", config.AgentID, config.GuardScriptPath)
-	if err != nil {
-		return fmt.Errorf("build Cline guard metadata: %w", err)
-	}
-	auditMetadata, err := buildClineMetadata("audit", config.AgentID, hookPath)
-	if err != nil {
-		return fmt.Errorf("build Cline audit metadata: %w", err)
-	}
-	guardSource, err := buildClineWrapper(guardMetadata)
-	if err != nil {
-		return fmt.Errorf("build Cline guard wrapper: %w", err)
-	}
-	auditSource, err := buildClineWrapper(auditMetadata)
-	if err != nil {
-		return fmt.Errorf("build Cline audit wrapper: %w", err)
-	}
-	if _, err := clineContractForFiles(
-		clineHookFile{
-			exists: true, filePath: paths.guardPath,
-			source: guardSource, metadata: &guardMetadata,
-		},
-		clineHookFile{
-			exists: true, filePath: paths.auditPath,
-			source: auditSource, metadata: &auditMetadata,
-		},
-	); err != nil {
-		return err
-	}
-	runtimeConfig := config
-	runtimeConfig.AgentName = clineAgentKey
-	if err := GenerateHookScript(hookPath, runtimeConfig); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
-	}
-	if err := writeClineHookPair(
-		clinePendingWrite{state: guardState, source: guardSource},
-		clinePendingWrite{state: auditState, source: auditSource},
+	if err := writeClineChanges(
+		changes,
+		"Install Cline hooks",
+		p.rename,
+		runtimePaths,
 	); err != nil {
 		return err
 	}
@@ -88,23 +66,27 @@ func (p *ClinePlugin) Install(config InstallConfig) error {
 }
 
 func (p *ClinePlugin) Uninstall(agentID string) error {
-	paths, err := resolveClineHookFiles()
+	paths, guard, audit, err := readClineHookPair()
 	if err != nil {
 		return err
 	}
-	guardState, err := readClineHookFile(paths.guardPath)
+	changes, err := prepareClineUninstallChanges(
+		[]clineHookFile{guard, audit},
+		agentID,
+	)
 	if err != nil {
 		return err
 	}
-	auditState, err := readClineHookFile(paths.auditPath)
-	if err != nil {
-		return err
-	}
-	return removeOwnedClineHooks([]clineHookFile{guardState, auditState}, agentID)
+	return writeClineHookChanges(
+		changes,
+		"Uninstall Cline hooks",
+		p.rename,
+		paths,
+	)
 }
 
 func (p *ClinePlugin) Status() (PluginStatus, error) {
-	paths, err := resolveClineHookFiles()
+	paths, guard, audit, err := readClineHookPair()
 	status := PluginStatus{
 		AgentName:   clineAgentKey,
 		DisplayName: "Cline",
@@ -113,15 +95,7 @@ func (p *ClinePlugin) Status() (PluginStatus, error) {
 	if err != nil {
 		return status, err
 	}
-	guardState, err := readClineHookFile(paths.guardPath)
-	if err != nil {
-		return status, err
-	}
-	auditState, err := readClineHookFile(paths.auditPath)
-	if err != nil {
-		return status, err
-	}
-	contract, err := clineContractForFiles(guardState, auditState)
+	contract, err := clineContractForFiles(guard, audit)
 	if err != nil || contract == nil {
 		return status, err
 	}

@@ -86,7 +86,7 @@ Gemini CLI installation writes exact matchless `BeforeTool` and `AfterTool` comm
 
 GitHub Copilot CLI installation writes native user hooks to `$COPILOT_HOME/hooks/elydora-audit.json` with `~/.copilot/hooks/elydora-audit.json` as the default. Elydora preserves user hooks, migrates exact Elydora-owned entries from project `.github/hooks/hooks.json`, quotes the resolved Node.js runtime for each shell, and propagates the freeze guard's exit code. Installation requires `disableAllHooks` to be false.
 
-Cline installation writes `PreToolUse.mjs` and `PostToolUse.mjs` to `$CLINE_DIR/hooks` (default `~/.cline/hooks`). Elydora leaves the Documents and workspace hook roots unchanged. The wrappers preserve Cline's official payload and translate a frozen guard into JSON stdout cancellation control.
+Cline 3.0.46 installation commits `guard.js`, `config.json`, `private.key`, `hook.js`, `PreToolUse.mjs`, and `PostToolUse.mjs` through one rollback-capable transaction. The native hooks live in `$CLINE_DIR/hooks` with `~/.cline/hooks` as the default; the Documents and workspace roots remain read-only. The wrappers forward Cline's complete stdin payload byte-for-byte, use the active Node.js executable for generated runtimes, and emit pure JSON cancellation control for frozen or revoked agents. Status requires physical files, exact generated sources, strict runtime identity, and a canonical private key.
 
 Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
 

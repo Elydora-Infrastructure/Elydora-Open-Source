@@ -35,6 +35,7 @@ type clineHookFile struct {
 }
 
 type clineHookPaths struct {
+	clineDirectory string
 	hooksDirectory string
 	guardPath      string
 	auditPath      string
@@ -55,14 +56,6 @@ func clineHomeDirectory() (string, error) {
 	return home, nil
 }
 
-func clineElydoraRoot() (string, error) {
-	home, err := clineHomeDirectory()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".elydora"), nil
-}
-
 func resolveClineHookFiles() (clineHookPaths, error) {
 	clineDirectory := strings.TrimSpace(os.Getenv("CLINE_DIR"))
 	if clineDirectory == "" {
@@ -80,6 +73,7 @@ func resolveClineHookFiles() (clineHookPaths, error) {
 	}
 	hooksDirectory := filepath.Join(clineDirectory, "hooks")
 	return clineHookPaths{
+		clineDirectory: clineDirectory,
 		hooksDirectory: hooksDirectory,
 		guardPath:      filepath.Join(hooksDirectory, clineGuardFileName),
 		auditPath:      filepath.Join(hooksDirectory, clineAuditFileName),
@@ -225,7 +219,7 @@ async function main() {
 
   if (hookKind === 'guard' && result.code === 2) {
     const errorMessage = result.stderr.trim() || 'Agent is frozen by Elydora.';
-    process.stdout.write('HOOK_CONTROL\t' + JSON.stringify({ cancel: true, errorMessage }) + '\n');
+    process.stdout.write(JSON.stringify({ cancel: true, errorMessage }) + '\n');
     return;
   }
   if (result.signal) throw new Error('runtime terminated by signal ' + result.signal);
@@ -303,13 +297,6 @@ func assertClineWrapperIntegrity(file clineHookFile) error {
 	return nil
 }
 
-func validateClineAgentSegment(agentID string) error {
-	if agentID == "." || agentID == ".." || filepath.Base(agentID) != agentID {
-		return fmt.Errorf("Elydora Cline hook metadata contains an invalid agentId")
-	}
-	return nil
-}
-
 func clineContractForFiles(
 	guardFile, auditFile clineHookFile,
 ) (*clineRuntimeContract, error) {
@@ -330,14 +317,10 @@ func clineContractForFiles(
 	if !sameClineAgentID(guard.AgentID, audit.AgentID) {
 		return nil, fmt.Errorf("Elydora Cline hook files reference different agents")
 	}
-	if err := validateClineAgentSegment(guard.AgentID); err != nil {
-		return nil, err
-	}
-	runtimeRoot, err := clineElydoraRoot()
+	agentDirectory, err := ResolveAgentRuntimeDirectory(guard.AgentID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Elydora Cline hook metadata contains an invalid agentId: %w", err)
 	}
-	agentDirectory := filepath.Join(runtimeRoot, guard.AgentID)
 	expectedGuard := filepath.Join(agentDirectory, clineGuardScript)
 	expectedAudit := filepath.Join(agentDirectory, clineAuditScript)
 	guardMatches, err := sameClinePath(guard.RuntimePath, expectedGuard)
