@@ -29,7 +29,8 @@ interface FileChange {
 interface StagedChange {
   readonly change: FileChange;
   readonly temporaryPath: string;
-  readonly rollbackPath?: string;
+  rollbackPath?: string;
+  committedSnapshot?: FileSnapshot;
   committed: boolean;
 }
 export interface ManagedRuntimePaths {
@@ -361,16 +362,63 @@ async function commit(
   await assertUnchanged(staged.change, displayName);
   await renameFile(staged.temporaryPath, staged.change.filePath);
   staged.committed = true;
+  const current = await readPhysicalFile(
+    staged.change.filePath,
+    staged.change.label,
+    staged.change.maximumBytes,
+  );
+  if (!current || current.contents !== staged.change.next) {
+    throw new Error(
+      `${staged.change.label} changed immediately after commit: ${staged.change.filePath}`,
+    );
+  }
+  staged.committedSnapshot = current;
+}
+
+async function assertCommittedUnchanged(staged: StagedChange): Promise<void> {
+  const current = await readPhysicalFile(
+    staged.change.filePath,
+    staged.change.label,
+    staged.change.maximumBytes,
+  );
+  const committed = staged.committedSnapshot;
+  if (!current || !committed
+    || current.contents !== committed.contents
+    || current.device !== committed.device
+    || current.inode !== committed.inode) {
+    throw new Error(
+      `${staged.change.label} changed during transaction recovery: ${staged.change.filePath}`,
+    );
+  }
+}
+
+function preserveRollback(staged: StagedChange, cause: unknown): Error {
+  if (!staged.rollbackPath) return asError(cause);
+  const rollbackPath = staged.rollbackPath;
+  staged.rollbackPath = undefined;
+  return new Error(
+    `${errorMessage(cause)}; original content preserved at ${rollbackPath}`,
+    { cause: asError(cause) },
+  );
 }
 
 async function rollback(staged: StagedChange, renameFile: RenameFile): Promise<void> {
   if (!staged.committed) return;
+  try {
+    await assertCommittedUnchanged(staged);
+  } catch (error) {
+    throw preserveRollback(staged, error);
+  }
   if (!staged.change.original) {
     await unlinkOptional(staged.change.filePath);
     return;
   }
   if (!staged.rollbackPath) throw new Error(`Missing rollback data for ${staged.change.label}`);
-  await renameFile(staged.rollbackPath, staged.change.filePath);
+  try {
+    await renameFile(staged.rollbackPath, staged.change.filePath);
+  } catch (error) {
+    throw preserveRollback(staged, error);
+  }
 }
 
 async function cleanup(staged: StagedChange): Promise<void> {

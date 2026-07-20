@@ -43,6 +43,15 @@ async function assertNoTransactionFiles(fixture) {
   assert.equal(names.some((name) => /\.(tmp|rollback)$/.test(name)), false);
 }
 
+async function preservedRollback(fixture, basename) {
+  const entries = await readdir(fixture.agentDir);
+  const matches = entries.filter(
+    (name) => name.startsWith(`.${basename}.`) && name.endsWith('.rollback'),
+  );
+  assert.equal(matches.length, 1, entries.join(', '));
+  return path.join(fixture.agentDir, matches[0]);
+}
+
 test('Codex rolls back all five files when a transaction commit fails', async () => {
   const fixture = await createFixture();
   try {
@@ -126,6 +135,102 @@ test('Codex detects concurrent hook changes before committing runtime updates', 
     }
     assert.equal(await readFile(fixture.configPath, 'utf-8'), concurrent);
     await assertNoTransactionFiles(fixture);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('managed installation preserves rollback data after a committed file changes', async () => {
+  const fixture = await createFixture();
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const original = await readFile(fixture.guardScriptPath, 'utf-8');
+    const source = `
+      import { rename, rm, writeFile } from 'node:fs/promises';
+      import { readDocument } from ${JSON.stringify(ioModuleUrl)};
+      import {
+        commitCodexInstallation,
+        prepareCodexInstallation,
+      } from ${JSON.stringify(installationModuleUrl)};
+      const document = await readDocument();
+      const prepared = await prepareCodexInstallation(
+        JSON.parse(process.env.ELYDORA_INSTALL_CONFIG),
+        { document, changed: false },
+      );
+      let calls = 0;
+      await commitCodexInstallation(prepared, async (from, to) => {
+        calls += 1;
+        if (calls === 1) {
+          await rename(from, to);
+          await rm(to);
+          await writeFile(to, 'external change\\n');
+          return;
+        }
+        if (calls === 2) throw new Error('injected later commit failure');
+        await rename(from, to);
+      });
+    `;
+    const result = await runNode(
+      ['--input-type=module', '--eval', source],
+      {
+        HOME: fixture.homeDir,
+        USERPROFILE: fixture.homeDir,
+        ELYDORA_INSTALL_CONFIG: JSON.stringify(installConfig(fixture, { orgId: 'updated' })),
+      },
+      fixture.projectDir,
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /original content preserved at/i);
+    assert.equal(await readFile(fixture.guardScriptPath, 'utf-8'), 'external change\n');
+    assert.equal(await readFile(
+      await preservedRollback(fixture, 'guard.js'),
+      'utf-8',
+    ), original);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('managed installation preserves rollback data after restore rename failure', async () => {
+  const fixture = await createFixture();
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const original = await readFile(fixture.guardScriptPath, 'utf-8');
+    const source = `
+      import { rename } from 'node:fs/promises';
+      import { readDocument } from ${JSON.stringify(ioModuleUrl)};
+      import {
+        commitCodexInstallation,
+        prepareCodexInstallation,
+      } from ${JSON.stringify(installationModuleUrl)};
+      const document = await readDocument();
+      const prepared = await prepareCodexInstallation(
+        JSON.parse(process.env.ELYDORA_INSTALL_CONFIG),
+        { document, changed: false },
+      );
+      let calls = 0;
+      await commitCodexInstallation(prepared, async (from, to) => {
+        calls += 1;
+        if (calls === 2) throw new Error('injected later commit failure');
+        if (from.endsWith('.rollback')) throw new Error('injected rollback failure');
+        await rename(from, to);
+      });
+    `;
+    const result = await runNode(
+      ['--input-type=module', '--eval', source],
+      {
+        HOME: fixture.homeDir,
+        USERPROFILE: fixture.homeDir,
+        ELYDORA_INSTALL_CONFIG: JSON.stringify(installConfig(fixture, { orgId: 'updated' })),
+      },
+      fixture.projectDir,
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /original content preserved at/i);
+    assert.equal(await readFile(
+      await preservedRollback(fixture, 'guard.js'),
+      'utf-8',
+    ), original);
   } finally {
     await fixture.close();
   }
