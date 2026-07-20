@@ -2,213 +2,162 @@ package plugins
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
-// GeminiPlugin manages the Elydora audit hook for Gemini CLI.
-// It merges an AfterTool hook into ~/.gemini/settings.json.
-type GeminiPlugin struct{}
+// GeminiPlugin manages Gemini CLI global user hooks.
+type GeminiPlugin struct {
+	rename renameFunc
+}
+
+// ManagesGuardRuntime reports that Gemini commits both generated runtimes and
+// the user settings document through one transaction.
+func (p *GeminiPlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+func requireGeminiHooksEnabled(document *geminiDocument) error {
+	if !document.hookControls.enabled {
+		return fmt.Errorf(
+			"Gemini CLI hooks are disabled by hooksConfig.enabled: %s",
+			document.filePath,
+		)
+	}
+	disabled, err := disabledManagedGeminiEntries(document.hookControls)
+	if err != nil {
+		return err
+	}
+	if len(disabled) > 0 {
+		return fmt.Errorf(
+			"Gemini CLI hooks are disabled by hooksConfig.disabled: %v",
+			disabled,
+		)
+	}
+	return nil
+}
+
+// PreflightInstall validates settings and runtime identity before any write.
+func (p *GeminiPlugin) PreflightInstall(config InstallConfig) error {
+	document, err := readGeminiDocument()
+	if err != nil {
+		return err
+	}
+	if err := requireGeminiHooksEnabled(document); err != nil {
+		return err
+	}
+	_, _, err = preflightGeminiInstallation(config, document)
+	return err
+}
 
 func (p *GeminiPlugin) Install(config InstallConfig) error {
-	scriptPath, err := hookScriptPath(config.AgentID)
+	document, err := readGeminiDocument()
 	if err != nil {
 		return err
 	}
-	if config.HookScript != "" {
-		scriptPath = config.HookScript
+	if err := requireGeminiHooksEnabled(document); err != nil {
+		return err
 	}
-
-	if err := GenerateHookScript(scriptPath, config); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
-	}
-
-	guardPath := config.GuardScriptPath
-	if guardPath == "" {
-		guardPath, err = guardScriptPath(config.AgentID)
-		if err != nil {
-			return err
-		}
-	}
-
-	configDir, err := expandHome("~/.gemini")
+	paths, nodePath, err := preflightGeminiInstallation(config, document)
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(configDir, "settings.json")
-
-	settings, err := readJSONFile(configPath)
+	guardGroup, err := buildGeminiGroup(
+		nodePath,
+		paths.guardPath,
+		geminiGuardHookName,
+	)
 	if err != nil {
 		return err
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		hooks = make(map[string]interface{})
+	auditGroup, err := buildGeminiGroup(
+		nodePath,
+		paths.auditPath,
+		geminiAuditHookName,
+	)
+	if err != nil {
+		return err
 	}
-
-	// --- BeforeTool (guard — freeze enforcement) ---
-	beforeTool, _ := hooks["BeforeTool"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range beforeTool {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
-	}
-	guardEntry := map[string]interface{}{
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": "node " + guardPath,
-			},
+	rendered, err := renderGeminiDocument(
+		document,
+		"",
+		map[string]map[string]any{
+			"BeforeTool": guardGroup,
+			"AfterTool":  auditGroup,
 		},
+	)
+	if err != nil {
+		return fmt.Errorf("render Gemini CLI user settings: %w", err)
 	}
-	preFiltered = append(preFiltered, guardEntry)
-	hooks["BeforeTool"] = preFiltered
-
-	// --- AfterTool (audit logging) ---
-	afterTool, _ := hooks["AfterTool"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range afterTool {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	hookEntry := map[string]interface{}{
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": "node " + scriptPath,
-			},
-		},
-	}
-	postFiltered = append(postFiltered, hookEntry)
-	hooks["AfterTool"] = postFiltered
-
-	settings["hooks"] = hooks
-
-	if err := writeJSONFile(configPath, settings); err != nil {
+	changes, err := prepareGeminiInstallationChanges(config, paths, rendered)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Installed Elydora hook for Gemini CLI at %s\n", configPath)
+	if err := writeGeminiChanges(
+		changes,
+		"Install Gemini CLI hooks",
+		p.rename,
+		paths.runtimeRoot,
+		paths.agentDirectory,
+		filepath.Dir(document.filePath),
+	); err != nil {
+		return err
+	}
+	fmt.Printf("Gemini CLI hooks installed at %s.\n", document.filePath)
+	fmt.Println("Gemini CLI verification: run /hooks list.")
 	return nil
 }
 
 func (p *GeminiPlugin) Uninstall(agentID string) error {
-	configDir, err := expandHome("~/.gemini")
+	document, err := readGeminiDocument()
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(configDir, "settings.json")
-
-	settings, err := readJSONFile(configPath)
+	rendered, err := renderGeminiDocument(document, agentID, nil)
+	if err != nil {
+		return fmt.Errorf("render Gemini CLI user settings: %w", err)
+	}
+	change, err := prepareRenderedGeminiChange(rendered)
 	if err != nil {
 		return err
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		fmt.Println("No Gemini CLI hooks found.")
-		return nil
-	}
-
-	// Remove BeforeTool Elydora entries
-	beforeTool, _ := hooks["BeforeTool"].([]interface{})
-	var preFiltered []interface{}
-	for _, entry := range beforeTool {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		preFiltered = append(preFiltered, entry)
-	}
-	if len(preFiltered) == 0 {
-		delete(hooks, "BeforeTool")
-	} else {
-		hooks["BeforeTool"] = preFiltered
-	}
-
-	// Remove AfterTool Elydora entries
-	afterTool, _ := hooks["AfterTool"].([]interface{})
-	var postFiltered []interface{}
-	for _, entry := range afterTool {
-		if m, ok := entry.(map[string]interface{}); ok {
-			if isElydoraHookEntry(m) {
-				continue
-			}
-		}
-		postFiltered = append(postFiltered, entry)
-	}
-	if len(postFiltered) == 0 {
-		delete(hooks, "AfterTool")
-	} else {
-		hooks["AfterTool"] = postFiltered
-	}
-
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
-	}
-
-	if err := writeJSONFile(configPath, settings); err != nil {
-		return err
-	}
-
-	if agentID != "" {
-		scriptPath, _ := hookScriptPath(agentID)
-		if scriptPath != "" {
-			os.Remove(scriptPath)
-		}
-		gPath, _ := guardScriptPath(agentID)
-		if gPath != "" {
-			os.Remove(gPath)
-		}
-	}
-	fmt.Println("Uninstalled Elydora hook for Gemini CLI.")
-	return nil
+	return writeGeminiChanges(
+		[]*fileChange{change},
+		"Uninstall Gemini CLI hooks",
+		p.rename,
+		"",
+		"",
+		filepath.Dir(document.filePath),
+	)
 }
 
 func (p *GeminiPlugin) Status() (PluginStatus, error) {
-	configDir, err := expandHome("~/.gemini")
-	if err != nil {
-		return PluginStatus{}, err
-	}
-	configPath := filepath.Join(configDir, "settings.json")
-
+	configPath, pathErr := geminiSettingsPath()
+	entry := SupportedAgents[geminiAgentKey]
 	status := PluginStatus{
-		AgentName:   "gemini",
-		DisplayName: "Gemini CLI",
-		ConfigPath:  configPath,
+		AgentName: geminiAgentKey, DisplayName: entry.Name, ConfigPath: configPath,
 	}
-
-	settings, err := readJSONFile(configPath)
+	if pathErr != nil {
+		return status, pathErr
+	}
+	document, err := readGeminiDocument()
 	if err != nil {
+		return status, err
+	}
+	if !managedGeminiHooksEnabled(document.hookControls) {
 		return status, nil
 	}
-
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks != nil {
-		preConfigured := hasElydoraEntry(hooks["BeforeTool"])
-		postConfigured := hasElydoraEntry(hooks["AfterTool"])
-		status.HookConfigured = preConfigured && postConfigured
-
-		// Extract hook script path from the configured command
-		scriptPath := extractElydoraScriptPath(hooks["AfterTool"])
-		if scriptPath != "" {
-			if _, err := os.Stat(scriptPath); err == nil {
-				status.HookScriptExists = true
-			}
-		}
+	contracts, err := geminiRuntimeContracts(document.hooks)
+	if err != nil {
+		return status, err
 	}
-
-	status.Installed = status.HookConfigured && status.HookScriptExists
+	status.HookConfigured = len(contracts) > 0
+	if !status.HookConfigured {
+		return status, nil
+	}
+	status.HookScriptExists, err = geminiRuntimeFilesExist(contracts)
+	if err != nil {
+		return status, err
+	}
+	status.Installed = status.HookScriptExists
 	return status, nil
 }
