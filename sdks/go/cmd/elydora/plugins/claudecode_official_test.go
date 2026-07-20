@@ -12,7 +12,20 @@ func TestClaudeOfficialBinaryAcceptsInstalledSettings(t *testing.T) {
 	if binary == "" {
 		t.Skip("ELYDORA_CLAUDE_BINARY is unset")
 	}
-	fixture := prepareClaudeFixture(t, claudeFixtureOptions{})
+	source := `{"hooks":{
+  "Stop":[{"hooks":[{
+    "type":"command",
+    "command":"node",
+    "args":["--version"],
+    "asyncRewake":true,
+    "rewakeMessage":"Background validation failed",
+    "rewakeSummary":"Validation feedback"
+  }]}]
+}}`
+	fixture := prepareClaudeFixture(
+		t,
+		claudeFixtureOptions{existingRaw: &source},
+	)
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Claude hooks: %v", err)
 	}

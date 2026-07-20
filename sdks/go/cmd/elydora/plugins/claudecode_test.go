@@ -122,7 +122,7 @@ func TestClaudeMalformedSettingsFailBeforeRuntimeCreation(t *testing.T) {
 func TestClaudePreservesEveryOfficialHandlerType(t *testing.T) {
 	source := `{"hooks":{
   "SessionStart":[{"hooks":[{"type":"prompt","prompt":"Review context","model":"haiku","continueOnBlock":true,"if":"always","once":false,"statusMessage":"Reviewing","timeout":0.5}]}],
-  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"user-command","args":["--safe"],"async":false,"asyncRewake":true,"shell":"powershell"}]}],
+  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"user-command","args":["--safe"],"async":false,"asyncRewake":true,"rewakeMessage":"Background validation failed","rewakeSummary":"Validation feedback","shell":"powershell"}]}],
   "Stop":[{"hooks":[{"type":"agent","prompt":"Verify completion","model":"sonnet"}]}],
   "Notification":[{"hooks":[{"type":"http","url":"https://example.test/hook","headers":{"Authorization":"Bearer ${TOKEN}"},"allowedEnvVars":["TOKEN"]}]}],
   "PostToolUse":[{"hooks":[{"type":"mcp_tool","server":"audit","tool":"record","input":{"source":"claude"}}]}]
@@ -163,6 +163,8 @@ func TestClaudeInvalidOfficialHookShapesFailBeforeWrites(t *testing.T) {
 		{"command", `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":""}]}]}}`, "non-empty string"},
 		{"args", `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"x","args":[1]}]}]}}`, "array of strings"},
 		{"timeout", `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"x","timeout":0}]}]}}`, "positive finite"},
+		{"rewake message", `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x","rewakeMessage":""}]}]}}`, `field "rewakeMessage" must be a non-empty string`},
+		{"rewake summary", `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x","rewakeSummary":""}]}]}}`, `field "rewakeSummary" must be a non-empty string`},
 		{"headers", `{"hooks":{"PreToolUse":[{"hooks":[{"type":"http","url":"https://example.test","headers":{"A":1}}]}]}}`, "map names to strings"},
 		{"input", `{"hooks":{"PreToolUse":[{"hooks":[{"type":"mcp_tool","server":"s","tool":"t","input":[]}]}]}}`, "must be an object"},
 	}

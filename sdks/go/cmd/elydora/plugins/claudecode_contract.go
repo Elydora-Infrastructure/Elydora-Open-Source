@@ -34,7 +34,8 @@ var claudeHookEvents = stringSet(
 var claudeHandlerKeys = map[string]map[string]struct{}{
 	"command": stringSet(
 		"if", "once", "statusMessage", "timeout", "args", "async",
-		"asyncRewake", "command", "shell", "type",
+		"asyncRewake", "command", "rewakeMessage", "rewakeSummary",
+		"shell", "type",
 	),
 	"prompt": stringSet(
 		"if", "once", "statusMessage", "timeout", "continueOnBlock", "model",
@@ -250,6 +251,13 @@ func validateClaudeHandler(
 		for _, field := range []string{"async", "asyncRewake"} {
 			if err := validateClaudeOptionalBoolean(handler, field, label); err != nil {
 				return nil, err
+			}
+		}
+		for _, field := range []string{"rewakeMessage", "rewakeSummary"} {
+			if _, exists := handler[field]; exists {
+				if _, err := requireClaudeString(handler, field, label); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if shell, exists := handler["shell"]; exists &&
