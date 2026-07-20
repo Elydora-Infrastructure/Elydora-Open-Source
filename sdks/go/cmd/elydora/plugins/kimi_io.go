@@ -4,9 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 )
@@ -23,9 +21,8 @@ func isMissingKimiPath(err error) bool {
 	return os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR)
 }
 
-func kimiPathExists(path, label string) (bool, error) {
-	// #nosec G703 -- KIMI_CODE_HOME is an explicit local-user configuration path.
-	_, err := os.Stat(path)
+func kimiEntryExists(path, label string) (bool, error) {
+	_, err := os.Lstat(path)
 	if err == nil {
 		return true, nil
 	}
@@ -35,15 +32,21 @@ func kimiPathExists(path, label string) (bool, error) {
 	return false, fmt.Errorf("inspect %s at %s: %w", label, path, err)
 }
 
-func legacyKimiCLIOnPath() (bool, error) {
-	_, err := exec.LookPath("kimi-cli")
-	if err == nil {
-		return true, nil
+func stableKimiContract(configPath string) kimiContract {
+	return kimiContract{
+		generation: "stable", runtimeName: "Kimi Code",
+		label: "Kimi Code hooks config", directoryLabel: "Kimi Code home directory",
+		configPath: configPath, events: kimiModernEvents,
 	}
-	if errors.Is(err, exec.ErrNotFound) {
-		return false, nil
+}
+
+func legacyKimiContract(configPath string) kimiContract {
+	return kimiContract{
+		generation: "legacy", runtimeName: "kimi-cli",
+		label:          "kimi-cli legacy hooks config",
+		directoryLabel: "kimi-cli legacy home directory",
+		configPath:     configPath, events: kimiSharedEvents,
 	}
-	return false, fmt.Errorf("inspect kimi-cli executable on PATH: %w", err)
 }
 
 func resolveKimiContracts() ([]kimiContract, error) {
@@ -51,58 +54,59 @@ func resolveKimiContracts() ([]kimiContract, error) {
 	if err != nil {
 		return nil, err
 	}
-	explicitHome := os.Getenv("KIMI_CODE_HOME")
-	kimiHome := explicitHome
-	if kimiHome == "" {
-		kimiHome = filepath.Join(home, ".kimi-code")
+	configuredHome := os.Getenv("KIMI_CODE_HOME")
+	stableHome := filepath.Join(home, ".kimi-code")
+	explicitHome := configuredHome != ""
+	if explicitHome {
+		stableHome, err = filepath.Abs(configuredHome)
+		if err != nil {
+			return nil, fmt.Errorf("resolve KIMI_CODE_HOME at %s: %w", configuredHome, err)
+		}
 	}
-	modern := kimiContract{
-		runtimeName: "Kimi Code",
-		label:       "Kimi Code hooks config",
-		configPath:  filepath.Join(kimiHome, "config.toml"),
-		events:      kimiModernEvents,
+	legacyHome := filepath.Join(home, ".kimi")
+	stable := stableKimiContract(filepath.Join(stableHome, "config.toml"))
+	legacy := legacyKimiContract(filepath.Join(legacyHome, "config.toml"))
+	if sameKimiPath(stable.configPath, legacy.configPath) {
+		return []kimiContract{stable}, nil
 	}
-	legacy := kimiContract{
-		runtimeName: "kimi-cli",
-		label:       "kimi-cli legacy hooks config",
-		configPath:  filepath.Join(home, ".kimi", "config.toml"),
-		events:      kimiSharedEvents,
-	}
-	modernDetected := explicitHome != ""
-	if !modernDetected {
-		modernDetected, err = kimiPathExists(kimiHome, "Kimi Code home")
+
+	stableDetected := explicitHome
+	if !stableDetected {
+		stableDetected, err = kimiEntryExists(stableHome, "Kimi Code home")
 		if err != nil {
 			return nil, err
 		}
 	}
-	legacyDetected, err := kimiPathExists(legacy.configPath, legacy.label)
+	legacyDetected, err := kimiEntryExists(legacyHome, "kimi-cli legacy home")
 	if err != nil {
 		return nil, err
 	}
-	if !legacyDetected {
-		legacyDetected, err = legacyKimiCLIOnPath()
-		if err != nil {
-			return nil, err
-		}
-	}
-	if legacyDetected && !modernDetected {
+	if legacyDetected && !stableDetected {
 		return []kimiContract{legacy}, nil
 	}
 	if legacyDetected {
-		return []kimiContract{modern, legacy}, nil
+		return []kimiContract{stable, legacy}, nil
 	}
-	return []kimiContract{modern}, nil
+	return []kimiContract{stable}, nil
 }
 
 func readKimiConfig(contract kimiContract) (kimiDocument, error) {
-	raw, err := os.ReadFile(contract.configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return parseKimiDocument(contract, nil, false)
-		}
-		return kimiDocument{}, fmt.Errorf("read %s at %s: %w", contract.label, contract.configPath, err)
+	directory := filepath.Dir(contract.configPath)
+	if _, err := managedPhysicalDirectoryExists(directory, contract.directoryLabel); err != nil {
+		return kimiDocument{}, err
 	}
-	return parseKimiDocument(contract, raw, true)
+	snapshot, err := readManagedFile(
+		contract.configPath,
+		contract.label,
+		maxManagedSourceBytes,
+	)
+	if err != nil {
+		return kimiDocument{}, err
+	}
+	if snapshot == nil {
+		return parseKimiDocument(contract, nil, false)
+	}
+	return parseKimiDocument(contract, snapshot.contents, true)
 }
 
 func readAllKimiConfigs() ([]kimiDocument, error) {
@@ -119,32 +123,6 @@ func readAllKimiConfigs() ([]kimiDocument, error) {
 		documents = append(documents, document)
 	}
 	return documents, nil
-}
-
-func writeKimiConfig(document kimiDocument, raw []byte) error {
-	if err := writeHookFileAtomic(document.contract.configPath, raw, 0600); err != nil {
-		return fmt.Errorf("write %s at %s: %w", document.contract.label, document.contract.configPath, err)
-	}
-	return nil
-}
-
-func removeKimiConfig(document kimiDocument) error {
-	if err := removeHookFile(document.contract.configPath, document.contract.label); err != nil {
-		return err
-	}
-	return nil
-}
-
-func buildKimiCommand(runtimePath, scriptPath string) string {
-	if runtime.GOOS == "windows" {
-		return quoteWindowsArgument(runtimePath) + " " + quoteWindowsArgument(scriptPath)
-	}
-	return quotePOSIXArgument(runtimePath) + " " + quotePOSIXArgument(scriptPath)
-}
-
-func buildKimiHook(event, command string) kimiHook {
-	timeout := kimiHookTimeoutSeconds
-	return kimiHook{event: event, command: command, timeout: &timeout}
 }
 
 func kimiRuntimeNames(documents []kimiDocument) string {

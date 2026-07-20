@@ -86,7 +86,7 @@ Cline installation writes `PreToolUse.mjs` and `PostToolUse.mjs` to `$CLINE_DIR/
 
 Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
 
-Kimi installation follows detected runtime evidence. Kimi Code uses `$KIMI_CODE_HOME/config.toml` with `~/.kimi-code/config.toml` as the default. Legacy `kimi-cli` uses `~/.kimi/config.toml`; Elydora updates both contracts only when both runtimes are present.
+Kimi installation follows home-directory evidence. Kimi Code uses `$KIMI_CODE_HOME/config.toml` with `~/.kimi-code/config.toml` as the default, and legacy `kimi-cli` uses `~/.kimi/config.toml`. Elydora installs exact `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` hooks, preserves native snake_case payloads, and commits all selected TOML documents with the four runtime artifacts in one rollback-capable transaction. Windows commands use encoded PowerShell so paths containing spaces, apostrophes, percent signs, and environment-like text remain literal.
 
 Grok Build installation writes native global hooks to `$GROK_HOME/hooks/elydora-audit.json` (default `~/.grok/hooks/elydora-audit.json`). Project hooks still follow Grok's `/hooks-trust` workflow; Elydora leaves project, Claude Code, and Cursor compatibility files unchanged.
 

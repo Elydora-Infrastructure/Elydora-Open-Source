@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,8 +30,7 @@ func encodeCodexPowerShell(source string) string {
 	runes := utf16.Encode([]rune(source))
 	raw := make([]byte, len(runes)*2)
 	for index, value := range runes {
-		raw[index*2] = byte(value)
-		raw[index*2+1] = byte(value >> 8)
+		binary.LittleEndian.PutUint16(raw[index*2:], value)
 	}
 	return base64.StdEncoding.EncodeToString(raw)
 }

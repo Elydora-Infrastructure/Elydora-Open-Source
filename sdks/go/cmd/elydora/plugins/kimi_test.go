@@ -2,71 +2,90 @@ package plugins
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-func TestKimiRegistryUsesModernGlobalContract(t *testing.T) {
+func TestKimiRegistryUsesStableGlobalContract(t *testing.T) {
 	entry := SupportedAgents[kimiAgentKey]
-	if entry.Name != "Kimi Code" || entry.ConfigDir != "~/.kimi-code" || entry.ConfigFile != "config.toml" {
+	if entry.Name != "Kimi Code" || entry.ConfigDir != "~/.kimi-code" ||
+		entry.ConfigFile != "config.toml" {
 		t.Fatalf("Kimi registry entry = %#v", entry)
 	}
-	if _, ok := NewPlugin(kimiAgentKey).(*KimiPlugin); !ok {
+	plugin, ok := NewPlugin(kimiAgentKey).(*KimiPlugin)
+	if !ok || !plugin.ManagesGuardRuntime() {
 		t.Fatalf("Kimi registry plugin = %T", NewPlugin(kimiAgentKey))
 	}
 }
 
 func TestKimiInstallPreservesBothConfigsAndIsIdempotent(t *testing.T) {
-	modern := "# modern user config\ndefault_model = \"kimi-code/k3\"\n\n" +
-		"[[hooks]]\nevent = \"SessionStart\"\ncommand = \"existing-modern\"\n" +
-		"timeout = 30 # keep modern hook\n"
+	modern := "# stable user config\ndefault_model = \"kimi-code/k3\"\n\n" +
+		"[[hooks]]\nevent = \"SessionStart\"\ncommand = \"existing-stable\"\n" +
+		"timeout = 30 # keep stable hook\n"
 	legacy := "# legacy user config\ntelemetry = false\n\n" +
 		"[[hooks]]\nevent = \"SessionEnd\"\ncommand = \"existing-legacy\"\n"
 	fixture := prepareKimiFixture(t, kimiFixtureOptions{
-		modernConfig: kimiString(modern),
-		legacyConfig: kimiString(legacy),
+		modernConfig: kimiString(modern), legacyConfig: kimiString(legacy),
 	})
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Kimi hooks: %v", err)
+	}
+	first := map[string][]byte{}
+	for _, path := range []string{fixture.modernPath, fixture.legacyPath} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read first Kimi source: %v", err)
+		}
+		first[path] = raw
 	}
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("repeat Kimi install: %v", err)
 	}
 
 	for _, contract := range []struct{ path, comment, command string }{
-		{fixture.modernPath, "# modern user config", "existing-modern"},
+		{fixture.modernPath, "# stable user config", "existing-stable"},
 		{fixture.legacyPath, "# legacy user config", "existing-legacy"},
 	} {
 		raw, err := os.ReadFile(contract.path)
 		if err != nil {
 			t.Fatalf("read Kimi config: %v", err)
 		}
-		if !strings.Contains(string(raw), contract.comment) || !strings.Contains(string(raw), contract.command) {
+		if !reflect.DeepEqual(raw, first[contract.path]) ||
+			!strings.Contains(string(raw), contract.comment) ||
+			!strings.Contains(string(raw), contract.command) {
 			t.Fatalf("user config changed: %s", raw)
 		}
 		hooks := readKimiTestHooks(t, contract.path)
-		if len(hooks) != 3 {
-			t.Fatalf("hooks = %#v, want three entries", hooks)
+		if len(hooks) != 4 {
+			t.Fatalf("hooks = %#v, want four entries", hooks)
 		}
-		requireStrictKimiHook(t, findKimiTestHook(t, hooks, "PreToolUse", kimiGuardScript))
-		requireStrictKimiHook(t, findKimiTestHook(t, hooks, "PostToolUse", kimiAuditScript))
+		requireKimiManagedTriple(t, hooks)
 	}
-	defaultModern := filepath.Join(fixture.homeDir, ".kimi-code", "config.toml")
-	if _, err := os.Stat(defaultModern); !os.IsNotExist(err) {
-		t.Fatalf("false default migration target exists: %v", err)
+	defaultStable := filepath.Join(fixture.homeDir, ".kimi-code", "config.toml")
+	if _, err := os.Stat(defaultStable); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unselected default config exists: %v", err)
+	}
+	for _, path := range []string{
+		fixture.runtimeConfig, fixture.privateKey, fixture.guardPath, fixture.hookPath,
+	} {
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("managed runtime missing at %s: %v", path, err)
+		}
 	}
 }
 
 func TestKimiInstallPreservesInlineHookArrayStyle(t *testing.T) {
-	modern := "# inline user hook\nhooks = [\n  # keep leading\n  { event = \"SessionStart\", " +
-		"command = \"existing-inline\" }, # keep gap\n] # keep array\n"
+	modern := "# inline user hook\nhooks = [\n  # keep leading\n" +
+		"  { event = \"SessionStart\", command = \"existing-inline\" }, # keep gap\n" +
+		"] # keep array\n"
 	fixture := prepareKimiFixture(t, kimiFixtureOptions{
-		modernConfig:     kimiString(modern),
-		withoutLegacyCLI: true,
+		modernConfig: kimiString(modern), withoutLegacyEvidence: true,
 	})
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install inline Kimi hooks: %v", err)
@@ -79,150 +98,181 @@ func TestKimiInstallPreservesInlineHookArrayStyle(t *testing.T) {
 		t.Fatalf("read inline Kimi config: %v", err)
 	}
 	for _, marker := range []string{
-		"# inline user hook",
-		"# keep leading",
-		"# keep gap",
-		"# keep array",
-		"hooks = [",
+		"# inline user hook", "# keep leading", "# keep gap", "# keep array", "hooks = [",
 	} {
 		if !strings.Contains(string(raw), marker) {
 			t.Fatalf("inline marker %q missing from %s", marker, raw)
 		}
 	}
-	if len(readKimiTestHooks(t, fixture.modernPath)) != 3 {
-		t.Fatalf("inline Kimi hooks are not idempotent: %s", raw)
+	hooks := readKimiTestHooks(t, fixture.modernPath)
+	if len(hooks) != 4 {
+		t.Fatalf("inline hooks = %#v", hooks)
 	}
+	requireKimiManagedTriple(t, hooks)
 }
 
-func TestKimiModernDefaultAvoidsLegacyMigrationMarker(t *testing.T) {
+func TestKimiUninstallPreservesUserOwnedEmptyInlineArray(t *testing.T) {
+	source := "# user container\nhooks = [] # keep empty array\n"
 	fixture := prepareKimiFixture(t, kimiFixtureOptions{
-		useDefaultHome:   true,
-		withoutLegacyCLI: true,
+		modernConfig: kimiString(source), withoutLegacyEvidence: true,
 	})
 	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install modern Kimi hooks: %v", err)
-	}
-	if len(readKimiTestHooks(t, fixture.modernPath)) != 2 {
-		t.Fatalf("modern Kimi config has unexpected hooks")
-	}
-	if _, err := os.Stat(fixture.legacyPath); !os.IsNotExist(err) {
-		t.Fatalf("false legacy migration target exists: %v", err)
-	}
-	status, err := fixture.plugin.Status()
-	if err != nil || !status.Installed {
-		t.Fatalf("empty KIMI_CODE_HOME status = %#v, %v", status, err)
-	}
-}
-
-func TestKimiLegacyInstallAvoidsPrematureModernTarget(t *testing.T) {
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{useDefaultHome: true})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install legacy Kimi hooks: %v", err)
-	}
-	if len(readKimiTestHooks(t, fixture.legacyPath)) != 2 {
-		t.Fatalf("legacy Kimi config has unexpected hooks")
-	}
-	if _, err := os.Stat(fixture.modernPath); !os.IsNotExist(err) {
-		t.Fatalf("premature modern migration target exists: %v", err)
-	}
-	if err := os.Remove(fixture.legacyCLIPath); err != nil {
-		t.Fatalf("remove legacy CLI marker: %v", err)
-	}
-	status, err := fixture.plugin.Status()
-	if err != nil || !status.Installed {
-		t.Fatalf("legacy status after PATH change = %#v, %v", status, err)
-	}
-}
-
-func TestKimiCommandsBlockAndForwardOfficialPayload(t *testing.T) {
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Kimi hooks: %v", err)
 	}
-	capturePath := filepath.Join(t.TempDir(), "captured-event.json")
-	encodedPath, err := json.Marshal(capturePath)
-	if err != nil {
-		t.Fatalf("marshal capture path: %v", err)
+	if err := fixture.plugin.Uninstall(kimiTestAgentID); err != nil {
+		t.Fatalf("uninstall Kimi hooks: %v", err)
 	}
-	source := "const fs = require('node:fs'); const chunks = []; " +
-		"process.stdin.on('data', chunk => chunks.push(chunk)); " +
-		"process.stdin.on('end', () => fs.writeFileSync(" + string(encodedPath) + ", Buffer.concat(chunks)));\n"
-	if err := os.WriteFile(fixture.hookPath, []byte(source), 0700); err != nil {
-		t.Fatalf("write capture runtime: %v", err)
+	raw, err := os.ReadFile(fixture.modernPath)
+	if err != nil {
+		t.Fatalf("read empty inline config: %v", err)
+	}
+	if !strings.Contains(string(raw), "# user container") ||
+		!strings.Contains(string(raw), "# keep empty array") ||
+		len(readKimiTestHooks(t, fixture.modernPath)) != 0 {
+		t.Fatalf("empty inline array changed: %s", raw)
+	}
+}
+
+func TestKimiUsesDefaultStableAndLegacyEvidence(t *testing.T) {
+	t.Run("stable", func(t *testing.T) {
+		fixture := prepareKimiFixture(t, kimiFixtureOptions{
+			useDefaultHome: true, withoutLegacyEvidence: true,
+		})
+		if err := fixture.plugin.Install(fixture.config); err != nil {
+			t.Fatalf("install stable Kimi hooks: %v", err)
+		}
+		requireKimiManagedTriple(t, readKimiTestHooks(t, fixture.modernPath))
+		if _, err := os.Stat(fixture.legacyPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy config exists: %v", err)
+		}
+	})
+
+	t.Run("legacy", func(t *testing.T) {
+		fixture := prepareKimiFixture(t, kimiFixtureOptions{
+			useDefaultHome: true, withoutModernEvidence: true,
+		})
+		if err := fixture.plugin.Install(fixture.config); err != nil {
+			t.Fatalf("install legacy Kimi hooks: %v", err)
+		}
+		requireKimiManagedTriple(t, readKimiTestHooks(t, fixture.legacyPath))
+		if _, err := os.Stat(fixture.modernPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stable config exists: %v", err)
+		}
+		status, err := fixture.plugin.Status()
+		if err != nil || !status.Installed {
+			t.Fatalf("legacy Kimi status = %#v, %v", status, err)
+		}
+	})
+}
+
+func TestKimiParsesEverySelectedConfigBeforeRuntimeWrites(t *testing.T) {
+	modern := "# untouched stable\ndefault_model = \"kimi-code/k3\"\n"
+	legacy := "[malformed"
+	fixture := prepareKimiFixture(t, kimiFixtureOptions{
+		modernConfig: kimiString(modern), legacyConfig: kimiString(legacy),
+	})
+	err := fixture.plugin.Install(fixture.config)
+	if err == nil || !strings.Contains(err.Error(), "parse kimi-cli legacy hooks config") {
+		t.Fatalf("install error = %v", err)
+	}
+	for path, want := range map[string]string{
+		fixture.modernPath: modern, fixture.legacyPath: legacy,
+	} {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil || string(raw) != want {
+			t.Fatalf("config %s changed: %q, %v", path, raw, readErr)
+		}
+	}
+	assertNoKimiRuntimeWrites(t, fixture)
+}
+
+func TestKimiRejectsFieldsAndEventsOutsideEachContract(t *testing.T) {
+	for _, testCase := range []struct {
+		name, modern, legacy, want string
+	}{
+		{
+			"unsupported-field",
+			"[[hooks]]\nevent=\"PreToolUse\"\ncommand=\"x\"\ncwd=\"/tmp\"\n",
+			"", `unsupported field "cwd"`,
+		},
+		{
+			"legacy-stable-event", "",
+			"[[hooks]]\nevent=\"Interrupt\"\ncommand=\"x\"\n",
+			"unsupported event",
+		},
+		{
+			"bad-timeout",
+			"[[hooks]]\nevent=\"PreToolUse\"\ncommand=\"x\"\ntimeout=601\n",
+			"", "integer from 1 to 600",
+		},
+		{
+			"hooks-object", "hooks = { event=\"PreToolUse\", command=\"x\" }\n",
+			"", `field "hooks" must be an array`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			options := kimiFixtureOptions{}
+			if testCase.modern != "" {
+				options.modernConfig = kimiString(testCase.modern)
+			}
+			if testCase.legacy != "" {
+				options.legacyConfig = kimiString(testCase.legacy)
+			}
+			fixture := prepareKimiFixture(t, options)
+			err := fixture.plugin.Install(fixture.config)
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("install error = %v, want %q", err, testCase.want)
+			}
+			assertNoKimiRuntimeWrites(t, fixture)
+		})
+	}
+}
+
+func TestKimiMigratesExactLegacyCommandsAndPreservesLookalikes(t *testing.T) {
+	fixture := prepareKimiFixture(t, kimiFixtureOptions{withoutLegacyEvidence: true})
+	guard := legacyKimiCommand(t, fixture.guardPath)
+	audit := legacyKimiCommand(t, fixture.hookPath)
+	lookalike := guard + " --inspect"
+	source := "[[hooks]]\nevent = \"PreToolUse\"\ncommand = " + strconv.Quote(guard) +
+		"\ntimeout = 10\n\n[[hooks]]\nevent = \"PostToolUse\"\ncommand = " +
+		strconv.Quote(audit) + "\ntimeout = 10\n\n[[hooks]]\nevent = \"PreToolUse\"\ncommand = " +
+		strconv.Quote(lookalike) + "\ntimeout = 10\n"
+	writeOptionalKimiConfig(t, fixture.modernPath, kimiString(source))
+
+	if err := fixture.plugin.Install(fixture.config); err != nil {
+		t.Fatalf("migrate legacy Kimi commands: %v", err)
 	}
 	hooks := readKimiTestHooks(t, fixture.modernPath)
-	payload := map[string]any{
-		"hook_event_name": "PreToolUse",
-		"session_id":      "session-1",
-		"cwd":             fixture.homeDir,
-		"tool_name":       "Bash",
-		"tool_input":      map[string]any{"command": "echo test"},
-		"tool_call_id":    "call-1",
+	if len(hooks) != 4 {
+		t.Fatalf("migrated hooks = %#v", hooks)
 	}
-	guard := findKimiTestHook(t, hooks, "PreToolUse", kimiGuardScript)
-	exitCode, stderr := runKimiCommand(t, guard["command"].(string), fixture.homeDir, payload)
-	if exitCode != 2 || !strings.Contains(stderr, "Agent is frozen by Elydora") {
-		t.Fatalf("guard exit = %d, stderr = %q", exitCode, stderr)
+	requireKimiManagedTriple(t, hooks)
+	if !containsKimiCommand(hooks, lookalike) {
+		t.Fatalf("lookalike command removed: %#v", hooks)
 	}
-	payload["hook_event_name"] = "PostToolUse"
-	payload["tool_output"] = map[string]any{"output": "test"}
-	audit := findKimiTestHook(t, hooks, "PostToolUse", kimiAuditScript)
-	exitCode, stderr = runKimiCommand(t, audit["command"].(string), fixture.homeDir, payload)
-	if exitCode != 0 {
-		t.Fatalf("audit exit = %d, stderr = %q", exitCode, stderr)
+	if err := fixture.plugin.Uninstall(kimiTestAgentID); err != nil {
+		t.Fatalf("uninstall migrated Kimi hooks: %v", err)
 	}
-	capturedRaw, err := os.ReadFile(capturePath)
-	if err != nil {
-		t.Fatalf("read captured event: %v", err)
-	}
-	var captured map[string]any
-	if err := json.Unmarshal(capturedRaw, &captured); err != nil {
-		t.Fatalf("decode captured event: %v", err)
-	}
-	if !reflect.DeepEqual(captured, payload) {
-		t.Fatalf("captured event = %#v, want %#v", captured, payload)
+	hooks = readKimiTestHooks(t, fixture.modernPath)
+	if len(hooks) != 1 || hooks[0]["command"] != lookalike {
+		t.Fatalf("remaining hooks = %#v", hooks)
 	}
 }
 
-func TestKimiStatusAcceptsEitherContractAndRequiresBothScripts(t *testing.T) {
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Kimi hooks: %v", err)
+func containsKimiCommand(hooks []map[string]any, command string) bool {
+	for _, hook := range hooks {
+		if hook["command"] == command {
+			return true
+		}
 	}
-	if err := os.Remove(fixture.modernPath); err != nil {
-		t.Fatalf("remove modern config: %v", err)
-	}
-	requireKimiInstalledStatus(t, fixture.plugin, fixture.legacyPath)
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("reinstall Kimi hooks: %v", err)
-	}
-	if err := os.Remove(fixture.legacyPath); err != nil {
-		t.Fatalf("remove legacy config: %v", err)
-	}
-	requireKimiInstalledStatus(t, fixture.plugin, fixture.modernPath)
-	if err := os.Remove(fixture.guardPath); err != nil {
-		t.Fatalf("remove Kimi guard: %v", err)
-	}
-	status, err := fixture.plugin.Status()
-	if err != nil || status.Installed || !status.HookConfigured || status.HookScriptExists {
-		t.Fatalf("degraded Kimi status = %#v, %v", status, err)
-	}
+	return false
 }
 
-func requireKimiInstalledStatus(t *testing.T, plugin *KimiPlugin, configPath string) {
-	t.Helper()
-	status, err := plugin.Status()
-	if err != nil || !status.Installed || status.ConfigPath != configPath {
-		t.Fatalf("Kimi status = %#v, %v; want installed at %s", status, err, configPath)
-	}
-}
-
-func TestKimiUninstallPreservesUserHooks(t *testing.T) {
+func TestKimiUninstallPreservesUserConfigsAndRemovesManagedConfigs(t *testing.T) {
 	userHook := "# user hook\n[[hooks]]\nevent = \"SessionStart\"\n" +
 		"command = \"existing-command\"\ntimeout = 30 # keep timeout\n"
 	fixture := prepareKimiFixture(t, kimiFixtureOptions{
-		modernConfig: kimiString(userHook),
-		legacyConfig: kimiString(userHook),
+		modernConfig: kimiString(userHook), legacyConfig: kimiString(userHook),
 	})
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Kimi hooks: %v", err)
@@ -232,159 +282,129 @@ func TestKimiUninstallPreservesUserHooks(t *testing.T) {
 	}
 	for _, path := range []string{fixture.modernPath, fixture.legacyPath} {
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read user config after uninstall: %v", err)
-		}
-		if !strings.Contains(string(raw), "# user hook") || !strings.Contains(string(raw), "# keep timeout") {
-			t.Fatalf("user comments changed: %s", raw)
+		if err != nil || !strings.Contains(string(raw), "# keep timeout") {
+			t.Fatalf("user config changed: %s, %v", raw, err)
 		}
 		hooks := readKimiTestHooks(t, path)
 		if len(hooks) != 1 || hooks[0]["command"] != "existing-command" {
 			t.Fatalf("user hook changed: %#v", hooks)
 		}
 	}
-}
 
-func TestKimiOwnershipRequiresExactAgentAndScript(t *testing.T) {
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{})
-	backupPath := filepath.Join(fixture.homeDir, ".elydora", kimiTestAgentID, "hook.js.backup")
-	otherAgentPath := filepath.Join(fixture.homeDir, ".elydora", "agent-10", kimiAuditScript)
-	userHooks := "[[hooks]]\nevent = \"PostToolUse\"\ncommand = " +
-		strconv.Quote("node "+backupPath) + "\n\n[[hooks]]\nevent = \"PostToolUse\"\ncommand = " +
-		strconv.Quote("node "+otherAgentPath) + "\n"
-	if err := os.MkdirAll(filepath.Dir(fixture.modernPath), 0755); err != nil {
-		t.Fatalf("create modern Kimi directory: %v", err)
+	managed := prepareKimiFixture(t, kimiFixtureOptions{})
+	if err := managed.plugin.Install(managed.config); err != nil {
+		t.Fatalf("install managed Kimi configs: %v", err)
 	}
-	if err := os.WriteFile(fixture.modernPath, []byte(userHooks), 0600); err != nil {
-		t.Fatalf("write ownership fixture: %v", err)
+	if err := managed.plugin.Uninstall(kimiTestAgentID); err != nil {
+		t.Fatalf("remove managed Kimi configs: %v", err)
 	}
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Kimi hooks: %v", err)
-	}
-	if err := fixture.plugin.Uninstall(kimiTestAgentID); err != nil {
-		t.Fatalf("uninstall Kimi hooks: %v", err)
-	}
-	hooks := readKimiTestHooks(t, fixture.modernPath)
-	if len(hooks) != 2 {
-		t.Fatalf("ownership filter removed user hooks: %#v", hooks)
-	}
-	commands := []any{hooks[0]["command"], hooks[1]["command"]}
-	if !reflect.DeepEqual(commands, []any{"node " + backupPath, "node " + otherAgentPath}) {
-		t.Fatalf("remaining commands = %#v", commands)
-	}
-}
-
-func TestKimiUninstallRemovesOwnedConfigs(t *testing.T) {
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Kimi hooks: %v", err)
-	}
-	if err := fixture.plugin.Uninstall(kimiTestAgentID); err != nil {
-		t.Fatalf("uninstall Kimi hooks: %v", err)
-	}
-	for _, path := range []string{fixture.modernPath, fixture.legacyPath} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("owned Kimi config remains at %s: %v", path, err)
+	for _, path := range []string{managed.modernPath, managed.legacyPath} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("managed config remains at %s: %v", path, err)
 		}
 	}
 }
 
-func TestKimiParsesEveryConfigBeforeRuntimeWrites(t *testing.T) {
-	modern := "# untouched modern\ndefault_model = \"kimi-code/k3\"\n"
-	legacy := "[malformed"
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{
-		modernConfig: kimiString(modern),
-		legacyConfig: kimiString(legacy),
-	})
-	err := fixture.plugin.Install(fixture.config)
-	if err == nil || !strings.Contains(err.Error(), "parse kimi-cli legacy hooks config") {
-		t.Fatalf("install error = %v", err)
+func TestKimiStatusRequiresCompleteTripleAndEveryRuntimeFile(t *testing.T) {
+	fixture := prepareKimiFixture(t, kimiFixtureOptions{withoutLegacyEvidence: true})
+	if err := fixture.plugin.Install(fixture.config); err != nil {
+		t.Fatalf("install Kimi hooks: %v", err)
 	}
-	for path, want := range map[string]string{fixture.modernPath: modern, fixture.legacyPath: legacy} {
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil || string(raw) != want {
-			t.Fatalf("config %s changed: %q, %v", path, raw, readErr)
+	status, err := fixture.plugin.Status()
+	if err != nil || !status.Installed || !status.HookConfigured {
+		t.Fatalf("Kimi status = %#v, %v", status, err)
+	}
+
+	raw, err := os.ReadFile(fixture.modernPath)
+	if err != nil {
+		t.Fatalf("read Kimi config: %v", err)
+	}
+	document, err := parseKimiDocument(
+		stableKimiContract(fixture.modernPath), raw, true,
+	)
+	if err != nil {
+		t.Fatalf("parse Kimi config: %v", err)
+	}
+	keep := make([]int, 0, len(document.hooks)-1)
+	for index, hook := range document.hooks {
+		if hook.event != "PostToolUseFailure" {
+			keep = append(keep, index)
 		}
 	}
-	requireNoKimiRuntimeWrites(t, fixture)
-}
+	withoutFailure, err := renderKimiHooks(document, keep, nil)
+	if err != nil {
+		t.Fatalf("render incomplete Kimi hooks: %v", err)
+	}
+	if err := os.WriteFile(fixture.modernPath, withoutFailure, 0600); err != nil {
+		t.Fatalf("write incomplete Kimi hooks: %v", err)
+	}
+	status, err = fixture.plugin.Status()
+	if err != nil || status.Installed || status.HookConfigured {
+		t.Fatalf("incomplete Kimi status = %#v, %v", status, err)
+	}
 
-func TestKimiRejectsInvalidHookContractsBeforeWrites(t *testing.T) {
-	for _, testCase := range []struct{ name, raw, want string }{
-		{"unsupported-field", "[[hooks]]\nevent=\"PreToolUse\"\ncommand=\"x\"\ncwd=\"/tmp\"\n", `unsupported field "cwd"`},
-		{"unsupported-event", "[[hooks]]\nevent=\"Interrupt\"\ncommand=\"x\"\n", "unsupported event"},
-		{"bad-matcher", "[[hooks]]\nevent=\"PreToolUse\"\ncommand=\"x\"\nmatcher=1\n", "matcher must be a string"},
-		{"bad-timeout", "[[hooks]]\nevent=\"PreToolUse\"\ncommand=\"x\"\ntimeout=601\n", "integer from 1 to 600"},
-		{"hooks-object", "hooks = { event=\"PreToolUse\", command=\"x\" }\n", `field "hooks" must be an array`},
+	if err := fixture.plugin.Install(fixture.config); err != nil {
+		t.Fatalf("repair Kimi hooks: %v", err)
+	}
+	for _, path := range []string{
+		fixture.guardPath, fixture.hookPath, fixture.runtimeConfig, fixture.privateKey,
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			fixture := prepareKimiFixture(t, kimiFixtureOptions{
-				useDefaultHome: true,
-				legacyConfig:   kimiString(testCase.raw),
-			})
-			err := fixture.plugin.Install(fixture.config)
-			if err == nil || !strings.Contains(err.Error(), testCase.want) {
-				t.Fatalf("install error = %v, want %q", err, testCase.want)
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read runtime file: %v", err)
 			}
-			raw, readErr := os.ReadFile(fixture.legacyPath)
-			if readErr != nil || string(raw) != testCase.raw {
-				t.Fatalf("invalid config changed: %q, %v", raw, readErr)
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("remove runtime file: %v", err)
 			}
-			requireNoKimiRuntimeWrites(t, fixture)
+			status, err := fixture.plugin.Status()
+			if err != nil || status.Installed || !status.HookConfigured {
+				t.Fatalf("degraded Kimi status = %#v, %v", status, err)
+			}
+			if err := os.WriteFile(path, content, 0600); err != nil {
+				t.Fatalf("restore runtime file: %v", err)
+			}
 		})
 	}
 }
 
-func TestKimiRejectsMissingGuardBeforeWrites(t *testing.T) {
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{withoutGuard: true})
-	err := fixture.plugin.Install(fixture.config)
-	if err == nil || !strings.Contains(err.Error(), "guard runtime is missing") {
-		t.Fatalf("install error = %v", err)
-	}
-	for _, path := range []string{fixture.modernPath, fixture.legacyPath} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("config write occurred at %s: %v", path, err)
-		}
-	}
-	requireNoKimiRuntimeWrites(t, fixture)
-}
-
-func requireNoKimiRuntimeWrites(t *testing.T, fixture *kimiFixture) {
-	t.Helper()
-	for _, path := range []string{fixture.hookPath, fixture.runtimeConfig, fixture.privateKey} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("runtime write occurred at %s: %v", path, err)
-		}
-	}
-}
-
-func TestKimiStatusSurfacesMalformedRuntimeMetadata(t *testing.T) {
+func TestKimiInstallationLeavesNoTransactionArtifacts(t *testing.T) {
 	fixture := prepareKimiFixture(t, kimiFixtureOptions{})
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Kimi hooks: %v", err)
 	}
-	if err := os.WriteFile(fixture.runtimeConfig, []byte("{ malformed"), 0600); err != nil {
-		t.Fatalf("corrupt runtime config: %v", err)
-	}
-	if _, err := fixture.plugin.Status(); err == nil || !strings.Contains(err.Error(), "parse Elydora runtime config") {
-		t.Fatalf("status error = %v", err)
-	}
-}
-
-func TestKimiAtomicWritesLeaveNoTemporaryFiles(t *testing.T) {
-	fixture := prepareKimiFixture(t, kimiFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Kimi hooks: %v", err)
-	}
-	for _, directory := range []string{filepath.Dir(fixture.modernPath), filepath.Dir(fixture.legacyPath)} {
-		entries, err := os.ReadDir(directory)
-		if err != nil {
-			t.Fatalf("read config directory: %v", err)
-		}
-		for _, entry := range entries {
-			if strings.HasSuffix(entry.Name(), ".tmp") {
-				t.Fatalf("temporary Kimi config remains at %s", filepath.Join(directory, entry.Name()))
+	assertNoKimiTransactionArtifacts(t, fixture.homeDir)
+	if runtime.GOOS != "windows" {
+		for _, path := range []string{
+			fixture.modernPath, fixture.legacyPath,
+			fixture.runtimeConfig, fixture.privateKey,
+		} {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("inspect mode for %s: %v", path, err)
+			}
+			if info.Mode().Perm() != 0600 {
+				t.Fatalf("mode for %s = %v", path, info.Mode().Perm())
 			}
 		}
+	}
+}
+
+func TestKimiRuntimeConfigOmitsEmptyOptionalToken(t *testing.T) {
+	fixture := prepareKimiFixture(t, kimiFixtureOptions{withoutLegacyEvidence: true})
+	fixture.config.Token = ""
+	if err := fixture.plugin.Install(fixture.config); err != nil {
+		t.Fatalf("install Kimi hooks without token: %v", err)
+	}
+	raw, err := os.ReadFile(fixture.runtimeConfig)
+	if err != nil {
+		t.Fatalf("read runtime config: %v", err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatalf("decode runtime config: %v", err)
+	}
+	if _, exists := config["token"]; exists {
+		t.Fatalf("empty optional token persisted: %#v", config)
 	}
 }

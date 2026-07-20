@@ -24,6 +24,7 @@ type kimiTomlLayout struct {
 
 type kimiDocument struct {
 	contract kimiContract
+	exists   bool
 	raw      []byte
 	hooks    []kimiHook
 	layout   kimiTomlLayout
@@ -31,7 +32,9 @@ type kimiDocument struct {
 
 func parseKimiDocument(contract kimiContract, raw []byte, exists bool) (kimiDocument, error) {
 	if !exists {
-		return kimiDocument{contract: contract, raw: []byte{}, hooks: []kimiHook{}}, nil
+		return kimiDocument{
+			contract: contract, exists: false, raw: []byte{}, hooks: []kimiHook{},
+		}, nil
 	}
 	root := map[string]any{}
 	if err := toml.Unmarshal(raw, &root); err != nil {
@@ -76,6 +79,7 @@ func parseKimiDocument(contract kimiContract, raw []byte, exists bool) (kimiDocu
 	}
 	return kimiDocument{
 		contract: contract,
+		exists:   true,
 		raw:      append([]byte(nil), raw...),
 		hooks:    hooks,
 		layout:   layout,

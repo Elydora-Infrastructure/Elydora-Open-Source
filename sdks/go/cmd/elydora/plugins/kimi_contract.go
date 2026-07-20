@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"fmt"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -38,22 +37,26 @@ var kimiModernEvents = mergeStringSets(kimiSharedEvents, stringSet(
 ))
 
 type kimiContract struct {
-	runtimeName string
-	label       string
-	configPath  string
-	events      map[string]struct{}
+	generation     string
+	runtimeName    string
+	label          string
+	directoryLabel string
+	configPath     string
+	events         map[string]struct{}
 }
 
 type kimiHook struct {
-	event   string
-	matcher *string
-	command string
-	timeout *int64
+	event      string
+	matcher    *string
+	command    string
+	timeout    *int64
+	fieldCount int
 }
 
 type kimiRuntimeContract struct {
-	guard      string
-	audit      string
+	agentID    string
+	guardPath  string
+	auditPath  string
 	configPath string
 }
 
@@ -112,7 +115,7 @@ func validateKimiHook(value any, contract kimiContract, index int) (kimiHook, er
 		return kimiHook{}, fmt.Errorf("%s hook %d requires a non-empty command", contract.label, index+1)
 	}
 
-	hook := kimiHook{event: event, command: command}
+	hook := kimiHook{event: event, command: command, fieldCount: len(object)}
 	if value, exists := object["matcher"]; exists {
 		matcher, ok := value.(string)
 		if !ok {
@@ -154,59 +157,124 @@ func kimiHooks(root map[string]any, contract kimiContract) ([]kimiHook, error) {
 	return hooks, nil
 }
 
-func normalizeKimiPath(value string) string {
-	normalized := filepath.ToSlash(value)
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(normalized)
+func buildKimiHook(event, command string) (kimiHook, error) {
+	switch event {
+	case "PreToolUse", "PostToolUse", "PostToolUseFailure":
+	default:
+		return kimiHook{}, fmt.Errorf("unsupported managed Kimi event: %s", event)
 	}
-	return normalized
+	timeout := kimiHookTimeoutSeconds
+	return kimiHook{
+		event: event, command: command, timeout: &timeout, fieldCount: 3,
+	}, nil
 }
 
-func kimiCommandEndsWithPath(command, filePath string) bool {
-	normalized := strings.TrimSpace(normalizeKimiPath(command))
-	expected := normalizeKimiPath(filePath)
-	return strings.HasSuffix(normalized, expected) ||
-		strings.HasSuffix(normalized, expected+`'`) ||
-		strings.HasSuffix(normalized, expected+`"`)
+func managedKimiReference(
+	hook kimiHook,
+	event string,
+	scriptName string,
+) (*kimiRuntimeReference, error) {
+	if hook.fieldCount != 3 || hook.event != event || hook.matcher != nil ||
+		hook.timeout == nil || *hook.timeout != kimiHookTimeoutSeconds {
+		return nil, nil
+	}
+	return kimiRuntimeReferenceForCommand(hook.command, scriptName)
 }
 
-func isManagedKimiHook(hook kimiHook, event, scriptName, agentID string) bool {
-	if hook.event != event || hook.matcher != nil || hook.timeout == nil || *hook.timeout != kimiHookTimeoutSeconds {
-		return false
+func managedKimiEvent(event string) (string, string, bool) {
+	switch event {
+	case "PreToolUse":
+		return event, kimiGuardScript, true
+	case "PostToolUse", "PostToolUseFailure":
+		return event, kimiAuditScript, true
+	default:
+		return "", "", false
 	}
-	if agentID != "" {
-		expected := normalizeKimiPath(filepath.Join(".elydora", agentID, scriptName))
-		return kimiCommandEndsWithPath(hook.command, "/"+expected)
-	}
-	normalized := normalizeKimiPath(hook.command)
-	return strings.Contains(normalized, "/.elydora/") &&
-		kimiCommandEndsWithPath(hook.command, "/"+normalizeKimiPath(scriptName))
 }
 
-func keptKimiHookIndices(hooks []kimiHook, agentID string) []int {
+func keptKimiHookIndices(hooks []kimiHook, agentID string) ([]int, error) {
 	indices := make([]int, 0, len(hooks))
 	for index, hook := range hooks {
-		managed := isManagedKimiHook(hook, "PreToolUse", kimiGuardScript, agentID) ||
-			isManagedKimiHook(hook, "PostToolUse", kimiAuditScript, agentID)
-		if !managed {
+		event, scriptName, managedEvent := managedKimiEvent(hook.event)
+		var reference *kimiRuntimeReference
+		var err error
+		if managedEvent {
+			reference, err = managedKimiReference(hook, event, scriptName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		remove := reference != nil &&
+			(agentID == "" || sameKimiAgentID(reference.agentID, agentID))
+		if !remove {
 			indices = append(indices, index)
 		}
 	}
-	return indices
+	return indices, nil
 }
 
-func kimiRuntimeForDocument(document kimiDocument) *kimiRuntimeContract {
-	var guard, audit string
-	for _, hook := range document.hooks {
-		if isManagedKimiHook(hook, "PreToolUse", kimiGuardScript, "") {
-			guard = hook.command
+func kimiReferenceKey(agentID string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(agentID)
+	}
+	return agentID
+}
+
+func kimiReferencesForEvent(
+	hooks []kimiHook,
+	event string,
+	scriptName string,
+) (map[string][]kimiRuntimeReference, error) {
+	result := map[string][]kimiRuntimeReference{}
+	for _, hook := range hooks {
+		reference, err := managedKimiReference(hook, event, scriptName)
+		if err != nil {
+			return nil, err
 		}
-		if isManagedKimiHook(hook, "PostToolUse", kimiAuditScript, "") {
-			audit = hook.command
+		if reference == nil {
+			continue
+		}
+		key := kimiReferenceKey(reference.agentID)
+		result[key] = append(result[key], *reference)
+	}
+	return result, nil
+}
+
+func kimiRuntimeContracts(documents []kimiDocument) ([]kimiRuntimeContract, error) {
+	contracts := make([]kimiRuntimeContract, 0)
+	for _, document := range documents {
+		guards, err := kimiReferencesForEvent(document.hooks, "PreToolUse", kimiGuardScript)
+		if err != nil {
+			return nil, err
+		}
+		successes, err := kimiReferencesForEvent(document.hooks, "PostToolUse", kimiAuditScript)
+		if err != nil {
+			return nil, err
+		}
+		failures, err := kimiReferencesForEvent(
+			document.hooks, "PostToolUseFailure", kimiAuditScript,
+		)
+		if err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(guards))
+		for key := range guards {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			guard := guards[key]
+			success := successes[key]
+			failure := failures[key]
+			if len(guard) != 1 || len(success) != 1 || len(failure) != 1 ||
+				!sameKimiPath(success[0].scriptPath, failure[0].scriptPath) {
+				continue
+			}
+			contracts = append(contracts, kimiRuntimeContract{
+				agentID: guard[0].agentID, guardPath: guard[0].scriptPath,
+				auditPath: success[0].scriptPath, configPath: document.contract.configPath,
+			})
 		}
 	}
-	if guard == "" || audit == "" {
-		return nil
-	}
-	return &kimiRuntimeContract{guard: guard, audit: audit, configPath: document.contract.configPath}
+	return contracts, nil
 }

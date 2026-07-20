@@ -2,74 +2,87 @@ package plugins
 
 import (
 	"fmt"
-	"strings"
 )
 
-type kimiMutation struct {
-	document kimiDocument
-	raw      []byte
-	remove   bool
+// KimiPlugin manages Kimi Code and legacy kimi-cli global lifecycle hooks.
+type KimiPlugin struct {
+	rename renameFunc
 }
 
-// KimiPlugin manages Kimi Code and legacy kimi-cli global lifecycle hooks.
-type KimiPlugin struct{}
+// ManagesGuardRuntime reports that Kimi commits its provider guard with the
+// audit runtime and every detected user hook document.
+func (p *KimiPlugin) ManagesGuardRuntime() bool {
+	return true
+}
 
-func (p *KimiPlugin) Install(config InstallConfig) error {
-	if config.AgentID == "" {
-		return fmt.Errorf("agent ID is required")
-	}
+// PreflightInstall validates every detected hook source and runtime identity.
+func (p *KimiPlugin) PreflightInstall(config InstallConfig) error {
 	documents, err := readAllKimiConfigs()
 	if err != nil {
 		return err
 	}
-	if config.GuardScriptPath == "" {
-		return fmt.Errorf("guard script path is required")
-	}
-	guardExists, err := regularFileExists(config.GuardScriptPath, "Elydora guard runtime")
+	_, _, err = preflightKimiInstallation(config, documents)
+	return err
+}
+
+func (p *KimiPlugin) Install(config InstallConfig) error {
+	documents, err := readAllKimiConfigs()
 	if err != nil {
 		return err
 	}
-	if !guardExists {
-		return fmt.Errorf("Elydora guard runtime is missing: %s", config.GuardScriptPath)
-	}
-	hookPath, err := hookScriptPath(config.AgentID)
+	paths, nodePath, err := preflightKimiInstallation(config, documents)
 	if err != nil {
 		return err
 	}
-	if config.HookScript != "" {
-		hookPath = config.HookScript
-	}
-	nodePath, err := resolveNodeRuntime()
+	guardCommand, err := buildKimiCommand(nodePath, paths.guardPath)
 	if err != nil {
 		return err
 	}
-	additions := []kimiHook{
-		buildKimiHook("PreToolUse", buildKimiCommand(nodePath, config.GuardScriptPath)),
-		buildKimiHook("PostToolUse", buildKimiCommand(nodePath, hookPath)),
+	auditCommand, err := buildKimiCommand(nodePath, paths.auditPath)
+	if err != nil {
+		return err
 	}
-	mutations := make([]kimiMutation, 0, len(documents))
-	for _, document := range documents {
-		raw, err := renderKimiHooks(document, keptKimiHookIndices(document.hooks, ""), additions)
+	additions := make([]kimiHook, 0, 3)
+	for _, item := range []struct{ event, command string }{
+		{"PreToolUse", guardCommand},
+		{"PostToolUse", auditCommand},
+		{"PostToolUseFailure", auditCommand},
+	} {
+		hook, err := buildKimiHook(item.event, item.command)
 		if err != nil {
 			return err
 		}
-		if _, err := parseKimiDocument(document.contract, raw, true); err != nil {
-			return fmt.Errorf("validate rendered %s: %w", document.contract.label, err)
-		}
-		mutations = append(mutations, kimiMutation{document: document, raw: raw})
+		additions = append(additions, hook)
 	}
-
-	runtimeConfig := config
-	runtimeConfig.AgentName = kimiAgentKey
-	if err := GenerateHookScript(hookPath, runtimeConfig); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
-	}
-	for _, mutation := range mutations {
-		if err := writeKimiConfig(mutation.document, mutation.raw); err != nil {
+	rendered := make([]kimiRenderedDocument, 0, len(documents))
+	for _, document := range documents {
+		keep, err := keptKimiHookIndices(document.hooks, "")
+		if err != nil {
 			return err
 		}
+		change, err := renderKimiChange(document, keep, additions)
+		if err != nil {
+			return err
+		}
+		rendered = append(rendered, change)
 	}
-	fmt.Printf("%s: global PreToolUse and PostToolUse hooks installed.\n", kimiRuntimeNames(documents))
+	changes, err := prepareKimiInstallationChanges(config, paths, rendered)
+	if err != nil {
+		return err
+	}
+	if err := writeKimiChanges(
+		changes,
+		"Install Kimi hooks",
+		p.rename,
+		paths.runtimeRoot,
+		paths.agentDirectory,
+	); err != nil {
+		return err
+	}
+	fmt.Printf(
+		"%s: global PreToolUse, PostToolUse, and PostToolUseFailure hooks installed.\n",
+		kimiRuntimeNames(documents),
+	)
 	return nil
 }
 
@@ -78,63 +91,51 @@ func (p *KimiPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	mutations := make([]kimiMutation, 0, len(documents))
+	rendered := make([]kimiRenderedDocument, 0, len(documents))
 	for _, document := range documents {
-		keep := keptKimiHookIndices(document.hooks, agentID)
-		if len(keep) == len(document.hooks) {
-			continue
-		}
-		raw, err := renderKimiHooks(document, keep, nil)
+		keep, err := keptKimiHookIndices(document.hooks, agentID)
 		if err != nil {
 			return err
 		}
-		if _, err := parseKimiDocument(document.contract, raw, true); err != nil {
-			return fmt.Errorf("validate rendered %s: %w", document.contract.label, err)
-		}
-		mutations = append(mutations, kimiMutation{
-			document: document,
-			raw:      raw,
-			remove:   strings.TrimSpace(string(raw)) == "",
-		})
-	}
-	for _, mutation := range mutations {
-		if mutation.remove {
-			if err := removeKimiConfig(mutation.document); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := writeKimiConfig(mutation.document, mutation.raw); err != nil {
+		change, err := renderKimiChange(document, keep, nil)
+		if err != nil {
 			return err
 		}
+		rendered = append(rendered, change)
 	}
-	return nil
+	changes, err := prepareKimiUninstallChanges(rendered)
+	if err != nil {
+		return err
+	}
+	return writeKimiChanges(
+		changes,
+		"Uninstall Kimi hooks",
+		p.rename,
+		"",
+		"",
+	)
 }
 
 func (p *KimiPlugin) Status() (PluginStatus, error) {
 	documents, err := readAllKimiConfigs()
+	entry := SupportedAgents[kimiAgentKey]
 	status := PluginStatus{
-		AgentName:   kimiAgentKey,
-		DisplayName: "Kimi Code",
+		AgentName: kimiAgentKey, DisplayName: entry.Name,
 	}
 	if err != nil {
 		return status, err
 	}
 	status.ConfigPath = documents[0].contract.configPath
-	contracts := make([]kimiRuntimeContract, 0, len(documents))
-	for _, document := range documents {
-		contract := kimiRuntimeForDocument(document)
-		if contract == nil {
-			continue
-		}
-		contracts = append(contracts, *contract)
-		status.ConfigPath = contract.configPath
+	contracts, err := kimiRuntimeContracts(documents)
+	if err != nil {
+		return status, err
 	}
 	if len(contracts) == 0 {
 		return status, nil
 	}
+	status.ConfigPath = contracts[len(contracts)-1].configPath
 	status.HookConfigured = true
-	status.HookScriptExists, err = kimiRuntimeScriptsExist(contracts)
+	status.HookScriptExists, err = kimiRuntimeFilesExist(contracts)
 	if err != nil {
 		return status, err
 	}

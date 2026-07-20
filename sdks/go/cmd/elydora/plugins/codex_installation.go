@@ -1,15 +1,10 @@
 package plugins
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
-	"unicode"
 )
 
 type codexRuntimePaths struct {
@@ -19,51 +14,6 @@ type codexRuntimePaths struct {
 	keyPath        string
 	guardPath      string
 	auditPath      string
-}
-
-func validateCodexPrivateKey(value string) error {
-	seed, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil || len(seed) != 32 || base64.RawURLEncoding.EncodeToString(seed) != value {
-		return fmt.Errorf("private key must be a canonical 32-byte base64url value")
-	}
-	return nil
-}
-
-func validateCodexBaseURL(value string) error {
-	if strings.ContainsRune(value, '\\') {
-		return fmt.Errorf("base URL must be an absolute HTTP or HTTPS URL")
-	}
-	for _, character := range value {
-		if character < 32 || unicode.IsSpace(character) {
-			return fmt.Errorf("base URL must be an absolute HTTP or HTTPS URL")
-		}
-	}
-	parsed, err := url.Parse(value)
-	if err != nil {
-		return fmt.Errorf("base URL must be an absolute HTTP or HTTPS URL")
-	}
-	validScheme := strings.EqualFold(parsed.Scheme, "http") ||
-		strings.EqualFold(parsed.Scheme, "https")
-	if !validScheme ||
-		parsed.Host == "" || parsed.Hostname() == "" || parsed.Opaque != "" {
-		return fmt.Errorf("base URL must be an absolute HTTP or HTTPS URL")
-	}
-	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return fmt.Errorf(
-			"base URL must exclude credentials, query parameters, and fragments",
-		)
-	}
-	port := parsed.Port()
-	if strings.HasSuffix(parsed.Host, ":") {
-		return fmt.Errorf("base URL must contain a valid port")
-	}
-	if port != "" {
-		value, convertErr := strconv.Atoi(port)
-		if convertErr != nil || value < 1 || value > 65535 {
-			return fmt.Errorf("base URL must contain a valid port")
-		}
-	}
-	return nil
 }
 
 func validateCodexInstallConfig(config InstallConfig) error {
@@ -83,10 +33,10 @@ func validateCodexInstallConfig(config InstallConfig) error {
 	if config.AgentName != codexAgentKey {
 		return fmt.Errorf("codex installation requires agent name %s", codexAgentKey)
 	}
-	if err := validateCodexPrivateKey(config.PrivateKey); err != nil {
+	if err := validateManagedPrivateKey(config.PrivateKey); err != nil {
 		return err
 	}
-	return validateCodexBaseURL(config.BaseURL)
+	return validateManagedBaseURL(config.BaseURL)
 }
 
 func codexAgentPaths(config InstallConfig) (*codexRuntimePaths, error) {
