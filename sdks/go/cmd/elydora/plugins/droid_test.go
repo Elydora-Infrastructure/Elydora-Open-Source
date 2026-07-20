@@ -2,12 +2,18 @@ package plugins
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestDroidRegistryUsesOfficialGlobalHookSource(t *testing.T) {
@@ -15,121 +21,14 @@ func TestDroidRegistryUsesOfficialGlobalHookSource(t *testing.T) {
 	if entry.Name != "Factory Droid" || entry.ConfigDir != "~/.factory" || entry.ConfigFile != "hooks.json" {
 		t.Fatalf("Factory Droid registry entry = %#v", entry)
 	}
-	if _, ok := NewPlugin(droidAgentKey).(*DroidPlugin); !ok {
-		t.Fatal("Factory Droid plugin is not registered")
+	plugin, ok := NewPlugin(droidAgentKey).(*DroidPlugin)
+	if !ok || !plugin.ManagesGuardRuntime() {
+		t.Fatal("Factory Droid plugin is not registered as a guard runtime manager")
 	}
 }
 
-func TestDroidInstallPreservesJSONCAndUsesPerEventPrecedence(t *testing.T) {
-	hooks := `{
-  // root hook source
-  "PreToolUse": [
-    // keep root group comment
-    { "matcher": "Read", "hooks": [{ "type": "command", "command": "root-user" }] }
-  ],
-  "Notification": []
-}
-`
-	settings := `{
-  // general setting
-  "theme": "dark",
-  "hooks": {
-    // settings fallback event
-    "PostToolUse": [
-      // keep settings group comment
-      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "settings-user" }] }
-    ],
-    "showHookOutput": true,
-  },
-}
-`
-	fixture := prepareDroidFixture(t, droidFixtureOptions{
-		hooks: droidString(hooks), settings: droidString(settings),
-	})
-	installDroidFixture(t, fixture)
-	firstRoot := readDroidTestFile(t, fixture.configPath)
-	firstSettings := readDroidTestFile(t, fixture.settingsPath)
-	installDroidFixture(t, fixture)
-
-	if readDroidTestFile(t, fixture.configPath) != firstRoot ||
-		readDroidTestFile(t, fixture.settingsPath) != firstSettings {
-		t.Fatal("idempotent install changed Factory Droid hook sources")
-	}
-	for _, marker := range []string{"root hook source", "keep root group comment"} {
-		if !strings.Contains(firstRoot, marker) {
-			t.Fatalf("root JSONC comment %q was lost", marker)
-		}
-	}
-	for _, marker := range []string{"general setting", "settings fallback event", "keep settings group comment"} {
-		if !strings.Contains(firstSettings, marker) {
-			t.Fatalf("settings JSONC comment %q was lost", marker)
-		}
-	}
-	root := readDroidTestObject(t, fixture.configPath)
-	userSettings := readDroidTestObject(t, fixture.settingsPath)
-	preGroups := requireDroidArray(t, root["PreToolUse"])
-	if len(preGroups) != 2 || requireDroidObject(t, requireDroidArray(t,
-		requireDroidObject(t, preGroups[0])["hooks"])[0])["command"] != "root-user" {
-		t.Fatalf("root PreToolUse groups = %#v", preGroups)
-	}
-	if _, exists := root["PostToolUse"]; exists {
-		t.Fatalf("PostToolUse leaked into root source: %#v", root)
-	}
-	if userSettings["theme"] != "dark" {
-		t.Fatalf("settings theme = %#v", userSettings["theme"])
-	}
-	settingsHooks := requireDroidObject(t, userSettings["hooks"])
-	postGroups := requireDroidArray(t, settingsHooks["PostToolUse"])
-	if len(postGroups) != 2 {
-		t.Fatalf("settings PostToolUse groups = %#v", postGroups)
-	}
-	if _, exists := settingsHooks["PreToolUse"]; exists {
-		t.Fatalf("PreToolUse leaked into settings source: %#v", settingsHooks)
-	}
-	for _, item := range []struct {
-		groups any
-		path   string
-	}{{preGroups, fixture.guardPath}, {postGroups, fixture.hookPath}} {
-		handler := droidManagedHandler(t, item.groups, item.path)
-		if len(handler) != 3 || handler["type"] != "command" || handler["timeout"] != float64(10) {
-			t.Fatalf("managed handler = %#v", handler)
-		}
-	}
-	requireMissingDroidFile(t, filepath.Join(fixture.workspaceDir, ".factory", "hooks.json"))
-}
-
-func TestDroidInstallKeepsActiveLegacySource(t *testing.T) {
-	fixture := prepareDroidFixture(t, droidFixtureOptions{
-		legacyHooks: droidJSON(map[string]any{"PreToolUse": []any{}}),
-		settings:    droidJSON(map[string]any{"hooks": map[string]any{"PostToolUse": []any{}}}),
-	})
-	installDroidFixture(t, fixture)
-	requireMissingDroidFile(t, fixture.configPath)
-	droidManagedHandler(t, readDroidTestObject(t, fixture.legacyPath)["PreToolUse"], fixture.guardPath)
-	settings := readDroidTestObject(t, fixture.settingsPath)
-	droidManagedHandler(t, requireDroidObject(t, settings["hooks"])["PostToolUse"], fixture.hookPath)
-}
-
-func TestDroidInstallReusesSettingsContainerAndFormatting(t *testing.T) {
-	source := "{\r\n\t\"owner\": \"user\",\r\n\t\"hooks\": {}\r\n}\r\n"
-	fixture := prepareDroidFixture(t, droidFixtureOptions{settings: droidString(source)})
-	installDroidFixture(t, fixture)
-	requireMissingDroidFile(t, fixture.configPath)
-	raw := readDroidTestFile(t, fixture.settingsPath)
-	if !strings.Contains(raw, "\r\n\t\t\"PreToolUse\"") ||
-		!strings.Contains(raw, "\r\n\t\t\"PostToolUse\"") {
-		t.Fatalf("settings formatting was not preserved:\n%s", raw)
-	}
-	if readDroidTestObject(t, fixture.settingsPath)["owner"] != "user" {
-		t.Fatal("settings owner was lost")
-	}
-}
-
-func TestDroidInstallReportsEventSourcesAndReviewCommand(t *testing.T) {
-	fixture := prepareDroidFixture(t, droidFixtureOptions{
-		hooks:    droidJSON(map[string]any{"PreToolUse": []any{}}),
-		settings: droidJSON(map[string]any{"hooks": map[string]any{"PostToolUse": []any{}}}),
-	})
+func TestDroidInstallWritesCurrentContainerAndCompleteRuntime(t *testing.T) {
+	fixture := prepareDroidFixture(t, droidFixtureOptions{})
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("create output pipe: %v", err)
@@ -144,120 +43,326 @@ func TestDroidInstallReportsEventSourcesAndReviewCommand(t *testing.T) {
 	if installErr != nil || closeErr != nil || readErr != nil {
 		t.Fatalf("capture install output: install=%v close=%v read=%v", installErr, closeErr, readErr)
 	}
-	text := string(output)
-	for _, marker := range []string{fixture.configPath, fixture.settingsPath, "PreToolUse", "PostToolUse", "/hooks"} {
-		if !strings.Contains(text, marker) {
-			t.Fatalf("install output is missing %q: %s", marker, text)
+	if !strings.Contains(string(output), fixture.configPath) || !strings.Contains(string(output), "run /hooks") {
+		t.Fatalf("install output = %s", output)
+	}
+	source := readDroidTestFile(t, fixture.configPath)
+	if !strings.HasPrefix(source, droidOwnedFileMarker+"\n") {
+		t.Fatalf("managed source header is missing: %s", source)
+	}
+	hooks := droidCurrentHooks(t, fixture.configPath)
+	guardGroup := droidManagedGroup(t, hooks["PreToolUse"], fixture.guardPath)
+	auditGroup := droidManagedGroup(t, hooks["PostToolUse"], fixture.hookPath)
+	requireDroidNativeGroup(t, guardGroup)
+	requireDroidNativeGroup(t, auditGroup)
+	guardCommand := droidManagedHandler(t, hooks["PreToolUse"], fixture.guardPath)["command"].(string)
+	if runtime.GOOS == "windows" &&
+		(!strings.HasPrefix(guardCommand, "& '") || !strings.HasSuffix(guardCommand, droidWindowsExitSuffix)) {
+		t.Fatalf("Windows Factory command = %q", guardCommand)
+	}
+	runtimeConfig := readDroidTestObject(t, fixture.runtimeConfig)
+	expectedConfig := map[string]any{
+		"org_id":     "org-1",
+		"agent_id":   droidTestAgentID,
+		"kid":        "kid-1",
+		"base_url":   "http://127.0.0.1:9",
+		"agent_name": droidAgentKey,
+		"token":      "token-1",
+	}
+	if !reflect.DeepEqual(runtimeConfig, expectedConfig) {
+		t.Fatalf("runtime config = %#v", runtimeConfig)
+	}
+	if readDroidTestFile(t, fixture.privateKey) != droidTestPrivateKey {
+		t.Fatal("private key content changed")
+	}
+	if !strings.Contains(readDroidTestFile(t, fixture.guardPath), `const AGENT_NAME = "droid"`) {
+		t.Fatal("guard runtime identity is missing")
+	}
+	if !strings.Contains(readDroidTestFile(t, fixture.hookPath), "const NATIVE_PAYLOAD = true") {
+		t.Fatal("audit runtime is missing native payload mode")
+	}
+	paths := []string{
+		fixture.configPath,
+		fixture.guardPath,
+		fixture.hookPath,
+		fixture.runtimeConfig,
+		fixture.privateKey,
+	}
+	before := snapshotDroidFiles(t, paths...)
+	installDroidFixture(t, fixture)
+	requireDroidSnapshot(t, before)
+	requireNoDroidStagingFiles(t, fixture.homeDir)
+}
+
+func TestDroidInstallMigratesLegacyWindowsCommands(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows migration contract")
+	}
+	fixture := prepareDroidFixture(t, droidFixtureOptions{root: droidJSON(map[string]any{"hooks": map[string]any{}})})
+	nodePath, err := resolveNodeRuntime()
+	if err != nil {
+		t.Fatalf("resolve Node.js: %v", err)
+	}
+	group := func(script string) map[string]any {
+		return map[string]any{
+			"matcher": "*",
+			"hooks": []any{map[string]any{
+				"type":    "command",
+				"command": fmt.Sprintf(`"%s" "%s"`, nodePath, script),
+				"timeout": 10,
+			}},
+		}
+	}
+	writeDroidTestObject(t, fixture.configPath, map[string]any{"hooks": map[string]any{
+		"PreToolUse":  []any{group(fixture.guardPath)},
+		"PostToolUse": []any{group(fixture.hookPath)},
+	}})
+	installDroidFixture(t, fixture)
+	hooks := droidCurrentHooks(t, fixture.configPath)
+	for _, event := range droidToolEvents {
+		groups := requireDroidArray(t, hooks[event])
+		if len(groups) != 1 {
+			t.Fatalf("%s groups = %#v", event, groups)
+		}
+		command := requireDroidObject(t, requireDroidArray(t, requireDroidObject(t, groups[0])["hooks"])[0])["command"].(string)
+		if !strings.HasPrefix(command, "& '") {
+			t.Fatalf("migrated command = %q", command)
 		}
 	}
 }
 
-func TestDroidCommandsBlockAndForwardOfficialInputByteForByte(t *testing.T) {
-	fixture := prepareDroidFixture(t, droidFixtureOptions{})
+func TestDroidRootHookFileHasWholeSourcePrecedence(t *testing.T) {
+	root := `{
+  // active root source
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Read", "hooks": [{ "type": "command", "command": "root-user" }] }
+    ]
+  }
+}
+`
+	settings := `{
+  // inactive settings source
+  "theme": "dark",
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "settings-user" }] }
+    ]
+  }
+}
+`
+	fixture := prepareDroidFixture(t, droidFixtureOptions{
+		root:     droidString(root),
+		settings: droidString(settings),
+	})
 	installDroidFixture(t, fixture)
-	capturePath := filepath.Join(t.TempDir(), "captured-event.json")
-	encodedPath, err := json.Marshal(capturePath)
-	if err != nil {
-		t.Fatalf("marshal capture path: %v", err)
+	if !strings.Contains(readDroidTestFile(t, fixture.configPath), "active root source") {
+		t.Fatal("root JSONC comment was lost")
 	}
-	captureScript := "const fs = require('node:fs'); const chunks = []; " +
-		"process.stdin.on('data', chunk => chunks.push(chunk)); " +
-		"process.stdin.on('end', () => fs.writeFileSync(" + string(encodedPath) + ", Buffer.concat(chunks)));\n"
-	if err := os.WriteFile(fixture.hookPath, []byte(captureScript), 0700); err != nil {
-		t.Fatalf("write capture audit runtime: %v", err)
+	hooks := droidCurrentHooks(t, fixture.configPath)
+	pre := requireDroidArray(t, hooks["PreToolUse"])
+	userCommand := requireDroidObject(t, requireDroidArray(t, requireDroidObject(t, pre[0])["hooks"])[0])["command"]
+	if userCommand != "root-user" {
+		t.Fatalf("root user command = %#v", userCommand)
 	}
-	root := readDroidTestObject(t, fixture.configPath)
-	guard := droidManagedHandler(t, root["PreToolUse"], fixture.guardPath)
-	audit := droidManagedHandler(t, root["PostToolUse"], fixture.hookPath)
-	prePayload := `{"session_id":"session-1","cwd":"C:/workspace","permission_mode":"auto-high","hook_event_name":"PreToolUse","tool_name":"Execute","tool_input":{"command":"echo test"}}`
-	guardResult := runDroidCommand(t, guard["command"].(string), fixture.homeDir, prePayload)
-	if guardResult.exitCode != 2 || !strings.Contains(guardResult.stderr, "Agent is frozen by Elydora") {
-		t.Fatalf("guard result = %#v", guardResult)
-	}
-	postPayload := "{\n  \"session_id\": \"session-1\",\n  \"hook_event_name\": \"PostToolUse\",\n  \"tool_response\": {\"success\": true}\n}"
-	auditResult := runDroidCommand(t, audit["command"].(string), fixture.homeDir, postPayload)
-	if auditResult.exitCode != 0 {
-		t.Fatalf("audit result = %#v", auditResult)
-	}
-	if readDroidTestFile(t, capturePath) != postPayload {
-		t.Fatal("audit hook changed the official Factory Droid payload")
+	requireDroidNativeGroup(t, droidManagedGroup(t, hooks["PreToolUse"], fixture.guardPath))
+	requireDroidNativeGroup(t, droidManagedGroup(t, hooks["PostToolUse"], fixture.hookPath))
+	if readDroidTestFile(t, fixture.settingsPath) != settings {
+		t.Fatal("inactive settings source changed")
 	}
 }
 
-func TestDroidStatusRequiresEnabledPairAndRuntimeFiles(t *testing.T) {
+func TestDroidSettingsSourcePreservesFormatting(t *testing.T) {
+	settings := "{\r\n\t\"theme\": \"dark\",\r\n\t\"hooks\": {}\r\n}\r\n"
+	fixture := prepareDroidFixture(t, droidFixtureOptions{settings: droidString(settings)})
+	installDroidFixture(t, fixture)
+	requireMissingDroidFile(t, fixture.configPath)
+	raw := readDroidTestFile(t, fixture.settingsPath)
+	if !strings.Contains(raw, "\r\n\t\t\"PreToolUse\"") ||
+		!strings.Contains(raw, "\r\n\t\t\"PostToolUse\"") {
+		t.Fatalf("settings formatting changed:\n%s", raw)
+	}
+	hooks := requireDroidObject(t, readDroidTestObject(t, fixture.settingsPath)["hooks"])
+	requireDroidNativeGroup(t, droidManagedGroup(t, hooks["PreToolUse"], fixture.guardPath))
+	requireDroidNativeGroup(t, droidManagedGroup(t, hooks["PostToolUse"], fixture.hookPath))
+}
+
+func TestDroidLocalSettingsContainerHasWholeSourcePrecedence(t *testing.T) {
+	settings := droidJSON(map[string]any{"hooks": map[string]any{"Notification": []any{}}})
 	fixture := prepareDroidFixture(t, droidFixtureOptions{
-		hooks:    droidJSON(map[string]any{"PreToolUse": []any{}}),
-		settings: droidJSON(map[string]any{"hooks": map[string]any{"PostToolUse": []any{}}}),
+		settings:      settings,
+		localSettings: droidJSON(map[string]any{"hooks": map[string]any{"SessionStart": []any{}}}),
 	})
+	baseBefore := readDroidTestFile(t, fixture.settingsPath)
+	installDroidFixture(t, fixture)
+	if readDroidTestFile(t, fixture.settingsPath) != baseBefore {
+		t.Fatal("base settings changed while local settings were active")
+	}
+	hooks := requireDroidObject(t, readDroidTestObject(t, fixture.localSettingsPath)["hooks"])
+	requireDroidNativeGroup(t, droidManagedGroup(t, hooks["PreToolUse"], fixture.guardPath))
+	requireDroidNativeGroup(t, droidManagedGroup(t, hooks["PostToolUse"], fixture.hookPath))
+}
+
+func TestDroidLegacyHookFileStaysActiveUntilFactoryMigratesIt(t *testing.T) {
+	legacy := droidJSON(map[string]any{"PreToolUse": []any{map[string]any{
+		"matcher": "Read",
+		"hooks":   []any{map[string]any{"type": "command", "command": "legacy-user"}},
+	}}})
+	settings := droidJSON(map[string]any{"hooks": map[string]any{"PostToolUse": []any{}}})
+	fixture := prepareDroidFixture(t, droidFixtureOptions{legacy: legacy, settings: settings})
+	settingsBefore := readDroidTestFile(t, fixture.settingsPath)
+	installDroidFixture(t, fixture)
+	requireMissingDroidFile(t, fixture.configPath)
+	legacyHooks := readDroidTestObject(t, fixture.legacyPath)
+	requireDroidNativeGroup(t, droidManagedGroup(t, legacyHooks["PreToolUse"], fixture.guardPath))
+	requireDroidNativeGroup(t, droidManagedGroup(t, legacyHooks["PostToolUse"], fixture.hookPath))
+	if readDroidTestFile(t, fixture.settingsPath) != settingsBefore {
+		t.Fatal("inactive settings source changed")
+	}
+}
+
+func TestDroidInstallCleansExactManagedHooksFromInactiveSources(t *testing.T) {
+	fixture := prepareDroidFixture(t, droidFixtureOptions{})
+	installDroidFixture(t, fixture)
+	writeDroidTestObject(t, fixture.settingsPath, map[string]any{
+		"hooks": droidCurrentHooks(t, fixture.configPath),
+		"owner": "user",
+	})
+	installDroidFixture(t, fixture)
+	settings := readDroidTestObject(t, fixture.settingsPath)
+	if settings["owner"] != "user" {
+		t.Fatalf("inactive settings owner = %#v", settings["owner"])
+	}
+	hooks := requireDroidObject(t, settings["hooks"])
+	if _, exists := hooks["PreToolUse"]; exists {
+		t.Fatalf("inactive PreToolUse remains: %#v", hooks)
+	}
+	if _, exists := hooks["PostToolUse"]; exists {
+		t.Fatalf("inactive PostToolUse remains: %#v", hooks)
+	}
+}
+
+type droidAPIRequest struct {
+	method string
+	path   string
+	body   []byte
+}
+
+func TestDroidGuardBlocksAndAuditPreservesNativePayload(t *testing.T) {
+	requests := make([]droidAPIRequest, 0)
+	var requestLock sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read API request: %v", err)
+		}
+		requestLock.Lock()
+		requests = append(requests, droidAPIRequest{request.Method, request.URL.Path, body})
+		requestLock.Unlock()
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodPost {
+			writer.WriteHeader(http.StatusCreated)
+			_, _ = writer.Write([]byte(`{"operation":{"accepted":true}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"agent":{"status":"active"}}`))
+	}))
+	defer server.Close()
+	fixture := prepareDroidFixture(t, droidFixtureOptions{baseURL: server.URL})
+	installDroidFixture(t, fixture)
+	hooks := droidCurrentHooks(t, fixture.configPath)
+	guard := droidManagedHandler(t, hooks["PreToolUse"], fixture.guardPath)
+	audit := droidManagedHandler(t, hooks["PostToolUse"], fixture.hookPath)
+	writeDroidTestObject(t, filepath.Join(fixture.agentDir, "status-cache.json"), map[string]any{
+		"status":    "frozen",
+		"cached_at": time.Now().UnixMilli(),
+	})
+	prePayload := map[string]any{
+		"session_id":      "session-1",
+		"transcript_path": filepath.Join(fixture.homeDir, "transcript.jsonl"),
+		"cwd":             fixture.workspaceDir,
+		"permission_mode": "auto-high",
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Execute",
+		"tool_input":      map[string]any{"command": "echo test"},
+	}
+	preRaw, _ := json.Marshal(prePayload)
+	guardResult := runDroidCommand(t, guard["command"].(string), fixture.homeDir, string(preRaw))
+	if guardResult.exitCode != 2 || !strings.Contains(guardResult.stderr, `Agent "droid" is frozen`) {
+		t.Fatalf("guard result = %#v", guardResult)
+	}
+	postPayload := make(map[string]any, len(prePayload)+1)
+	for key, value := range prePayload {
+		postPayload[key] = value
+	}
+	postPayload["hook_event_name"] = "PostToolUse"
+	postPayload["tool_response"] = map[string]any{"output": "test", "success": true}
+	postRaw, _ := json.Marshal(postPayload)
+	auditResult := runDroidCommand(t, audit["command"].(string), fixture.homeDir, string(postRaw))
+	if auditResult.exitCode != 0 {
+		t.Fatalf("audit result = %#v", auditResult)
+	}
+	requestLock.Lock()
+	defer requestLock.Unlock()
+	var operation map[string]any
+	for _, request := range requests {
+		if request.method == http.MethodPost {
+			if err := json.Unmarshal(request.body, &operation); err != nil {
+				t.Fatalf("decode audit request: %v", err)
+			}
+			break
+		}
+	}
+	if operation == nil || !reflect.DeepEqual(operation["payload"], postPayload) {
+		t.Fatalf("native operation = %#v", operation)
+	}
+	if !reflect.DeepEqual(operation["subject"], map[string]any{"session_id": "session-1"}) ||
+		!reflect.DeepEqual(operation["action"], map[string]any{"tool": "Execute"}) {
+		t.Fatalf("native operation identity = %#v", operation)
+	}
+}
+
+func TestDroidStatusRequiresExactHooksAndRuntimeSources(t *testing.T) {
+	fixture := prepareDroidFixture(t, droidFixtureOptions{})
 	installDroidFixture(t, fixture)
 	status, err := fixture.plugin.Status()
 	if err != nil || !status.Installed || !status.HookConfigured || !status.HookScriptExists {
 		t.Fatalf("installed status = %#v, %v", status, err)
 	}
-	if err := os.Remove(fixture.hookPath); err != nil {
-		t.Fatalf("remove audit runtime: %v", err)
+	if err := os.WriteFile(fixture.hookPath, []byte("tampered\n"), 0700); err != nil {
+		t.Fatalf("tamper audit runtime: %v", err)
 	}
 	status, err = fixture.plugin.Status()
 	if err != nil || status.Installed || !status.HookConfigured || status.HookScriptExists {
-		t.Fatalf("missing-runtime status = %#v, %v", status, err)
-	}
-	root := readDroidTestObject(t, fixture.configPath)
-	root["hooksDisabled"] = true
-	disabled, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		t.Fatalf("encode disabled hooks: %v", err)
-	}
-	if err := os.WriteFile(fixture.configPath, append(disabled, '\n'), 0600); err != nil {
-		t.Fatalf("disable hooks: %v", err)
-	}
-	status, err = fixture.plugin.Status()
-	if err != nil || status.Installed || status.HookConfigured {
-		t.Fatalf("disabled status = %#v, %v", status, err)
+		t.Fatalf("tampered status = %#v, %v", status, err)
 	}
 }
 
-func TestDroidUninstallPreservesUserSourcesAndExactOwnership(t *testing.T) {
-	hooks := "{\n  // keep root comment\n  \"PreToolUse\": []\n}\n"
-	settings := "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n" +
-		"    // keep settings comment\n    \"PostToolUse\": []\n  }\n}\n"
+func TestDroidStatusUsesOneWholeActiveSource(t *testing.T) {
 	fixture := prepareDroidFixture(t, droidFixtureOptions{
-		hooks: droidString(hooks), settings: droidString(settings),
+		settings: droidJSON(map[string]any{"hooks": map[string]any{}}),
 	})
 	installDroidFixture(t, fixture)
-	if err := fixture.plugin.Uninstall("agent-10"); err != nil {
-		t.Fatalf("uninstall lookalike agent: %v", err)
-	}
-	droidManagedHandler(t, readDroidTestObject(t, fixture.configPath)["PreToolUse"], fixture.guardPath)
-	agentID := droidTestAgentID
-	if runtime.GOOS == "windows" {
-		agentID = "AGENT-1"
-	}
-	if err := fixture.plugin.Uninstall(agentID); err != nil {
-		t.Fatalf("uninstall Factory Droid hooks: %v", err)
-	}
-	rootRaw := readDroidTestFile(t, fixture.configPath)
-	settingsRaw := readDroidTestFile(t, fixture.settingsPath)
-	if !strings.Contains(rootRaw, "keep root comment") || !strings.Contains(settingsRaw, "keep settings comment") {
-		t.Fatal("uninstall removed user JSONC comments")
-	}
-	if len(requireDroidArray(t, readDroidTestObject(t, fixture.configPath)["PreToolUse"])) != 0 {
-		t.Fatal("uninstall removed the user-owned empty event key")
-	}
-	currentSettings := readDroidTestObject(t, fixture.settingsPath)
-	if currentSettings["theme"] != "dark" ||
-		len(requireDroidArray(t, requireDroidObject(t, currentSettings["hooks"])["PostToolUse"])) != 0 {
-		t.Fatalf("settings after uninstall = %#v", currentSettings)
+	settingsHooks := requireDroidObject(t, readDroidTestObject(t, fixture.settingsPath)["hooks"])
+	writeDroidTestObject(t, fixture.configPath, map[string]any{"hooks": map[string]any{
+		"PreToolUse": settingsHooks["PreToolUse"],
+	}})
+	status, err := fixture.plugin.Status()
+	if err != nil || status.HookConfigured || status.Installed {
+		t.Fatalf("split-source status = %#v, %v", status, err)
 	}
 }
 
-func TestDroidUninstallDeletesOnlyOwnedEmptyHookFile(t *testing.T) {
+func TestDroidStatusAndUninstallDoNotRequireNodeResolution(t *testing.T) {
 	fixture := prepareDroidFixture(t, droidFixtureOptions{})
 	installDroidFixture(t, fixture)
-	if !strings.HasPrefix(readDroidTestFile(t, fixture.configPath), droidOwnedFileMarker) {
-		t.Fatal("created hook source is missing its ownership marker")
+	t.Setenv("PATH", "")
+	status, err := fixture.plugin.Status()
+	if err != nil || !status.Installed {
+		t.Fatalf("status without PATH = %#v, %v", status, err)
 	}
 	if err := fixture.plugin.Uninstall(droidTestAgentID); err != nil {
-		t.Fatalf("uninstall Factory Droid hooks: %v", err)
+		t.Fatalf("uninstall without PATH: %v", err)
 	}
 	requireMissingDroidFile(t, fixture.configPath)
 }

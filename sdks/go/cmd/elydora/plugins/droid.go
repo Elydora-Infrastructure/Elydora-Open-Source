@@ -1,145 +1,143 @@
 package plugins
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-)
+import "fmt"
 
+// DroidPlugin manages Factory Droid native user hooks.
 type DroidPlugin struct {
 	rename renameFunc
 }
 
-type droidRuntimeConfig struct {
-	OrgID     string `json:"org_id"`
-	AgentID   string `json:"agent_id"`
-	KID       string `json:"kid"`
-	BaseURL   string `json:"base_url"`
-	Token     string `json:"token"`
-	AgentName string `json:"agent_name"`
+// ManagesGuardRuntime reports that Droid commits its guard, audit runtime,
+// credentials, and hook documents in one transaction.
+func (p *DroidPlugin) ManagesGuardRuntime() bool {
+	return true
 }
 
-func (p *DroidPlugin) Install(config InstallConfig) error {
-	runtimeRoot, agentDirectory, err := droidAgentDirectory(config.AgentID)
-	if err != nil {
-		return err
-	}
+// PreflightInstall validates every hook source, policy layer, credential,
+// matcher, and runtime identity before any write.
+func (p *DroidPlugin) PreflightInstall(config InstallConfig) error {
 	sources, err := readDroidSources()
 	if err != nil {
 		return err
 	}
-	settings := []droidHookSettings{sources.settings.hooks}
-	if sources.primary != nil {
-		settings = append(settings, sources.primary.hooks)
-	}
-	if err := validateDroidRegexes(settings...); err != nil {
-		return err
-	}
-	expectedGuard := filepath.Join(agentDirectory, droidGuardScript)
-	if !sameDroidPath(config.GuardScriptPath, expectedGuard) {
-		return fmt.Errorf("Elydora guard runtime must use the managed agent directory: %s", expectedGuard)
-	}
-	guardExists, err := regularFileExists(config.GuardScriptPath, "Elydora guard runtime")
-	if err != nil {
-		return err
-	}
-	if !guardExists {
-		return fmt.Errorf("Elydora guard runtime is missing: %s", config.GuardScriptPath)
-	}
-	nodePath, err := resolveNodeRuntime()
-	if err != nil {
-		return err
-	}
-	auditPath := filepath.Join(agentDirectory, droidAuditScript)
-	selection, err := selectDroidInstallationTargets(sources)
-	if err != nil {
-		return err
-	}
+	_, _, err = preflightDroidInstallation(config, sources)
+	return err
+}
+
+func renderDroidInstallation(
+	sources *droidSources,
+	guardPath, auditPath, nodePath, runtimeRoot string,
+) ([]*droidRenderedDocument, error) {
+	target := activeDroidDocument(sources)
 	groups := map[string]map[string]any{
-		"PreToolUse":  buildDroidGroup(nodePath, config.GuardScriptPath),
+		"PreToolUse":  buildDroidGroup(nodePath, guardPath),
 		"PostToolUse": buildDroidGroup(nodePath, auditPath),
 	}
-	documents := uniqueDroidDocuments(
-		sources.primary,
-		droidSettingsDocument(sources.settings),
-		selection.targets["PreToolUse"],
-		selection.targets["PostToolUse"],
-	)
+	documents := droidInstallationDocuments(sources)
 	rendered := make([]*droidRenderedDocument, 0, len(documents))
 	for _, document := range documents {
-		result, renderErr := renderDroidDocument(
-			document, "", runtimeRoot, droidAdditionsFor(document, selection.targets, groups),
+		item, err := renderDroidDocument(
+			document,
+			"",
+			runtimeRoot,
+			droidAdditionsFor(document, target, groups),
 		)
-		if renderErr != nil {
-			return renderErr
+		if err != nil {
+			return nil, err
 		}
-		rendered = append(rendered, result)
+		rendered = append(rendered, item)
 	}
-	changes, err := prepareDroidInstallationChanges(config, agentDirectory, auditPath, rendered)
+	return rendered, nil
+}
+
+func (p *DroidPlugin) Install(config InstallConfig) error {
+	sources, err := readDroidSources()
 	if err != nil {
 		return err
 	}
-	if err := writeChanges(changes, "Write Factory Droid installation", p.rename); err != nil {
+	paths, nodePath, err := preflightDroidInstallation(config, sources)
+	if err != nil {
 		return err
 	}
-	fmt.Printf(
-		"  Factory Droid: PreToolUse: %s, PostToolUse: %s\n",
-		selection.targets["PreToolUse"].filePath,
-		selection.targets["PostToolUse"].filePath,
+	rendered, err := renderDroidInstallation(
+		sources,
+		paths.guardPath,
+		paths.auditPath,
+		nodePath,
+		paths.runtimeRoot,
 	)
-	fmt.Println("  Factory Droid: run /hooks to review the Elydora hook changes.")
+	if err != nil {
+		return err
+	}
+	prepared, err := prepareDroidInstallation(config, sources, rendered)
+	if err != nil {
+		return err
+	}
+	if err := commitDroidInstallation(prepared, p.rename); err != nil {
+		return err
+	}
+	fmt.Printf("Factory Droid hooks: %s\n", activeDroidDocument(sources).filePath)
+	fmt.Println("Factory Droid: run /hooks to review the Elydora hook changes.")
 	return nil
 }
 
+func renderDroidUninstall(
+	sources *droidSources,
+	agentID, runtimeRoot string,
+) ([]*droidRenderedDocument, error) {
+	documents := droidSourceDocuments(sources)
+	rendered := make([]*droidRenderedDocument, 0, len(documents))
+	for _, document := range documents {
+		item, err := renderDroidDocument(
+			document,
+			agentID,
+			runtimeRoot,
+			map[string]map[string]any{},
+		)
+		if err != nil {
+			return nil, err
+		}
+		rendered = append(rendered, item)
+	}
+	return rendered, nil
+}
+
 func (p *DroidPlugin) Uninstall(agentID string) error {
+	sources, err := readDroidSources()
+	if err != nil {
+		return err
+	}
 	runtimeRoot, err := droidRuntimeRoot()
 	if err != nil {
 		return err
 	}
-	sources, err := readDroidSources()
+	rendered, err := renderDroidUninstall(sources, agentID, runtimeRoot)
 	if err != nil {
 		return err
 	}
-	documents := uniqueDroidDocuments(sources.primary, droidSettingsDocument(sources.settings))
-	changes := make([]*fileChange, 0, len(documents))
-	for _, document := range documents {
-		rendered, renderErr := renderDroidDocument(document, agentID, runtimeRoot, nil)
-		if renderErr != nil {
-			return renderErr
-		}
-		change, changeErr := prepareRenderedDroidChange(rendered)
-		if changeErr != nil {
-			return changeErr
-		}
-		changes = append(changes, change)
+	prepared, err := prepareDroidUninstall(rendered)
+	if err != nil {
+		return err
 	}
-	return writeChanges(changes, "Write Factory Droid hook sources", p.rename)
+	return commitDroidUninstall(prepared, p.rename)
 }
 
 func (p *DroidPlugin) Status() (PluginStatus, error) {
 	entry := SupportedAgents[droidAgentKey]
-	status := PluginStatus{
-		AgentName: droidAgentKey, DisplayName: entry.Name,
-	}
+	status := PluginStatus{AgentName: droidAgentKey, DisplayName: entry.Name}
 	sources, err := readDroidSources()
 	if err != nil {
 		return status, err
 	}
 	status.ConfigPath = displayDroidConfigPath(sources)
-	primary := droidHookSettings{}
-	if sources.primary != nil {
-		primary = sources.primary.hooks
-	}
-	effective := mergeDroidSettings(primary, sources.settings.hooks)
-	if disabled, _ := effective["hooksDisabled"].(bool); disabled {
+	if droidHookBlocked(sources) != nil {
 		return status, nil
 	}
 	runtimeRoot, err := droidRuntimeRoot()
 	if err != nil {
 		return status, err
 	}
-	contracts := droidRuntimeContracts(effective, runtimeRoot)
+	contracts := droidRuntimeContracts(effectiveDroidHooks(sources), runtimeRoot)
 	status.HookConfigured = len(contracts) > 0
 	if !status.HookConfigured {
 		return status, nil
@@ -150,67 +148,4 @@ func (p *DroidPlugin) Status() (PluginStatus, error) {
 	}
 	status.Installed = status.HookScriptExists
 	return status, nil
-}
-
-func droidAgentDirectory(agentID string) (string, string, error) {
-	runtimeRoot, err := droidRuntimeRoot()
-	if err != nil {
-		return "", "", err
-	}
-	agentDirectory, err := ResolveAgentRuntimeDirectory(agentID)
-	if err != nil {
-		return "", "", err
-	}
-	return runtimeRoot, agentDirectory, nil
-}
-
-func droidSettingsDocument(settings *droidDocument) *droidDocument {
-	if settings != nil && settings.hasHooksContainer {
-		return settings
-	}
-	return nil
-}
-
-func prepareDroidInstallationChanges(
-	config InstallConfig,
-	agentDirectory, auditPath string,
-	rendered []*droidRenderedDocument,
-) ([]*fileChange, error) {
-	baseURL := config.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.elydora.com"
-	}
-	runtimeConfig, err := json.MarshalIndent(droidRuntimeConfig{
-		OrgID: config.OrgID, AgentID: config.AgentID, KID: config.KID,
-		BaseURL: baseURL, Token: config.Token, AgentName: droidAgentKey,
-	}, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("encode Elydora runtime config: %w", err)
-	}
-	runtimeConfig = append(runtimeConfig, '\n')
-	runtimeChanges := []struct {
-		path, label string
-		content     []byte
-		mode        os.FileMode
-	}{
-		{filepath.Join(agentDirectory, "config.json"), "Elydora runtime config", runtimeConfig, 0600},
-		{filepath.Join(agentDirectory, "private.key"), "Elydora private key", []byte(config.PrivateKey), 0600},
-		{auditPath, "Elydora audit runtime", []byte(buildHookScript(droidAgentKey, config.AgentID)), 0700},
-	}
-	changes := make([]*fileChange, 0, len(runtimeChanges)+len(rendered))
-	for _, item := range runtimeChanges {
-		change, changeErr := prepareFileChange(item.path, item.label, item.content, item.mode)
-		if changeErr != nil {
-			return nil, changeErr
-		}
-		changes = append(changes, change)
-	}
-	for _, document := range rendered {
-		change, changeErr := prepareRenderedDroidChange(document)
-		if changeErr != nil {
-			return nil, changeErr
-		}
-		changes = append(changes, change)
-	}
-	return changes, nil
 }
