@@ -1,162 +1,127 @@
 package plugins
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
-// CodexPlugin manages OpenAI Codex user lifecycle hooks.
-type CodexPlugin struct{}
+// CodexPlugin manages OpenAI Codex global user hooks.
+type CodexPlugin struct {
+	rename renameFunc
+}
+
+// ManagesGuardRuntime reports that Codex commits its provider guard with the
+// audit runtime and user hook document.
+func (p *CodexPlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+// PreflightInstall validates every existing source before the CLI creates
+// runtime state.
+func (p *CodexPlugin) PreflightInstall(config InstallConfig) error {
+	document, err := readCodexDocument()
+	if err != nil {
+		return err
+	}
+	_, _, err = preflightCodexInstallation(config, document.filePath)
+	return err
+}
 
 func (p *CodexPlugin) Install(config InstallConfig) error {
-	if config.AgentID == "" {
-		return fmt.Errorf("agent ID is required")
-	}
-	configPath, err := codexConfigPath()
+	document, err := readCodexDocument()
 	if err != nil {
 		return err
 	}
-	settings, exists, err := readHookJSONObject(configPath, "Codex hooks config")
+	paths, nodePath, err := preflightCodexInstallation(config, document.filePath)
 	if err != nil {
 		return err
 	}
-	if !exists {
-		settings = map[string]any{"description": codexOwnedDescription}
+	hooks := removeManagedCodexHooks(document.hooks, "")
+	hooks["PreToolUse"] = append(
+		hooks["PreToolUse"],
+		codexMatcherGroup(codexHandler(
+			nodePath,
+			paths.guardPath,
+			codexGuardStatusMessage,
+		)),
+	)
+	hooks["PostToolUse"] = append(
+		hooks["PostToolUse"],
+		codexMatcherGroup(codexHandler(
+			nodePath,
+			paths.auditPath,
+			codexAuditStatusMessage,
+		)),
+	)
+	rendered, err := renderCodexDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Codex user hooks: %w", err)
 	}
-	hooks, err := codexHooksObject(settings)
+	changes, err := prepareCodexInstallationChanges(config, paths, rendered)
 	if err != nil {
 		return err
 	}
-	preGroups, err := codexEventGroups(hooks, "PreToolUse")
-	if err != nil {
+	if err := writeCodexChanges(
+		changes,
+		"Install Codex hooks",
+		p.rename,
+		paths.runtimeRoot,
+		paths.agentDirectory,
+		filepath.Dir(document.filePath),
+	); err != nil {
 		return err
 	}
-	postGroups, err := codexEventGroups(hooks, "PostToolUse")
-	if err != nil {
-		return err
-	}
-	preGroups, _, err = withoutCodexHandlers(preGroups, "")
-	if err != nil {
-		return err
-	}
-	postGroups, _, err = withoutCodexHandlers(postGroups, "")
-	if err != nil {
-		return err
-	}
-
-	if config.GuardScriptPath == "" {
-		return fmt.Errorf("guard script path is required")
-	}
-	guardExists, err := regularFileExists(config.GuardScriptPath, "Elydora guard runtime")
-	if err != nil {
-		return err
-	}
-	if !guardExists {
-		return fmt.Errorf("Elydora guard runtime is missing: %s", config.GuardScriptPath)
-	}
-	hookPath, err := hookScriptPath(config.AgentID)
-	if err != nil {
-		return err
-	}
-	if config.HookScript != "" {
-		hookPath = config.HookScript
-	}
-	nodePath, err := resolveNodeRuntime()
-	if err != nil {
-		return err
-	}
-
-	hooks["PreToolUse"] = append(preGroups, codexMatcherGroup(
-		codexHandler(nodePath, config.GuardScriptPath, codexGuardStatusMessage),
-	))
-	hooks["PostToolUse"] = append(postGroups, codexMatcherGroup(
-		codexHandler(nodePath, hookPath, codexAuditStatusMessage),
-	))
-	next := cloneCodexObject(settings)
-	next["hooks"] = hooks
-
-	runtimeConfig := config
-	runtimeConfig.AgentName = codexAgentKey
-	if err := GenerateHookScript(hookPath, runtimeConfig); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
-	}
-	if err := writeHookJSONObjectAtomic(configPath, next); err != nil {
-		return fmt.Errorf("write Codex hooks config: %w", err)
-	}
-	fmt.Println("Codex: run /hooks to review and trust the Elydora hooks.")
+	fmt.Printf("  Codex hooks: %s\n", document.filePath)
+	fmt.Println("  Codex trust: run /hooks and approve both Elydora command hooks.")
 	return nil
 }
 
 func (p *CodexPlugin) Uninstall(agentID string) error {
-	configPath, err := codexConfigPath()
+	document, err := readCodexDocument()
 	if err != nil {
 		return err
 	}
-	settings, exists, err := readHookJSONObject(configPath, "Codex hooks config")
-	if err != nil || !exists {
-		return err
+	hooks := removeManagedCodexHooks(document.hooks, agentID)
+	rendered, err := renderCodexDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Codex user hooks: %w", err)
 	}
-	hooks, err := codexHooksObject(settings)
+	change, err := prepareRenderedCodexChange(rendered)
 	if err != nil {
 		return err
 	}
-	preGroups, err := codexEventGroups(hooks, "PreToolUse")
-	if err != nil {
-		return err
-	}
-	postGroups, err := codexEventGroups(hooks, "PostToolUse")
-	if err != nil {
-		return err
-	}
-	filteredPre, preChanged, err := withoutCodexHandlers(preGroups, agentID)
-	if err != nil {
-		return err
-	}
-	filteredPost, postChanged, err := withoutCodexHandlers(postGroups, agentID)
-	if err != nil {
-		return err
-	}
-	if !preChanged && !postChanged {
-		return nil
-	}
-	hooks["PreToolUse"] = filteredPre
-	hooks["PostToolUse"] = filteredPost
-	if codexSettingsOwned(settings, hooks) {
-		return removeHookFile(configPath, "Codex hooks config")
-	}
-	next := cloneCodexObject(settings)
-	next["hooks"] = hooks
-	return writeHookJSONObjectAtomic(configPath, next)
+	return writeCodexChanges(
+		[]*fileChange{change},
+		"Uninstall Codex hooks",
+		p.rename,
+		"",
+		"",
+		filepath.Dir(document.filePath),
+	)
 }
 
 func (p *CodexPlugin) Status() (PluginStatus, error) {
-	configPath, err := codexConfigPath()
+	configPath, pathErr := codexConfigPath()
+	entry := SupportedAgents[codexAgentKey]
 	status := PluginStatus{
-		AgentName:   codexAgentKey,
-		DisplayName: "OpenAI Codex",
-		ConfigPath:  configPath,
+		AgentName: codexAgentKey, DisplayName: entry.Name, ConfigPath: configPath,
 	}
+	if pathErr != nil {
+		return status, pathErr
+	}
+	document, err := readCodexDocument()
 	if err != nil {
 		return status, err
 	}
-	settings, exists, err := readHookJSONObject(configPath, "Codex hooks config")
-	if err != nil || !exists {
-		return status, err
-	}
-	hooks, err := codexHooksObject(settings)
+	contracts, err := codexRuntimeContracts(document.hooks)
 	if err != nil {
 		return status, err
 	}
-	guard, err := findCodexHandler(hooks, "PreToolUse", codexGuardStatusMessage)
-	if err != nil {
-		return status, err
-	}
-	audit, err := findCodexHandler(hooks, "PostToolUse", codexAuditStatusMessage)
-	if err != nil {
-		return status, err
-	}
-	if guard == nil || audit == nil {
+	status.HookConfigured = len(contracts) > 0
+	if !status.HookConfigured {
 		return status, nil
 	}
-	status.HookConfigured = true
-	status.HookScriptExists, err = codexRuntimeScriptsExist(guard, audit)
+	status.HookScriptExists, err = codexRuntimeFilesExist(contracts)
 	if err != nil {
 		return status, err
 	}

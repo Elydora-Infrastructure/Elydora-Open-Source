@@ -17,6 +17,7 @@ const (
 	codexTestAgentID = "agent-1"
 	codexGuardStatus = "Checking Elydora agent state"
 	codexAuditStatus = "Recording Elydora tool use"
+	codexPrivateKey  = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
 )
 
 type codexFixture struct {
@@ -31,20 +32,14 @@ type codexFixture struct {
 	privateKey    string
 }
 
-func prepareCodexFixture(t *testing.T, existingRaw string, createGuard bool) *codexFixture {
+func prepareCodexFixture(t *testing.T, existingRaw string) *codexFixture {
 	t.Helper()
-	homeDir := filepath.Join(t.TempDir(), "home with spaces")
+	homeDir := filepath.Join(t.TempDir(), "home with 'quote %ELYDORA_HOOK_PATH%")
 	agentDir := filepath.Join(homeDir, ".elydora", codexTestAgentID)
 	configPath := filepath.Join(homeDir, ".codex", "hooks.json")
 	guardPath := filepath.Join(agentDir, "guard.js")
 	if err := os.MkdirAll(agentDir, 0755); err != nil {
 		t.Fatalf("create agent directory: %v", err)
-	}
-	if createGuard {
-		guard := "process.stderr.write('Agent is frozen by Elydora.'); process.exit(2);\n"
-		if err := os.WriteFile(guardPath, []byte(guard), 0600); err != nil {
-			t.Fatalf("write guard: %v", err)
-		}
 	}
 	if existingRaw != "" {
 		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
@@ -56,6 +51,7 @@ func prepareCodexFixture(t *testing.T, existingRaw string, createGuard bool) *co
 	}
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
+	t.Setenv("CODEX_HOME", "")
 
 	return &codexFixture{
 		plugin:   &CodexPlugin{},
@@ -65,7 +61,7 @@ func prepareCodexFixture(t *testing.T, existingRaw string, createGuard bool) *co
 			AgentName:       "codex",
 			OrgID:           "org-1",
 			AgentID:         codexTestAgentID,
-			PrivateKey:      "test-key",
+			PrivateKey:      codexPrivateKey,
 			KID:             "kid-1",
 			BaseURL:         "https://api.elydora.test",
 			GuardScriptPath: guardPath,
@@ -113,6 +109,11 @@ func runCodexCommand(t *testing.T, command, homeDir string, payload map[string]a
 	if err != nil {
 		t.Fatalf("marshal Codex payload: %v", err)
 	}
+	return runCodexRawCommand(t, command, homeDir, encoded)
+}
+
+func runCodexRawCommand(t *testing.T, command, homeDir string, encoded []byte) (int, string) {
+	t.Helper()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		commandFile := filepath.Join(t.TempDir(), "run-codex-hook.cmd")
@@ -127,7 +128,7 @@ func runCodexCommand(t *testing.T, command, homeDir string, payload map[string]a
 	cmd.Stdin = bytes.NewReader(encoded)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+	err := cmd.Run()
 	if err == nil {
 		return 0, stderr.String()
 	}
@@ -153,7 +154,7 @@ func TestCodexInstallPreservesHooksAndIsIdempotent(t *testing.T) {
 	    "SessionStart": [{"hooks": [{"type": "command", "command": "existing-command"}]}],
 	    "PreToolUse": [{"matcher": "Read", "hooks": []}]
 	  }
-}`, true)
+}`)
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Codex hooks: %v", err)
 	}
@@ -185,9 +186,13 @@ func TestCodexInstallPreservesHooksAndIsIdempotent(t *testing.T) {
 }
 
 func TestCodexCommandsBlockAndForwardOfficialPayload(t *testing.T) {
-	fixture := prepareCodexFixture(t, "", true)
+	fixture := prepareCodexFixture(t, "")
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Codex hooks: %v", err)
+	}
+	guardScript := "process.stderr.write('Agent is frozen by Elydora.'); process.exit(2);\n"
+	if err := os.WriteFile(fixture.guardPath, []byte(guardScript), 0700); err != nil {
+		t.Fatalf("write blocking guard: %v", err)
 	}
 	capturePath := filepath.Join(t.TempDir(), "captured-event.json")
 	captureJSON, err := json.Marshal(capturePath)
@@ -219,6 +224,9 @@ func TestCodexCommandsBlockAndForwardOfficialPayload(t *testing.T) {
 		"tool_input":      map[string]any{"command": "echo test"},
 	}
 	guard := requireCodexHandler(t, settings, "PreToolUse", codexGuardStatus)
+	if strings.Contains(guard["commandWindows"].(string), "%ELYDORA_HOOK_PATH%") {
+		t.Fatalf("Windows command exposes an expandable path: %q", guard["commandWindows"])
+	}
 	exitCode, stderr := runCodexCommand(t, guard[commandKey].(string), fixture.homeDir, payload)
 	if exitCode != 2 || !strings.Contains(stderr, "Agent is frozen by Elydora") {
 		t.Fatalf("guard exit = %d, stderr = %q", exitCode, stderr)
@@ -238,7 +246,7 @@ func TestCodexCommandsBlockAndForwardOfficialPayload(t *testing.T) {
 }
 
 func TestCodexStatusRequiresBothRuntimes(t *testing.T) {
-	fixture := prepareCodexFixture(t, "", true)
+	fixture := prepareCodexFixture(t, "")
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Codex hooks: %v", err)
 	}
@@ -253,23 +261,38 @@ func TestCodexStatusRequiresBothRuntimes(t *testing.T) {
 	if err != nil || status.Installed || !status.HookConfigured || status.HookScriptExists {
 		t.Fatalf("degraded status = %#v, %v", status, err)
 	}
+	if err := fixture.plugin.Install(fixture.config); err != nil {
+		t.Fatalf("repair Codex hooks: %v", err)
+	}
+	if err := os.Remove(fixture.privateKey); err != nil {
+		t.Fatalf("remove private key: %v", err)
+	}
+	status, err = fixture.plugin.Status()
+	if err != nil || status.Installed || !status.HookConfigured || status.HookScriptExists {
+		t.Fatalf("missing key status = %#v, %v", status, err)
+	}
 }
 
-func TestCodexInstallRejectsMissingGuardBeforeWrites(t *testing.T) {
-	fixture := prepareCodexFixture(t, "", false)
-	err := fixture.plugin.Install(fixture.config)
-	if err == nil || !strings.Contains(err.Error(), "guard runtime is missing") {
-		t.Fatalf("install error = %v", err)
+func TestCodexInstallCommitsAllManagedRuntimeFiles(t *testing.T) {
+	fixture := prepareCodexFixture(t, "")
+	if err := fixture.plugin.Install(fixture.config); err != nil {
+		t.Fatalf("install Codex hooks: %v", err)
 	}
-	for _, path := range []string{fixture.configPath, fixture.hookPath, fixture.runtimeConfig, fixture.privateKey} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("write occurred at %s: %v", path, err)
+	for _, path := range []string{
+		fixture.configPath,
+		fixture.guardPath,
+		fixture.hookPath,
+		fixture.runtimeConfig,
+		fixture.privateKey,
+	} {
+		if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("managed file %s = %v, %v", path, info, err)
 		}
 	}
 }
 
 func TestCodexStatusSurfacesMalformedReferencedRuntimeMetadata(t *testing.T) {
-	fixture := prepareCodexFixture(t, "", true)
+	fixture := prepareCodexFixture(t, "")
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Codex hooks: %v", err)
 	}
@@ -285,7 +308,7 @@ func TestCodexInstallPreservesMatchingUserStatusText(t *testing.T) {
 	fixture := prepareCodexFixture(t, `{"hooks":{
 	  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"node ~/.elydora/user/guard.js.backup","statusMessage":"Checking Elydora agent state"}]}],
 	  "PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"node ~/.elydora/user/hook.js.backup","statusMessage":"Recording Elydora tool use"}]}]
-	}}`, true)
+	}}`)
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Codex hooks: %v", err)
 	}
@@ -296,24 +319,21 @@ func TestCodexInstallPreservesMatchingUserStatusText(t *testing.T) {
 }
 
 func TestCodexUninstallPreservesUnrelatedHooksAndExactAgent(t *testing.T) {
-	fixture := prepareCodexFixture(t, `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"existing-command"}]}]}}`, true)
+	fixture := prepareCodexFixture(t, `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"existing-command"}]}]}}`)
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Codex hooks: %v", err)
 	}
 	settings := readCodexTestObject(t, fixture.configPath)
 	otherDir := filepath.Join(filepath.Dir(fixture.agentDir), "agent-10")
-	for _, contract := range []struct{ event, status string }{
-		{"PreToolUse", codexGuardStatus},
-		{"PostToolUse", codexAuditStatus},
+	nodePath, err := resolveNodeRuntime()
+	if err != nil {
+		t.Fatalf("resolve Node.js: %v", err)
+	}
+	for _, contract := range []struct{ event, status, script string }{
+		{"PreToolUse", codexGuardStatus, codexGuardScript},
+		{"PostToolUse", codexAuditStatus, codexAuditScript},
 	} {
-		handler := requireCodexHandler(t, settings, contract.event, contract.status)
-		other := map[string]any{}
-		for key, value := range handler {
-			other[key] = value
-		}
-		for _, key := range []string{"command", "commandWindows"} {
-			other[key] = strings.ReplaceAll(other[key].(string), fixture.agentDir, otherDir)
-		}
+		other := codexHandler(nodePath, filepath.Join(otherDir, contract.script), contract.status)
 		hooks := requireObject(t, settings["hooks"])
 		hooks[contract.event] = append(requireArray(t, hooks[contract.event]), map[string]any{
 			"matcher": "*", "hooks": []any{other},
@@ -334,13 +354,16 @@ func TestCodexUninstallPreservesUnrelatedHooksAndExactAgent(t *testing.T) {
 	if len(requireArray(t, hooks["PreToolUse"])) != 2 || len(requireArray(t, hooks["PostToolUse"])) != 1 {
 		t.Fatalf("unexpected remaining hooks: %#v", hooks)
 	}
-	if !strings.Contains(requireCodexHandler(t, remaining, "PostToolUse", codexAuditStatus)["command"].(string), otherDir) {
+	_, remainingScript, parsed := parseCodexPOSIXCommand(
+		requireCodexHandler(t, remaining, "PostToolUse", codexAuditStatus)["command"],
+	)
+	if !parsed || !sameCodexPath(remainingScript, filepath.Join(otherDir, codexAuditScript)) {
 		t.Fatalf("other agent handler was removed: %#v", hooks)
 	}
 }
 
 func TestCodexUninstallRemovesOwnedConfig(t *testing.T) {
-	fixture := prepareCodexFixture(t, "", true)
+	fixture := prepareCodexFixture(t, "")
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Codex hooks: %v", err)
 	}
@@ -354,13 +377,17 @@ func TestCodexUninstallRemovesOwnedConfig(t *testing.T) {
 
 func TestCodexMalformedConfigAndShapesPreventRuntimeWrites(t *testing.T) {
 	for _, testCase := range []struct{ name, raw, want string }{
-		{"malformed", "{ malformed", "parse Codex hooks config"},
+		{"malformed", "{ malformed", "parse Codex user hooks"},
+		{"comments", `{"hooks":{} // comment\n}`, "invalid character"},
+		{"trailing comma", `{"hooks":{},}`, "invalid character"},
+		{"duplicate root", `{"hooks":{},"hooks":{}}`, "duplicate"},
+		{"nested duplicate", `{"hooks":{"PreToolUse":[{"hooks":[],"hooks":[]}]}}`, "duplicate"},
 		{"null-hooks", `{"hooks":null}`, `field "hooks" must be an object`},
 		{"null-event", `{"hooks":{"PreToolUse":null}}`, `field "hooks.PreToolUse" must be an array`},
-		{"null-handlers", `{"hooks":{"PreToolUse":[{"hooks":null}]}}`, "matcher group must contain a hooks array"},
+		{"null-handlers", `{"hooks":{"PreToolUse":[{"hooks":null}]}}`, "must contain a hooks array"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			fixture := prepareCodexFixture(t, testCase.raw, true)
+			fixture := prepareCodexFixture(t, testCase.raw)
 			err := fixture.plugin.Install(fixture.config)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("install error = %v, want %q", err, testCase.want)

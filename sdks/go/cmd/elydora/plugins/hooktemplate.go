@@ -46,6 +46,10 @@ function parsePrivateKey(raw) {
   if (!value || value.includes('\r') || value.includes('\n') || value.includes('\0')) {
     throw new Error('Private key file must contain exactly one line');
   }
+  const seed = Buffer.from(value, 'base64url');
+  if (seed.length !== 32 || seed.toString('base64url') !== value) {
+    throw new Error('Private key must be a canonical 32-byte base64url value');
+  }
   return value;
 }
 
@@ -111,6 +115,13 @@ function signEd25519(privateKeyBase64url, data) {
 
 const ZERO_CHAIN_HASH = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
+function validateChainHash(value, source) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value)) {
+    throw new Error(source + ' contains an invalid chain hash');
+  }
+  return value;
+}
+
 function uuidv7() {
   const now = Date.now();
   const random = crypto.randomBytes(10);
@@ -150,35 +161,31 @@ function generateNonce() {
 // ---------------------------------------------------------------------------
 
 function readChainState() {
+  let raw;
   try {
-    const raw = fs.readFileSync(CHAIN_STATE_PATH, 'utf-8');
-    const state = JSON.parse(raw);
-    return state.prev_chain_hash || ZERO_CHAIN_HASH;
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      return ZERO_CHAIN_HASH;
-    }
-    const failure = new Error('Failed to read chain state: ' + err.message);
-    if (FAIL_CLOSED) {
-      throw failure;
-    }
-    logError(failure);
-    return ZERO_CHAIN_HASH;
+    raw = readProtectedFile(
+      CHAIN_STATE_PATH,
+      'Chain state',
+      MAX_PROTECTED_CONFIG_BYTES,
+    ).toString('utf-8');
+  } catch (error) {
+    if (hasRuntimeErrorCode(error, 'ENOENT')) return ZERO_CHAIN_HASH;
+    throw new Error('Failed to read chain state: ' + error.message);
   }
+  let state;
+  try {
+    state = JSON.parse(raw);
+  } catch (error) {
+    throw new Error('Chain state is invalid JSON: ' + error.message);
+  }
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    throw new Error('Chain state has an invalid shape');
+  }
+  return validateChainHash(state.prev_chain_hash, 'Chain state');
 }
 
 function writeChainState(chainHash) {
-  const tmpPath = CHAIN_STATE_PATH + '.tmp';
-  fs.writeFileSync(tmpPath, JSON.stringify({ prev_chain_hash: chainHash }), 'utf-8');
-  try {
-    fs.renameSync(tmpPath, CHAIN_STATE_PATH);
-  } catch {
-    // Windows fallback: rename can fail if target exists
-    try {
-      fs.unlinkSync(CHAIN_STATE_PATH);
-    } catch {}
-    fs.renameSync(tmpPath, CHAIN_STATE_PATH);
-  }
+  writeProtectedJson(CHAIN_STATE_PATH, 'Chain state', { prev_chain_hash: chainHash });
 }
 
 // ---------------------------------------------------------------------------
@@ -189,12 +196,34 @@ function logError(err) {
   try {
     const ts = new Date().toISOString();
     const msg = ts + ' [' + AGENT_NAME + '] ' + (err.stack || err.message || String(err)) + '\n';
-    fs.appendFileSync(ERROR_LOG_PATH, msg, 'utf-8');
+    appendProtectedText(ERROR_LOG_PATH, 'Elydora error log', msg);
   } catch (logFailure) {
     process.stderr.write(
       '[Elydora audit] Failed to write error log: ' + logFailure.message + '\n',
     );
   }
+}
+
+function resolveAuditBaseURL(config) {
+  const value = config.base_url || 'https://api.elydora.com';
+  if (typeof value !== 'string' || /[\\\u0000-\u0020]/.test(value)) {
+    throw new Error('Agent config base_url must be an absolute HTTP or HTTPS URL');
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new Error('Agent config base_url must be an absolute HTTP or HTTPS URL');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+    throw new Error('Agent config base_url must be an absolute HTTP or HTTPS URL');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(
+      'Agent config base_url must exclude credentials, query parameters, and fragments',
+    );
+  }
+  return value.replace(/\/+$/, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +247,9 @@ async function main() {
       hookData = JSON.parse(rawInput);
     } catch (err) {
       throw new Error('Hook input is invalid JSON: ' + err.message);
+    }
+    if (!hookData || typeof hookData !== 'object' || Array.isArray(hookData)) {
+      throw new Error('Hook input must contain a JSON object');
     }
 
     // Extract provider-native tool fields without reshaping the hook input.
@@ -245,6 +277,12 @@ async function main() {
         'Agent config',
         MAX_PROTECTED_CONFIG_BYTES,
       ).toString('utf-8'));
+      if (!config || typeof config !== 'object' || Array.isArray(config)) {
+        throw new Error('Agent config must contain a JSON object');
+      }
+      if (config.agent_id !== AGENT_ID || config.agent_name !== AGENT_NAME) {
+        throw new Error('Agent config identity does not match the generated audit hook');
+      }
       privateKey = parsePrivateKey(readProtectedFile(KEY_PATH, 'Private key'));
     } catch (err) {
       const failure = new Error('Failed to read agent config/key: ' + err.message);
@@ -258,11 +296,13 @@ async function main() {
     const orgId = config.org_id;
     const agentId = config.agent_id;
     const kid = config.kid;
-    const baseUrl = (config.base_url || 'https://api.elydora.com').replace(/\/+$/, '');
+    const baseUrl = resolveAuditBaseURL(config);
     const token = config.token || '';
-    if (!orgId || !agentId || !kid) {
+    if (typeof orgId !== 'string' || !orgId || typeof agentId !== 'string' ||
+        !agentId || typeof kid !== 'string' || !kid) {
       throw new Error('Agent config is missing org_id, agent_id, or kid');
     }
+    if (typeof token !== 'string') throw new Error('Agent config token must be a string');
 
     // Read chain state
     const prevChainHash = readChainState();
@@ -337,8 +377,9 @@ async function main() {
             // Extract the expected hash from the error message
             const match = (errBody.error.message || '').match(/Expected prev_chain_hash "([^"]+)"/);
             if (match) {
-              writeChainState(match[1]);
-              logError(new Error('Chain hash resynced to server: ' + match[1]));
+              const expectedHash = validateChainHash(match[1], 'Audit API mismatch response');
+              writeChainState(expectedHash);
+              logError(new Error('Chain hash resynced to server: ' + expectedHash));
             }
           }
         } catch (err) {

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 type renameFunc func(source, destination string) error
@@ -15,6 +17,7 @@ type fileChange struct {
 	filePath     string
 	label        string
 	original     []byte
+	originalInfo os.FileInfo
 	originalMode os.FileMode
 	existed      bool
 	next         []byte
@@ -26,18 +29,19 @@ type stagedChange struct {
 	change        fileChange
 	temporaryPath string
 	rollbackPath  string
+	committedInfo os.FileInfo
 	committed     bool
 }
 
 func readOptionalFile(path, label string) ([]byte, bool, error) {
-	raw, err := os.ReadFile(path) // #nosec G304 -- callers constrain paths to managed user configuration files.
-	if err == nil {
-		return raw, true, nil
+	snapshot, err := readManagedFile(path, label, maxManagedSourceBytes)
+	if err != nil {
+		return nil, false, err
 	}
-	if errors.Is(err, os.ErrNotExist) {
+	if snapshot == nil {
 		return nil, false, nil
 	}
-	return nil, false, fmt.Errorf("read %s at %s: %w", label, path, err)
+	return append([]byte(nil), snapshot.contents...), true, nil
 }
 
 func prepareFileChange(filePath, label string, next []byte, mode os.FileMode) (*fileChange, error) {
@@ -59,6 +63,15 @@ func prepareSourceChange(
 	if !existed {
 		original = nil
 	}
+	snapshot, err := readManagedFile(filePath, label, maxManagedSourceBytes)
+	if err != nil {
+		return nil, err
+	}
+	currentExists := snapshot != nil
+	if currentExists != existed ||
+		(currentExists && !bytes.Equal(snapshot.contents, original)) {
+		return nil, fmt.Errorf("%s changed before update: %s", label, filePath)
+	}
 	if existed && !remove && bytes.Equal(original, next) {
 		return nil, nil
 	}
@@ -66,16 +79,15 @@ func prepareSourceChange(
 		return nil, nil
 	}
 	originalMode := mode
+	var originalInfo os.FileInfo
 	if existed {
-		info, err := os.Stat(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("read file mode for %s at %s: %w", label, filePath, err)
-		}
-		originalMode = info.Mode().Perm()
+		originalInfo = snapshot.info
+		originalMode = snapshot.mode
 	}
 	return &fileChange{
 		filePath: filePath, label: label, original: append([]byte(nil), original...),
-		originalMode: originalMode, existed: existed, next: append([]byte(nil), next...),
+		originalInfo: originalInfo, originalMode: originalMode, existed: existed,
+		next: append([]byte(nil), next...),
 		mode: mode, remove: remove,
 	}, nil
 }
@@ -88,6 +100,9 @@ func writeChanges(changes []*fileChange, label string, rename renameFunc) error 
 			continue
 		}
 		target := filepath.Clean(change.filePath)
+		if runtime.GOOS == "windows" {
+			target = strings.ToLower(target)
+		}
 		if targets[target] {
 			return fmt.Errorf("%s contains duplicate file target %s", label, change.filePath)
 		}
@@ -128,8 +143,8 @@ func stageChange(change fileChange) (stagedChange, error) {
 		return stagedChange{}, err
 	}
 	directory := filepath.Dir(change.filePath)
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return stagedChange{}, fmt.Errorf("create directory for %s at %s: %w", change.label, directory, err)
+	if err := ensureManagedDirectory(directory, "directory for "+change.label); err != nil {
+		return stagedChange{}, err
 	}
 	staged := stagedChange{change: change}
 	var err error
@@ -202,11 +217,14 @@ func reserveStagingPath(directory, basename, suffix string) (string, error) {
 }
 
 func assertFileUnchanged(change fileChange) error {
-	current, existed, err := readOptionalFile(change.filePath, change.label)
+	current, err := readManagedFile(change.filePath, change.label, maxManagedSourceBytes)
 	if err != nil {
 		return err
 	}
-	if existed != change.existed || !bytes.Equal(current, change.original) {
+	currentExists := current != nil
+	if currentExists != change.existed ||
+		(currentExists && (!bytes.Equal(current.contents, change.original) ||
+			!os.SameFile(current.info, change.originalInfo))) {
 		return fmt.Errorf("%s changed during installation: %s", change.label, change.filePath)
 	}
 	return nil
@@ -232,6 +250,55 @@ func commitChange(staged *stagedChange, rename renameFunc) error {
 		}
 	}
 	staged.committed = true
+	if !staged.change.remove {
+		current, err := readManagedFile(
+			staged.change.filePath,
+			staged.change.label,
+			maxManagedSourceBytes,
+		)
+		if err != nil {
+			return err
+		}
+		if current == nil || !bytes.Equal(current.contents, staged.change.next) {
+			return fmt.Errorf(
+				"%s changed immediately after commit: %s",
+				staged.change.label,
+				staged.change.filePath,
+			)
+		}
+		staged.committedInfo = current.info
+	}
+	return nil
+}
+
+func assertCommittedFileUnchanged(item *stagedChange) error {
+	current, err := readManagedFile(
+		item.change.filePath,
+		item.change.label,
+		maxManagedSourceBytes,
+	)
+	if err != nil {
+		return err
+	}
+	if item.change.remove {
+		if current != nil {
+			return fmt.Errorf(
+				"%s changed during transaction recovery: %s",
+				item.change.label,
+				item.change.filePath,
+			)
+		}
+		return nil
+	}
+	if current == nil || item.committedInfo == nil ||
+		!bytes.Equal(current.contents, item.change.next) ||
+		!os.SameFile(current.info, item.committedInfo) {
+		return fmt.Errorf(
+			"%s changed during transaction recovery: %s",
+			item.change.label,
+			item.change.filePath,
+		)
+	}
 	return nil
 }
 
@@ -240,6 +307,10 @@ func rollbackChanges(staged []stagedChange, rename renameFunc) []error {
 	for index := len(staged) - 1; index >= 0; index-- {
 		item := &staged[index]
 		if !item.committed {
+			continue
+		}
+		if err := assertCommittedFileUnchanged(item); err != nil {
+			failures = append(failures, preserveRollbackFile(item, err))
 			continue
 		}
 		var err error
@@ -252,10 +323,25 @@ func rollbackChanges(staged []stagedChange, rename renameFunc) []error {
 			err = removeOptionalFile(item.change.filePath)
 		}
 		if err != nil {
-			failures = append(failures, fmt.Errorf("restore %s at %s: %w", item.change.label, item.change.filePath, err))
+			failure := fmt.Errorf(
+				"restore %s at %s: %w",
+				item.change.label,
+				item.change.filePath,
+				err,
+			)
+			failures = append(failures, preserveRollbackFile(item, failure))
 		}
 	}
 	return failures
+}
+
+func preserveRollbackFile(item *stagedChange, cause error) error {
+	if item.rollbackPath == "" {
+		return cause
+	}
+	path := item.rollbackPath
+	item.rollbackPath = ""
+	return fmt.Errorf("%w; original content preserved at %s", cause, path)
 }
 
 func cleanupStaging(staged []stagedChange) []error {
