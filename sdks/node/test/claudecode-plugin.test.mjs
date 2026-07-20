@@ -76,6 +76,15 @@ test('Claude installs one exact managed triple and preserves user settings', asy
         matcher: 'Bash',
         hooks: [{ type: 'command', command: 'existing-command', timeout: 5 }],
       }],
+      Stop: [{
+        hooks: [{
+          type: 'command',
+          command: 'background-check',
+          asyncRewake: true,
+          rewakeMessage: 'Background validation failed',
+          rewakeSummary: 'Validation feedback',
+        }],
+      }],
     },
   };
   const fixture = await createFixture({ settings: existing });
@@ -87,6 +96,7 @@ test('Claude installs one exact managed triple and preserves user settings', asy
     assert.equal(installed.settings.model, 'sonnet');
     assert.deepEqual(installed.settings.hooks.Notification, existing.hooks.Notification);
     assert.deepEqual(installed.settings.hooks.PreToolUse[0], existing.hooks.PreToolUse[0]);
+    assert.deepEqual(installed.settings.hooks.Stop, existing.hooks.Stop);
     assertManagedTriple(installed.settings, fixture);
 
     const second = await fixture.install();
@@ -166,6 +176,8 @@ test('Claude rejects invalid official hook shapes before writes', async (t) => {
     ['command value', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: '' }] }] } }), /non-empty string/i],
     ['argument type', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'x', args: [1] }] }] } }), /array of strings/i],
     ['timeout zero', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'x', timeout: 0 }] }] } }), /positive finite number/i],
+    ['empty rewake message', JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'x', rewakeMessage: '' }] }] } }), /rewakeMessage.*non-empty string/i],
+    ['empty rewake summary', JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'x', rewakeSummary: '' }] }] } }), /rewakeSummary.*non-empty string/i],
     ['headers type', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'http', url: 'https://example.test', headers: { A: 1 } }] }] } }), /map names to strings/i],
     ['input type', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'mcp_tool', server: 's', tool: 't', input: [] }] }] } }), /input.*must be an object/i],
   ];

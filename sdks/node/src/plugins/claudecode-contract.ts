@@ -22,7 +22,17 @@ const HOOK_EVENTS = new Set([
 
 const COMMON_HANDLER_KEYS = ['if', 'once', 'statusMessage', 'timeout'];
 const HANDLER_KEYS: Readonly<Record<string, readonly string[]>> = {
-  command: [...COMMON_HANDLER_KEYS, 'args', 'async', 'asyncRewake', 'command', 'shell', 'type'],
+  command: [
+    ...COMMON_HANDLER_KEYS,
+    'args',
+    'async',
+    'asyncRewake',
+    'command',
+    'rewakeMessage',
+    'rewakeSummary',
+    'shell',
+    'type',
+  ],
   prompt: [...COMMON_HANDLER_KEYS, 'continueOnBlock', 'model', 'prompt', 'type'],
   agent: [...COMMON_HANDLER_KEYS, 'model', 'prompt', 'type'],
   http: [...COMMON_HANDLER_KEYS, 'allowedEnvVars', 'headers', 'type', 'url'],
@@ -99,6 +109,10 @@ function optionalString(value: JsonObject, field: string, label: string): void {
   }
 }
 
+function optionalNonEmptyString(value: JsonObject, field: string, label: string): void {
+  if (value[field] !== undefined) requireNonEmptyString(value[field], field, label);
+}
+
 function optionalBoolean(value: JsonObject, field: string, label: string): void {
   if (value[field] !== undefined && typeof value[field] !== 'boolean') {
     throw new Error(`${label} field "${field}" must be a boolean`);
@@ -138,6 +152,8 @@ function validateHandler(value: unknown, event: string, group: number, index: nu
     if (value.args !== undefined) validateStringArray(value.args, 'args', label);
     optionalBoolean(value, 'async', label);
     optionalBoolean(value, 'asyncRewake', label);
+    optionalNonEmptyString(value, 'rewakeMessage', label);
+    optionalNonEmptyString(value, 'rewakeSummary', label);
     if (value.shell !== undefined && value.shell !== 'bash' && value.shell !== 'powershell') {
       throw new Error(`${label} field "shell" must be "bash" or "powershell"`);
     }

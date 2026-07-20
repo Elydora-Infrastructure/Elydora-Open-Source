@@ -10,7 +10,22 @@ const claudeBinary = process.env.ELYDORA_CLAUDE_BINARY;
 test('official Claude Code accepts the installed user hook contract', {
   skip: claudeBinary ? false : 'set ELYDORA_CLAUDE_BINARY to the official Claude Code executable',
 }, async () => {
-  const fixture = await createFixture();
+  const fixture = await createFixture({
+    settings: {
+      hooks: {
+        Stop: [{
+          hooks: [{
+            type: 'command',
+            command: process.execPath,
+            args: ['--version'],
+            asyncRewake: true,
+            rewakeMessage: 'Background validation failed',
+            rewakeSummary: 'Validation feedback',
+          }],
+        }],
+      },
+    },
+  });
   try {
     assert.equal((await fixture.install()).code, 0);
     const environment = {
