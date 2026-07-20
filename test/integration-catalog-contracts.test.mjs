@@ -198,8 +198,21 @@ test('high-drift providers retain their verified hook contracts', async () => {
   assert.deepEqual(providers.get('kimi').events, {
     before_tool: 'PreToolUse',
     after_tool: 'PostToolUse',
+    after_tool_failure: 'PostToolUseFailure',
+  });
+  assert.deepEqual(providers.get('kimi').event_fields, {
+    name: 'tool_name',
+    input: 'tool_input',
+    session: 'session_id',
+    call_id: 'tool_call_id',
+    output: 'tool_output',
+    error: 'error',
   });
   assert.equal(providers.get('kimi').config_format, 'toml');
+  assert.equal(
+    providers.get('kimi').source_url,
+    'https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html',
+  );
   assert.deepEqual(providers.get('kimi').config_paths, [
     '$KIMI_CODE_HOME/config.toml',
     '~/.kimi-code/config.toml',
@@ -208,17 +221,21 @@ test('high-drift providers retain their verified hook contracts', async () => {
     {
       id: 'pythoncli',
       release_channel: 'legacy',
-      activation: 'kimi-cli',
+      activation: 'An existing ~/.kimi home activates the legacy kimi-cli contract',
       config_format: 'toml',
       config_paths: ['~/.kimi/config.toml'],
       events: {
         before_tool: 'PreToolUse',
         after_tool: 'PostToolUse',
+        after_tool_failure: 'PostToolUseFailure',
       },
       event_fields: {
         name: 'tool_name',
         input: 'tool_input',
         session: 'session_id',
+        call_id: 'tool_call_id',
+        output: 'tool_output',
+        error: 'error',
       },
       blocking: {
         mechanism: 'exit_code_2',

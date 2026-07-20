@@ -36,6 +36,7 @@ export interface ManagedDirectory {
 
 export interface PreparedManagedTransaction {
   readonly displayName: string;
+  readonly operation?: 'install' | 'uninstall';
   readonly directories: readonly ManagedDirectory[];
   readonly changes: readonly ManagedFileChange[];
 }
@@ -98,7 +99,7 @@ export async function prepareManagedFileChange(
   };
 }
 
-async function assertUnchanged(change: ManagedFileChange, displayName: string): Promise<void> {
+async function assertUnchanged(change: ManagedFileChange, operationName: string): Promise<void> {
   const current = await readPhysicalFile(change.filePath, change.label, change.maximumBytes);
   if ((!current && change.original)
     || (current && !change.original)
@@ -107,7 +108,7 @@ async function assertUnchanged(change: ManagedFileChange, displayName: string): 
       || current.device !== change.original.device
       || current.inode !== change.original.inode
     ))) {
-    throw new Error(`${change.label} changed during ${displayName} installation: ${change.filePath}`);
+    throw new Error(`${change.label} changed during ${operationName}: ${change.filePath}`);
   }
 }
 
@@ -158,8 +159,8 @@ async function reservePath(filePath: string, label: string): Promise<void> {
   }
 }
 
-async function stage(change: ManagedFileChange, displayName: string): Promise<StagedChange> {
-  await assertUnchanged(change, displayName);
+async function stage(change: ManagedFileChange, operationName: string): Promise<StagedChange> {
+  await assertUnchanged(change, operationName);
   const token = randomUUID();
   const directory = path.dirname(change.filePath);
   const temporaryPath = change.next === undefined
@@ -205,10 +206,10 @@ async function stage(change: ManagedFileChange, displayName: string): Promise<St
 
 async function commit(
   staged: StagedChange,
-  displayName: string,
+  operationName: string,
   renameFile: RenameFile,
 ): Promise<void> {
-  await assertUnchanged(staged.change, displayName);
+  await assertUnchanged(staged.change, operationName);
   if (staged.change.next === undefined) {
     if (!staged.rollbackPath) throw new Error(`Missing rollback data for ${staged.change.label}`);
     await renameFile(staged.change.filePath, staged.rollbackPath);
@@ -319,12 +320,18 @@ export async function commitManagedTransaction(
   transaction: PreparedManagedTransaction,
   renameFile: RenameFile = fsp.rename,
 ): Promise<void> {
+  const operationName = transaction.operation === 'uninstall'
+    ? `${transaction.displayName} uninstall`
+    : `${transaction.displayName} installation`;
+  const failureLabel = transaction.operation === 'uninstall'
+    ? `Uninstall ${transaction.displayName} hooks`
+    : `Install ${transaction.displayName} hooks`;
   const targets = new Set<string>();
   for (const change of transaction.changes) {
     const key = targetKey(change.filePath);
     if (targets.has(key)) {
       throw new Error(
-        `${transaction.displayName} installation contains duplicate file target ${change.filePath}`,
+        `${operationName} contains duplicate file target ${change.filePath}`,
       );
     }
     targets.add(key);
@@ -334,8 +341,8 @@ export async function commitManagedTransaction(
   }
   const staged: StagedChange[] = [];
   try {
-    for (const change of transaction.changes) staged.push(await stage(change, transaction.displayName));
-    for (const item of staged) await commit(item, transaction.displayName, renameFile);
+    for (const change of transaction.changes) staged.push(await stage(change, operationName));
+    for (const item of staged) await commit(item, operationName, renameFile);
   } catch (error) {
     const failures = [asError(error)];
     for (const item of [...staged].reverse()) {
@@ -350,7 +357,7 @@ export async function commitManagedTransaction(
     }
     throw new AggregateError(
       failures,
-      `Install ${transaction.displayName} hooks: ${errorMessage(error)}`,
+      `${failureLabel}: ${errorMessage(error)}`,
     );
   }
   const failures: Error[] = [];
@@ -360,7 +367,7 @@ export async function commitManagedTransaction(
   if (failures.length > 0) {
     throw new AggregateError(
       failures,
-      `Clean ${transaction.displayName} installation transaction files`,
+      `Clean ${operationName} transaction files`,
     );
   }
 }

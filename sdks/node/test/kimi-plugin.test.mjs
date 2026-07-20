@@ -1,149 +1,54 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
-import { parse as parseToml } from '@decimalturn/toml-patch';
+import { stringify as stringifyToml } from '@decimalturn/toml-patch';
+import {
+  assertManagedHook,
+  cliPath,
+  createFixture,
+  installConfig,
+  legacyCommand,
+  managedHook,
+  readKimiConfig,
+  registryModuleUrl,
+  runNode,
+  runPlugin,
+} from '../test-support/kimi-test-helpers.mjs';
 
-const pluginModuleUrl = pathToFileURL(path.resolve('dist/plugins/kimi.js')).href;
-const registryModuleUrl = pathToFileURL(path.resolve('dist/plugins/registry.js')).href;
-const cliPath = path.resolve('dist/cli.js');
+const userStableConfig = [
+  '# stable user config',
+  'default_model = "kimi-code/k3"',
+  '',
+  '[[hooks]]',
+  'event = "SessionStart"',
+  'command = "existing-stable"',
+  'timeout = 30 # keep stable hook',
+  '',
+].join('\n');
 
-function runNode(args, env, input = '', unset = []) {
-  return new Promise((resolve, reject) => {
-    const childEnv = { ...process.env, ...env };
-    for (const key of unset) delete childEnv[key];
-    const child = spawn(process.execPath, args, {
-      env: childEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
+const userLegacyConfig = [
+  '# legacy user config',
+  'telemetry = false',
+  '',
+  '[[hooks]]',
+  'event = "SessionEnd"',
+  'command = "existing-legacy"',
+  '',
+].join('\n');
+
+async function assertMissing(filePath) {
+  await assert.rejects(readFile(filePath), { code: 'ENOENT' });
 }
 
-function runCommand(command, input = '') {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, {
-      shell: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
-async function runPlugin(fixture, method, argument) {
-  const script = `
-    import { kimiPlugin } from ${JSON.stringify(pluginModuleUrl)};
-    const argument = JSON.parse(process.env.ELYDORA_TEST_ARGUMENT);
-    const result = await kimiPlugin[process.env.ELYDORA_TEST_METHOD](argument);
-    if (result !== undefined) console.log(JSON.stringify(result));
-  `;
-  const env = {
-    HOME: fixture.homeDir,
-    USERPROFILE: fixture.homeDir,
-    PATH: fixture.binDir,
-    ELYDORA_TEST_ARGUMENT: JSON.stringify(argument),
-    ELYDORA_TEST_METHOD: method,
-  };
-  if (fixture.explicitKimiHome) env.KIMI_CODE_HOME = fixture.kimiHome;
-  return runNode(
-    ['--input-type=module', '--eval', script],
-    env,
-    '',
-    fixture.explicitKimiHome ? [] : ['KIMI_CODE_HOME'],
+function assertManagedTriple(config) {
+  assertManagedHook(managedHook(config, 'PreToolUse'), 'PreToolUse');
+  assertManagedHook(managedHook(config, 'PostToolUse'), 'PostToolUse');
+  assertManagedHook(managedHook(config, 'PostToolUseFailure'), 'PostToolUseFailure');
+  assert.equal(
+    managedHook(config, 'PostToolUse').command,
+    managedHook(config, 'PostToolUseFailure').command,
   );
-}
-
-async function writeOptional(filePath, contents) {
-  if (contents === undefined) return;
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, contents, 'utf-8');
-}
-
-async function createFixture({
-  guardSource,
-  hookSource,
-  modernConfig,
-  legacyConfig,
-  legacyInstalled = true,
-  explicitKimiHome = true,
-} = {}) {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-kimi-'));
-  const binDir = path.join(homeDir, 'bin');
-  const kimiHome = explicitKimiHome
-    ? path.join(homeDir, 'custom-kimi-code')
-    : path.join(homeDir, '.kimi-code');
-  const modernPath = path.join(kimiHome, 'config.toml');
-  const legacyPath = path.join(homeDir, '.kimi', 'config.toml');
-  const agentDir = path.join(homeDir, '.elydora', 'agent-1');
-  const guardScriptPath = path.join(agentDir, 'guard.js');
-  const hookScriptPath = path.join(agentDir, 'hook.js');
-  await mkdir(agentDir, { recursive: true });
-  await mkdir(binDir, { recursive: true });
-  if (legacyInstalled) {
-    const executable = path.join(binDir, process.platform === 'win32' ? 'kimi-cli.cmd' : 'kimi-cli');
-    await writeFile(executable, '');
-    if (process.platform !== 'win32') await chmod(executable, 0o700);
-  }
-  await writeFile(
-    guardScriptPath,
-    guardSource ?? "process.stderr.write('Agent is frozen by Elydora.'); process.exit(2);\n",
-  );
-  await writeFile(hookScriptPath, hookSource ?? 'process.exit(0);\n');
-  await writeFile(path.join(agentDir, 'config.json'), JSON.stringify({
-    agent_id: 'agent-1',
-    agent_name: 'kimi',
-  }));
-  await writeOptional(modernPath, modernConfig);
-  await writeOptional(legacyPath, legacyConfig);
-
-  const fixture = {
-    agentDir,
-    binDir,
-    guardScriptPath,
-    homeDir,
-    hookScriptPath,
-    kimiHome,
-    explicitKimiHome,
-    legacyPath,
-    modernPath,
-    async close() {
-      await rm(homeDir, { recursive: true, force: true });
-    },
-  };
-  fixture.installResult = await runPlugin(fixture, 'install', {
-    agentName: 'kimi',
-    agentId: 'agent-1',
-    baseUrl: 'https://api.elydora.com',
-    guardScriptPath,
-    hookScriptPath,
-  });
-  return fixture;
-}
-
-function managedHook(config, event, scriptName) {
-  return config.hooks.find(
-    (hook) => hook.event === event && hook.command.includes(scriptName),
-  );
-}
-
-function assertStrictHook(hook) {
-  assert.deepEqual(Object.keys(hook).sort(), ['command', 'event', 'timeout']);
-  assert.equal(hook.timeout, 10);
 }
 
 test('Kimi is registered in the SDK and CLI', async () => {
@@ -154,304 +59,256 @@ test('Kimi is registered in the SDK and CLI', async () => {
     configFile: 'config.toml',
   });
 
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-kimi-cli-'));
+  const fixture = await createFixture({ legacyDetected: false });
   try {
     const result = await runNode(['--no-warnings', cliPath, 'status'], {
-      HOME: homeDir,
-      USERPROFILE: homeDir,
-      KIMI_CODE_HOME: path.join(homeDir, '.kimi-code'),
-    });
+      HOME: fixture.homeDir,
+      USERPROFILE: fixture.homeDir,
+      KIMI_CODE_HOME: fixture.kimiHome,
+    }, fixture.projectDir);
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /Kimi Code \(kimi\)/);
   } finally {
-    await rm(homeDir, { recursive: true, force: true });
+    await fixture.close();
   }
 });
 
-test('Kimi install preserves both user configs and is idempotent', async () => {
-  const modernConfig = [
-    '# modern user config',
-    'default_model = "kimi-code/k3"',
-    '',
-    '[[hooks]]',
-    'event = "SessionStart"',
-    'command = "existing-modern"',
-    'timeout = 30 # keep modern hook',
-    '',
-  ].join('\n');
-  const legacyConfig = [
-    '# legacy user config',
-    'telemetry = false',
-    '',
-    '[[hooks]]',
-    'event = "SessionEnd"',
-    'command = "existing-legacy"',
-    '',
-  ].join('\n');
-  const fixture = await createFixture({ modernConfig, legacyConfig });
+test('Kimi installs an exact managed triple in both configs and is idempotent', async () => {
+  const fixture = await createFixture({
+    stableConfig: userStableConfig,
+    legacyConfig: userLegacyConfig,
+  });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    assert.match(fixture.installResult.stdout, /Kimi Code and kimi-cli/i);
-    const secondInstall = await runPlugin(fixture, 'install', {
-      agentName: 'kimi',
-      agentId: 'agent-1',
-      baseUrl: 'https://api.elydora.com',
-      guardScriptPath: fixture.guardScriptPath,
-      hookScriptPath: fixture.hookScriptPath,
-    });
-    assert.equal(secondInstall.code, 0, secondInstall.stderr);
-
-    for (const [configPath, comment, existingCommand] of [
-      [fixture.modernPath, '# modern user config', 'existing-modern'],
+    const first = await fixture.install();
+    assert.equal(first.code, 0, first.stderr);
+    assert.match(first.stdout, /Kimi Code and kimi-cli/i);
+    const firstSources = [];
+    for (const [configPath, comment, userCommand] of [
+      [fixture.stablePath, '# stable user config', 'existing-stable'],
       [fixture.legacyPath, '# legacy user config', 'existing-legacy'],
     ]) {
-      const raw = await readFile(configPath, 'utf-8');
-      const config = parseToml(raw);
+      const { raw, config } = await readKimiConfig(configPath);
+      firstSources.push(raw);
       assert.match(raw, new RegExp(comment));
-      assert(config.hooks.some((hook) => hook.command === existingCommand));
-      assert.equal(config.hooks.length, 3);
-      assertStrictHook(managedHook(config, 'PreToolUse', 'guard.js'));
-      assertStrictHook(managedHook(config, 'PostToolUse', 'hook.js'));
+      assert(config.hooks.some((hook) => hook.command === userCommand));
+      assert.equal(config.hooks.length, 4);
+      assertManagedTriple(config);
     }
-    await assert.rejects(
-      readFile(path.join(fixture.homeDir, '.kimi-code', 'config.toml')),
-      { code: 'ENOENT' },
-    );
+
+    const second = await fixture.install();
+    assert.equal(second.code, 0, second.stderr);
+    assert.equal(await readFile(fixture.stablePath, 'utf-8'), firstSources[0]);
+    assert.equal(await readFile(fixture.legacyPath, 'utf-8'), firstSources[1]);
+    await assertMissing(path.join(fixture.homeDir, '.kimi-code', 'config.toml'));
   } finally {
     await fixture.close();
   }
 });
 
-test('Kimi Code install does not create a false legacy migration source', async () => {
-  const fixture = await createFixture({ legacyInstalled: false });
+test('fresh stable Kimi installation leaves the legacy migration source absent', async () => {
+  const fixture = await createFixture({ legacyDetected: false });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    assert.equal(parseToml(await readFile(fixture.modernPath, 'utf-8')).hooks.length, 2);
-    await assert.rejects(readFile(fixture.legacyPath), { code: 'ENOENT' });
+    const result = await fixture.install();
+    assert.equal(result.code, 0, result.stderr);
+    const { config } = await readKimiConfig(fixture.stablePath);
+    assert.equal(config.hooks.length, 3);
+    assertManagedTriple(config);
+    await assertMissing(fixture.legacyPath);
   } finally {
     await fixture.close();
   }
 });
 
-test('Kimi Code treats an empty home override as the official default', async () => {
-  const fixture = await createFixture({ explicitKimiHome: false, legacyInstalled: false });
+test('empty KIMI_CODE_HOME resolves to the documented default', async () => {
+  const fixture = await createFixture({
+    explicitKimiHome: false,
+    legacyDetected: false,
+  });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    fixture.explicitKimiHome = true;
-    fixture.kimiHome = '';
+    assert.equal((await fixture.install()).code, 0);
+    fixture.kimiHomeOverride = '';
     const status = await runPlugin(fixture, 'status', null);
     assert.equal(status.code, 0, status.stderr);
     assert.equal(JSON.parse(status.stdout).installed, true);
+    assertManagedTriple((await readKimiConfig(fixture.stablePath)).config);
   } finally {
     await fixture.close();
   }
 });
 
-test('Legacy kimi-cli install does not create a premature migration target', async () => {
-  const fixture = await createFixture({ explicitKimiHome: false });
+test('legacy-only installation leaves the stable migration target absent', async () => {
+  const fixture = await createFixture({
+    explicitKimiHome: false,
+    stableDetected: false,
+  });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    assert.equal(parseToml(await readFile(fixture.legacyPath, 'utf-8')).hooks.length, 2);
-    await assert.rejects(readFile(fixture.modernPath), { code: 'ENOENT' });
-    await rm(fixture.binDir, { recursive: true });
-    const status = await runPlugin(fixture, 'status', null);
-    assert.equal(status.code, 0, status.stderr);
-    assert.equal(JSON.parse(status.stdout).installed, true);
+    const result = await fixture.install();
+    assert.equal(result.code, 0, result.stderr);
+    assertManagedTriple((await readKimiConfig(fixture.legacyPath)).config);
+    await assertMissing(fixture.stablePath);
   } finally {
     await fixture.close();
   }
 });
 
-test('Kimi commands block freezes and forward the official payload unchanged', async () => {
-  const capturePath = path.join(os.tmpdir(), `elydora-kimi-event-${process.pid}-${Date.now()}.json`);
-  const hookSource = `
-    const fs = require('node:fs');
-    const chunks = [];
-    process.stdin.on('data', (chunk) => chunks.push(chunk));
-    process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(capturePath)}, Buffer.concat(chunks)));
-  `;
-  const fixture = await createFixture({ hookSource });
+test('Kimi parses every selected config before creating runtime files', async () => {
+  const fixture = await createFixture({
+    stableConfig: userStableConfig,
+    legacyConfig: '[malformed',
+  });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const config = parseToml(await readFile(fixture.modernPath, 'utf-8'));
-    const guard = managedHook(config, 'PreToolUse', 'guard.js');
-    const audit = managedHook(config, 'PostToolUse', 'hook.js');
-    const prePayload = {
-      hook_event_name: 'PreToolUse',
-      session_id: 'session-1',
-      cwd: fixture.homeDir,
-      tool_name: 'Bash',
-      tool_input: { command: 'echo test' },
-      tool_call_id: 'call-1',
-    };
-    const guardResult = await runCommand(guard.command, JSON.stringify(prePayload));
-    assert.equal(guardResult.code, 2);
-    assert.match(guardResult.stderr, /Agent is frozen by Elydora/);
-
-    const postPayload = {
-      ...prePayload,
-      hook_event_name: 'PostToolUse',
-      tool_output: { output: 'test' },
-    };
-    const auditResult = await runCommand(audit.command, JSON.stringify(postPayload));
-    assert.equal(auditResult.code, 0, auditResult.stderr);
-    assert.deepEqual(JSON.parse(await readFile(capturePath, 'utf-8')), postPayload);
+    const result = await fixture.install();
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /parse kimi-cli legacy hooks config/i);
+    assert.equal(await readFile(fixture.stablePath, 'utf-8'), userStableConfig);
+    assert.equal(await readFile(fixture.legacyPath, 'utf-8'), '[malformed');
+    await assert.rejects(lstat(fixture.agentDir), { code: 'ENOENT' });
   } finally {
     await fixture.close();
-    await rm(capturePath, { force: true });
   }
 });
 
-test('Kimi status accepts either runtime contract and requires both scripts', async () => {
-  const fixture = await createFixture();
+test('Kimi rejects fields and events outside each official contract', async (t) => {
+  for (const [name, stableConfig, legacyConfig, pattern] of [
+    [
+      'unsupported field',
+      '[[hooks]]\nevent = "PreToolUse"\ncommand = "existing"\ncwd = "/tmp"\n',
+      undefined,
+      /unsupported field "cwd"/i,
+    ],
+    [
+      'legacy stable-only event',
+      undefined,
+      '[[hooks]]\nevent = "Interrupt"\ncommand = "existing"\n',
+      /unsupported event "Interrupt"/i,
+    ],
+    [
+      'timeout bound',
+      '[[hooks]]\nevent = "PreToolUse"\ncommand = "existing"\ntimeout = 601\n',
+      undefined,
+      /integer from 1 to 600/i,
+    ],
+  ]) {
+    await t.test(name, async () => {
+      const fixture = await createFixture({ stableConfig, legacyConfig });
+      try {
+        const result = await fixture.install();
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, pattern);
+        await assert.rejects(lstat(fixture.agentDir), { code: 'ENOENT' });
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test('Kimi migrates exact legacy commands and preserves command lookalikes', async () => {
+  const fixture = await createFixture({ legacyDetected: false });
+  const lookalike = `${legacyCommand(fixture.guardScriptPath)} --inspect`;
+  const source = [
+    '[[hooks]]',
+    'event = "PreToolUse"',
+    `command = ${JSON.stringify(legacyCommand(fixture.guardScriptPath))}`,
+    'timeout = 10',
+    '',
+    '[[hooks]]',
+    'event = "PostToolUse"',
+    `command = ${JSON.stringify(legacyCommand(fixture.hookScriptPath))}`,
+    'timeout = 10',
+    '',
+    '[[hooks]]',
+    'event = "PreToolUse"',
+    `command = ${JSON.stringify(lookalike)}`,
+    'timeout = 10',
+    '',
+  ].join('\n');
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    await rm(fixture.modernPath);
+    await mkdir(path.dirname(fixture.stablePath), { recursive: true });
+    await writeFile(fixture.stablePath, source, { encoding: 'utf-8', mode: 0o600 });
+    const install = await fixture.install();
+    assert.equal(install.code, 0, install.stderr);
+    let config = (await readKimiConfig(fixture.stablePath)).config;
+    assert.equal(config.hooks.length, 4);
+    assert(config.hooks.some((hook) => hook.command === lookalike));
+    assertManagedTriple(config);
+
+    const uninstall = await runPlugin(fixture, 'uninstall', 'agent-1');
+    assert.equal(uninstall.code, 0, uninstall.stderr);
+    config = (await readKimiConfig(fixture.stablePath)).config;
+    assert.deepEqual(config.hooks.map((hook) => ({ ...hook })), [{
+      event: 'PreToolUse',
+      command: lookalike,
+      timeout: 10,
+    }]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Kimi uninstall preserves user config and removes fully managed configs', async () => {
+  const userFixture = await createFixture({
+    stableConfig: userStableConfig,
+    legacyConfig: userLegacyConfig,
+  });
+  try {
+    assert.equal((await userFixture.install()).code, 0);
+    const result = await runPlugin(userFixture, 'uninstall', 'agent-1');
+    assert.equal(result.code, 0, result.stderr);
+    const stable = await readKimiConfig(userFixture.stablePath);
+    const legacy = await readKimiConfig(userFixture.legacyPath);
+    assert.match(stable.raw, /# keep stable hook/);
+    assert.match(legacy.raw, /# legacy user config/);
+    assert.deepEqual(stable.config.hooks.map((hook) => hook.command), ['existing-stable']);
+    assert.deepEqual(legacy.config.hooks.map((hook) => hook.command), ['existing-legacy']);
+  } finally {
+    await userFixture.close();
+  }
+
+  const managedFixture = await createFixture();
+  try {
+    assert.equal((await managedFixture.install()).code, 0);
+    const result = await runPlugin(managedFixture, 'uninstall', 'agent-1');
+    assert.equal(result.code, 0, result.stderr);
+    await assertMissing(managedFixture.stablePath);
+    await assertMissing(managedFixture.legacyPath);
+  } finally {
+    await managedFixture.close();
+  }
+});
+
+test('Kimi status requires the complete triple, runtime identity, and private key', async () => {
+  const fixture = await createFixture({ legacyDetected: false });
+  try {
+    assert.equal((await fixture.install()).code, 0);
     let status = await runPlugin(fixture, 'status', null);
     assert.equal(status.code, 0, status.stderr);
     assert.equal(JSON.parse(status.stdout).installed, true);
 
-    const reinstall = await runPlugin(fixture, 'install', {
-      agentName: 'kimi',
-      agentId: 'agent-1',
-      baseUrl: 'https://api.elydora.com',
-      guardScriptPath: fixture.guardScriptPath,
-      hookScriptPath: fixture.hookScriptPath,
-    });
-    assert.equal(reinstall.code, 0, reinstall.stderr);
-    await rm(fixture.legacyPath);
-    status = await runPlugin(fixture, 'status', null);
-    assert.equal(JSON.parse(status.stdout).installed, true);
-
-    await rm(fixture.guardScriptPath);
+    const { config } = await readKimiConfig(fixture.stablePath);
+    config.hooks = config.hooks.filter((hook) => hook.event !== 'PostToolUseFailure');
+    await writeFile(fixture.stablePath, stringifyToml(config), 'utf-8');
     status = await runPlugin(fixture, 'status', null);
     assert.equal(JSON.parse(status.stdout).installed, false);
-  } finally {
-    await fixture.close();
-  }
-});
 
-test('Kimi uninstall preserves user hooks in both contracts', async () => {
-  const userHook = [
-    '# user hook',
-    '[[hooks]]',
-    'event = "SessionStart"',
-    'command = "existing-command"',
-    'timeout = 30 # keep timeout',
-    '',
-  ].join('\n');
-  const fixture = await createFixture({ modernConfig: userHook, legacyConfig: userHook });
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
-    assert.equal(result.code, 0, result.stderr);
-    for (const configPath of [fixture.modernPath, fixture.legacyPath]) {
-      const raw = await readFile(configPath, 'utf-8');
-      const config = parseToml(raw);
-      assert.match(raw, /# user hook/);
-      assert.match(raw, /# keep timeout/);
-      assert.deepEqual(config.hooks.map((hook) => ({ ...hook })), [{
-        event: 'SessionStart',
-        command: 'existing-command',
-        timeout: 30,
-      }]);
-    }
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Kimi uninstall removes configs created entirely by Elydora', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
-    assert.equal(result.code, 0, result.stderr);
-    await assert.rejects(readFile(fixture.modernPath), { code: 'ENOENT' });
-    await assert.rejects(readFile(fixture.legacyPath), { code: 'ENOENT' });
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Kimi parses every config before writing either contract', async () => {
-  const modernConfig = '# untouched modern\ndefault_model = "kimi-code/k3"\n';
-  const legacyConfig = '[malformed';
-  const fixture = await createFixture({ modernConfig, legacyConfig });
-  try {
-    assert.equal(fixture.installResult.code, 1);
-    assert.match(fixture.installResult.stderr, /parse kimi-cli legacy hooks config/i);
-    assert.equal(await readFile(fixture.modernPath, 'utf-8'), modernConfig);
-    assert.equal(await readFile(fixture.legacyPath, 'utf-8'), legacyConfig);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Kimi rejects invalid hook shapes without rewriting user config', async () => {
-  const modernConfig = [
-    '[[hooks]]',
-    'event = "PreToolUse"',
-    'command = "existing-command"',
-    'cwd = "/tmp"',
-    '',
-  ].join('\n');
-  const fixture = await createFixture({ modernConfig });
-  try {
-    assert.equal(fixture.installResult.code, 1);
-    assert.match(fixture.installResult.stderr, /unsupported field "cwd"/i);
-    assert.equal(await readFile(fixture.modernPath, 'utf-8'), modernConfig);
-    await assert.rejects(readFile(fixture.legacyPath), { code: 'ENOENT' });
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Kimi install rejects missing runtimes before creating configs', async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-kimi-missing-runtime-'));
-  const fixture = {
-    binDir: path.join(homeDir, 'bin'),
-    explicitKimiHome: true,
-    homeDir,
-    kimiHome: path.join(homeDir, 'custom-kimi-code'),
-    modernPath: path.join(homeDir, 'custom-kimi-code', 'config.toml'),
-    legacyPath: path.join(homeDir, '.kimi', 'config.toml'),
-  };
-  try {
-    const result = await runPlugin(fixture, 'install', {
-      agentName: 'kimi',
-      agentId: 'agent-1',
-      guardScriptPath: path.join(homeDir, '.elydora', 'agent-1', 'guard.js'),
-      hookScriptPath: path.join(homeDir, '.elydora', 'agent-1', 'hook.js'),
-    });
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /runtime is missing/i);
-    await assert.rejects(readFile(fixture.modernPath), { code: 'ENOENT' });
-    await assert.rejects(readFile(fixture.legacyPath), { code: 'ENOENT' });
-  } finally {
-    await rm(homeDir, { recursive: true, force: true });
-  }
-});
-
-test('Kimi status surfaces malformed referenced runtime metadata', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    await writeFile(path.join(fixture.agentDir, 'config.json'), '{ malformed');
-    const status = await runPlugin(fixture, 'status', null);
+    assert.equal((await fixture.install()).code, 0);
+    await writeFile(path.join(fixture.agentDir, 'private.key'), 'invalid');
+    status = await runPlugin(fixture, 'status', null);
     assert.equal(status.code, 1);
-    assert.match(status.stderr, /parse Elydora runtime config/i);
+    assert.match(status.stderr, /private key is invalid/i);
   } finally {
     await fixture.close();
   }
 });
 
-test('Kimi atomic writes leave no temporary files behind', async () => {
+test('Kimi installation leaves no transaction files', async () => {
   const fixture = await createFixture();
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    for (const directory of [path.dirname(fixture.modernPath), path.dirname(fixture.legacyPath)]) {
-      assert.equal((await readdir(directory)).some((name) => name.endsWith('.tmp')), false);
+    const result = await fixture.install();
+    assert.equal(result.code, 0, result.stderr);
+    for (const directory of [fixture.agentDir, fixture.kimiHome, fixture.legacyHome]) {
+      const names = await readdir(directory);
+      assert.equal(names.some((name) => /\.(tmp|rollback)$/.test(name)), false, names.join(', '));
     }
   } finally {
     await fixture.close();

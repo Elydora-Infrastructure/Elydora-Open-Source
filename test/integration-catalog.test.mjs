@@ -156,6 +156,9 @@ test('every provider exposes a complete, machine-readable hook contract', async 
     assert.ok(Array.isArray(provider.config_paths));
     assert.equal(typeof provider.events.before_tool, 'string');
     assert.equal(typeof provider.events.after_tool, 'string');
+    if (provider.events.after_tool_failure !== undefined) {
+      assert.equal(typeof provider.events.after_tool_failure, 'string');
+    }
     assert.ok([
       'any_nonzero_exit',
       'exception',
@@ -182,6 +185,11 @@ test('every provider exposes a complete, machine-readable hook contract', async 
       assert.equal(typeof provider.event_fields.name, 'string');
       assert.equal(typeof provider.event_fields.input, 'string');
       assert.equal(typeof provider.event_fields.session, 'string');
+      for (const field of ['call_id', 'output', 'error']) {
+        if (provider.event_fields[field] !== undefined) {
+          assert.equal(typeof provider.event_fields[field], 'string');
+        }
+      }
     }
 
     for (const variant of provider.contract_variants ?? []) {
@@ -192,6 +200,9 @@ test('every provider exposes a complete, machine-readable hook contract', async 
       assert.ok(Array.isArray(variant.config_paths) && variant.config_paths.length > 0);
       assert.equal(typeof variant.events.before_tool, 'string');
       assert.equal(typeof variant.events.after_tool, 'string');
+      if (variant.events.after_tool_failure !== undefined) {
+        assert.equal(typeof variant.events.after_tool_failure, 'string');
+      }
       assert.equal(typeof variant.blocking.mechanism, 'string');
       assert.equal(typeof variant.blocking.failure_mode, 'string');
       assert.match(variant.source_url, /^https:\/\//);
@@ -223,6 +234,8 @@ test('schema freezes the provider contract and supported enums', async () => {
     providerSchema.properties.blocking.properties.timeout_failure_mode.enum,
     ['fail_closed', 'fail_open'],
   );
+  assert.equal(providerSchema.properties.events.properties.after_tool_failure.type, 'string');
+  assert.equal(providerSchema.properties.event_fields.properties.error.type, 'string');
   assert.deepEqual(providerSchema.properties.delivery_state.enum, ['available', 'partial', 'planned']);
   assert.equal(providerSchema.properties.contract_variants.items.$ref, '#/$defs/contractVariant');
   assert.deepEqual(schema.$defs.contractVariant.properties.release_channel.enum, [
