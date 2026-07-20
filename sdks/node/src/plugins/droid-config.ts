@@ -1,51 +1,50 @@
 import {
   applyEdits,
   modify,
-  parse,
-  parseTree,
-  printParseErrorCode,
   type FormattingOptions,
   type JSONPath,
-  type Node,
-  type ParseError,
 } from 'jsonc-parser';
+import type { FileSnapshot } from './managed-files.js';
+import type { DroidPolicyState } from './droid-policy.js';
 import {
   TOOL_EVENTS,
   type DroidGroup,
-  type DroidHookSettings,
-  type JsonObject,
+  type DroidHookMap,
   type ToolEvent,
-  hasOwn,
-  isObject,
   managedRemovals,
-  readHookSettings,
+  readHookMap,
 } from './droid-contract.js';
+import {
+  isObject,
+  parseStrictJsoncObject,
+  type JsonObject,
+} from './strict-json.js';
 
 export const OWNED_FILE_MARKER = '// Managed by Elydora';
 
-export type DroidDocumentKind = 'hooks' | 'legacy' | 'settings';
+export type DroidDocumentKind = 'hooks' | 'legacy' | 'settings' | 'local-settings';
 
 export interface DroidDocument {
   readonly kind: DroidDocumentKind;
   readonly filePath: string;
   readonly exists: boolean;
   readonly raw: string;
+  readonly snapshot?: FileSnapshot;
   readonly root: JsonObject;
-  readonly hooks: DroidHookSettings;
+  readonly hooks: DroidHookMap;
   readonly basePath: JSONPath;
   readonly hasHooksContainer: boolean;
+  readonly hooksDisabled?: boolean;
+  readonly showHookOutput?: boolean;
   readonly ownedFile: boolean;
 }
 
 export interface DroidSources {
-  readonly rootPath: string;
-  readonly primary?: DroidDocument;
+  readonly root: DroidDocument;
+  readonly legacy: DroidDocument;
   readonly settings: DroidDocument;
-}
-
-export interface InstallationTargets {
-  readonly targets: ReadonlyMap<ToolEvent, DroidDocument>;
-  readonly createdRoot?: DroidDocument;
+  readonly localSettings: DroidDocument;
+  readonly policy: DroidPolicyState;
 }
 
 export interface RenderedDocument {
@@ -59,59 +58,48 @@ interface DocumentOptions {
   readonly filePath: string;
   readonly kind: DroidDocumentKind;
   readonly raw: string;
+  readonly snapshot?: FileSnapshot;
 }
 
-function rejectDuplicateKeys(node: Node | undefined, label: string, path: string[] = []): void {
-  if (!node) return;
-  if (node.type === 'object') {
-    const keys = new Set<string>();
-    for (const property of node.children ?? []) {
-      const key = String(property.children?.[0]?.value);
-      const location = [...path, key];
-      if (keys.has(key)) throw new Error(`${label} contains duplicate field "${location.join('.')}"`);
-      keys.add(key);
-      rejectDuplicateKeys(property.children?.[1], label, location);
-    }
-    return;
-  }
-  if (node.type === 'array') {
-    for (const child of node.children ?? []) rejectDuplicateKeys(child, label, path);
-  }
-}
-
-function parseJsoncObject(raw: string, label: string): JsonObject {
-  const errors: ParseError[] = [];
-  const value: unknown = parse(raw, errors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
-  if (errors.length > 0) {
-    const details = errors
-      .map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`)
-      .join(', ');
-    throw new Error(`Failed to parse ${label}: ${details}`);
-  }
-  if (!isObject(value)) throw new Error(`${label} must contain a JSON object`);
-  rejectDuplicateKeys(parseTree(raw, [], {
-    allowTrailingComma: true,
-    disallowComments: false,
-  }), label);
-  return value;
+function hasOwn(value: JsonObject, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function labelFor(kind: DroidDocumentKind, filePath: string): string {
   if (kind === 'settings') return `Factory Droid settings at ${filePath}`;
+  if (kind === 'local-settings') return `Factory Droid local settings at ${filePath}`;
   if (kind === 'legacy') return `Factory Droid legacy hooks at ${filePath}`;
   return `Factory Droid hooks at ${filePath}`;
 }
 
+function optionalBoolean(root: JsonObject, field: string, label: string): boolean | undefined {
+  const value = root[field];
+  if (value !== undefined && typeof value !== 'boolean') {
+    throw new Error(`${label} field "${field}" must be a boolean`);
+  }
+  return value as boolean | undefined;
+}
+
+function legacyDirectHooks(root: JsonObject, label: string): {
+  readonly hooks: DroidHookMap;
+  readonly hooksDisabled?: boolean;
+  readonly showHookOutput?: boolean;
+} {
+  const hooksDisabled = optionalBoolean(root, 'hooksDisabled', label);
+  const showHookOutput = optionalBoolean(root, 'showHookOutput', label);
+  const hookEntries = Object.fromEntries(
+    Object.entries(root).filter(([key]) => key !== 'hooksDisabled' && key !== 'showHookOutput'),
+  );
+  return { hooks: readHookMap(hookEntries, label), hooksDisabled, showHookOutput };
+}
+
 export function parseDocument(options: DocumentOptions): DroidDocument {
   const label = labelFor(options.kind, options.filePath);
-  const root = parseJsoncObject(options.raw, label);
-  if (options.kind === 'settings') {
+  const root = parseStrictJsoncObject(options.raw, label);
+  if (options.kind === 'settings' || options.kind === 'local-settings') {
     const hasHooksContainer = hasOwn(root, 'hooks');
     const hooks = hasHooksContainer
-      ? readHookSettings(root.hooks, `${label} field "hooks"`)
+      ? readHookMap(root.hooks, `${label} field "hooks"`)
       : {};
     return {
       ...options,
@@ -119,21 +107,42 @@ export function parseDocument(options: DocumentOptions): DroidDocument {
       hooks,
       basePath: ['hooks'],
       hasHooksContainer,
+      hooksDisabled: optionalBoolean(root, 'hooksDisabled', label),
+      showHookOutput: optionalBoolean(root, 'showHookOutput', label),
       ownedFile: false,
     };
   }
+  if (hasOwn(root, 'hooks')) {
+    if (!isObject(root.hooks)) throw new Error(`${label} field "hooks" must be an object`);
+    return {
+      ...options,
+      root,
+      hooks: readHookMap(root.hooks, `${label} field "hooks"`),
+      basePath: ['hooks'],
+      hasHooksContainer: true,
+      ownedFile: options.raw.startsWith(OWNED_FILE_MARKER),
+    };
+  }
+  const legacy = legacyDirectHooks(root, label);
   return {
     ...options,
     root,
-    hooks: readHookSettings(root, label),
+    ...legacy,
     basePath: [],
-    hasHooksContainer: true,
+    hasHooksContainer: false,
     ownedFile: options.raw.startsWith(OWNED_FILE_MARKER),
   };
 }
 
-export function createSettingsDocument(filePath: string): DroidDocument {
-  return parseDocument({ exists: false, filePath, kind: 'settings', raw: '{}\n' });
+export function createSettingsDocument(
+  filePath: string,
+  kind: 'settings' | 'local-settings' = 'settings',
+): DroidDocument {
+  return parseDocument({ exists: false, filePath, kind, raw: '{}\n' });
+}
+
+export function createLegacyHookDocument(filePath: string): DroidDocument {
+  return parseDocument({ exists: false, filePath, kind: 'legacy', raw: '{}\n' });
 }
 
 export function createOwnedHookDocument(filePath: string): DroidDocument {
@@ -141,7 +150,7 @@ export function createOwnedHookDocument(filePath: string): DroidDocument {
     exists: false,
     filePath,
     kind: 'hooks',
-    raw: `${OWNED_FILE_MARKER}\n{}\n`,
+    raw: `${OWNED_FILE_MARKER}\n{\n  "hooks": {}\n}\n`,
   });
 }
 
@@ -159,12 +168,7 @@ function formatting(raw: string): FormattingOptions {
   };
 }
 
-function change(
-  raw: string,
-  path: JSONPath,
-  value: unknown,
-  isArrayInsertion = false,
-): string {
+function change(raw: string, path: JSONPath, value: unknown, isArrayInsertion = false): string {
   return applyEdits(raw, modify(raw, path, value, {
     formattingOptions: formatting(raw),
     isArrayInsertion,
@@ -177,20 +181,16 @@ function currentDocument(document: DroidDocument, raw: string): DroidDocument {
     filePath: document.filePath,
     kind: document.kind,
     raw,
+    snapshot: document.snapshot,
   });
 }
 
-function removeManagedEntries(
-  document: DroidDocument,
-  raw: string,
-  agentId?: string,
-): string {
+function removeManagedEntries(document: DroidDocument, raw: string, agentId?: string): string {
   const removals = managedRemovals(document.hooks, agentId);
   for (const event of TOOL_EVENTS) {
     const eventRemovals = removals
       .filter((removal) => removal.event === event)
       .sort((left, right) => right.groupIndex - left.groupIndex);
-    if (eventRemovals.length === 0) continue;
     for (const removal of eventRemovals) {
       const groupPath = [...eventPath(document, event), removal.groupIndex];
       if (removal.removeGroup) {
@@ -201,9 +201,11 @@ function removeManagedEntries(
         raw = change(raw, [...groupPath, 'hooks', handlerIndex], undefined);
       }
     }
-    const current = currentDocument(document, raw);
-    if ((current.hooks[event] ?? []).length === 0) {
-      raw = change(raw, eventPath(document, event), undefined);
+    if (eventRemovals.length > 0) {
+      const current = currentDocument(document, raw);
+      if ((current.hooks[event] ?? []).length === 0) {
+        raw = change(raw, eventPath(document, event), undefined);
+      }
     }
   }
   return raw;
@@ -216,7 +218,7 @@ function appendGroup(
   group: DroidGroup,
 ): string {
   const current = currentDocument(document, raw);
-  if (hasOwn(current.hooks, event)) {
+  if (Object.prototype.hasOwnProperty.call(current.hooks, event)) {
     const groups = current.hooks[event] ?? [];
     return change(raw, [...eventPath(document, event), groups.length], group, true);
   }
@@ -224,8 +226,10 @@ function appendGroup(
 }
 
 function hookFileIsEmpty(document: DroidDocument, raw: string): boolean {
-  if (document.kind === 'settings') return false;
-  return Object.keys(currentDocument(document, raw).hooks).length === 0;
+  if (document.kind === 'settings' || document.kind === 'local-settings') return false;
+  const current = currentDocument(document, raw);
+  const remainingRootFields = Object.keys(current.root).filter((key) => key !== 'hooks');
+  return Object.keys(current.hooks).length === 0 && remainingRootFields.length === 0;
 }
 
 export function renderDocument(
@@ -239,45 +243,89 @@ export function renderDocument(
     if (group) raw = appendGroup(document, raw, event, group);
   }
   currentDocument(document, raw);
-  if (additions.size === 0 && document.ownedFile && hookFileIsEmpty(document, raw)) {
+  if (additions.size === 0
+    && document.exists
+    && document.ownedFile
+    && hookFileIsEmpty(document, raw)) {
     return { document, changed: true, next: undefined };
   }
   return { document, changed: raw !== document.raw, next: raw };
 }
 
-function eventTarget(
-  event: ToolEvent,
-  sources: DroidSources,
-  createdRoot: () => DroidDocument,
-): DroidDocument {
-  if (sources.primary && hasOwn(sources.primary.hooks, event)) return sources.primary;
-  if (sources.settings.hasHooksContainer && hasOwn(sources.settings.hooks, event)) {
-    return sources.settings;
-  }
-  if (sources.primary) return sources.primary;
+export function activeDocument(sources: DroidSources): DroidDocument {
+  if (sources.root.exists) return sources.root;
+  if (sources.legacy.exists) return sources.legacy;
+  if (sources.localSettings.hasHooksContainer) return sources.localSettings;
   if (sources.settings.hasHooksContainer) return sources.settings;
-  return createdRoot();
+  return sources.root;
 }
 
-export function installationTargets(sources: DroidSources): InstallationTargets {
-  let root: DroidDocument | undefined;
-  const createdRoot = (): DroidDocument => {
-    root ??= createOwnedHookDocument(sources.rootPath);
-    return root;
-  };
-  const targets = new Map<ToolEvent, DroidDocument>();
-  for (const event of TOOL_EVENTS) targets.set(event, eventTarget(event, sources, createdRoot));
-  return { targets, createdRoot: root };
+export function effectiveHooks(sources: DroidSources): DroidHookMap {
+  return activeDocument(sources).hooks;
 }
 
-export function additionsFor(
+export interface DroidHookBlock {
+  readonly field: 'allowManagedHooksOnly' | 'hooksDisabled';
+  readonly filePath: string;
+  readonly label: string;
+}
+
+export function hookBlock(sources: DroidSources): DroidHookBlock | undefined {
+  if (sources.policy.allowManagedHooksOnlyBy) {
+    return {
+      field: 'allowManagedHooksOnly',
+      ...sources.policy.allowManagedHooksOnlyBy,
+    };
+  }
+  if (sources.policy.hooksDisabled !== undefined) {
+    return sources.policy.hooksDisabled ? {
+      field: 'hooksDisabled',
+      ...sources.policy.hooksDisabledBy!,
+    } : undefined;
+  }
+  const selected = sources.localSettings.hooksDisabled !== undefined
+    ? sources.localSettings
+    : sources.settings;
+  if (selected.hooksDisabled === true) {
+    return {
+      field: 'hooksDisabled',
+      filePath: selected.filePath,
+      label: labelFor(selected.kind, selected.filePath),
+    };
+  }
+  const active = activeDocument(sources);
+  return active.hooksDisabled === true
+    ? {
+      field: 'hooksDisabled',
+      filePath: active.filePath,
+      label: labelFor(active.kind, active.filePath),
+    }
+    : undefined;
+}
+
+export function sourceDocuments(sources: DroidSources): DroidDocument[] {
+  return [sources.root, sources.legacy, sources.settings, sources.localSettings];
+}
+
+export function installationDocuments(sources: DroidSources): DroidDocument[] {
+  const target = activeDocument(sources);
+  const documents = [
+    sources.root.exists || target === sources.root ? sources.root : undefined,
+    sources.legacy.exists ? sources.legacy : undefined,
+    sources.settings.hasHooksContainer ? sources.settings : undefined,
+    sources.localSettings.hasHooksContainer ? sources.localSettings : undefined,
+  ];
+  const unique = new Map<string, DroidDocument>();
+  for (const document of documents) {
+    if (document) unique.set(document.filePath, document);
+  }
+  return [...unique.values()];
+}
+
+export function additionsForTarget(
   document: DroidDocument,
-  targets: ReadonlyMap<ToolEvent, DroidDocument>,
+  target: DroidDocument,
   groups: ReadonlyMap<ToolEvent, DroidGroup>,
 ): ReadonlyMap<ToolEvent, DroidGroup> {
-  const additions = new Map<ToolEvent, DroidGroup>();
-  for (const event of TOOL_EVENTS) {
-    if (targets.get(event) === document) additions.set(event, groups.get(event)!);
-  }
-  return additions;
+  return document === target ? groups : new Map();
 }

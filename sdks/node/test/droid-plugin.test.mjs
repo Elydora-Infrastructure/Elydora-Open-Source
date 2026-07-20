@@ -1,137 +1,28 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
-import { parse } from 'jsonc-parser';
+import {
+  VALID_PRIVATE_KEY,
+  assertMissing,
+  assertNativeGroup,
+  assertNoTransactionFiles,
+  cliPath,
+  createFixture,
+  environment,
+  managedGroup,
+  managedHandler,
+  readJsonc,
+  registryModuleUrl,
+  runHook,
+  runNode,
+  runPlugin,
+  startApiServer,
+  writeConfig,
+} from '../test-support/droid-test-helpers.mjs';
 
-const pluginModuleUrl = pathToFileURL(path.resolve('dist/plugins/droid.js')).href;
-const registryModuleUrl = pathToFileURL(path.resolve('dist/plugins/registry.js')).href;
-const cliPath = path.resolve('dist/cli.js');
-
-function runNode(args, env, input = '', cwd) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, {
-      cwd,
-      env: { ...process.env, ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
-function runCommand(command, input = '') {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
-function parseJsonc(raw) {
-  const errors = [];
-  const value = parse(raw, errors, { allowTrailingComma: true });
-  assert.deepEqual(errors, []);
-  return value;
-}
-
-function serialize(value) {
-  return typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`;
-}
-
-async function writeConfig(filePath, value) {
-  if (value === undefined) return;
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, serialize(value));
-}
-
-async function runPlugin(fixture, method, argument) {
-  const script = `
-    import { droidPlugin } from ${JSON.stringify(pluginModuleUrl)};
-    const argument = JSON.parse(process.env.ELYDORA_TEST_ARGUMENT);
-    const result = await droidPlugin[process.env.ELYDORA_TEST_METHOD](argument);
-    if (result !== undefined) console.log(JSON.stringify(result));
-  `;
-  return runNode(
-    ['--input-type=module', '--eval', script],
-    {
-      HOME: fixture.homeDir,
-      USERPROFILE: fixture.homeDir,
-      ELYDORA_TEST_ARGUMENT: JSON.stringify(argument),
-      ELYDORA_TEST_METHOD: method,
-    },
-    '',
-    fixture.workspaceDir,
-  );
-}
-
-async function createFixture({ hooks, legacyHooks, settings, guardSource, hookSource } = {}) {
-  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-droid-'));
-  const homeDir = path.join(rootDir, "home with spaces and 'quote");
-  const workspaceDir = path.join(homeDir, 'workspace');
-  const factoryDir = path.join(homeDir, '.factory');
-  const configPath = path.join(factoryDir, 'hooks.json');
-  const legacyConfigPath = path.join(factoryDir, 'hooks', 'hooks.json');
-  const settingsPath = path.join(factoryDir, 'settings.json');
-  const agentDir = path.join(homeDir, '.elydora', 'agent-1');
-  const guardScriptPath = path.join(agentDir, 'guard.js');
-  const hookScriptPath = path.join(agentDir, 'hook.js');
-  await mkdir(workspaceDir, { recursive: true });
-  await mkdir(agentDir, { recursive: true });
-  await writeFile(
-    guardScriptPath,
-    guardSource ?? "process.stderr.write('Agent is frozen by Elydora.'); process.exit(2);\n",
-  );
-  await writeFile(hookScriptPath, hookSource ?? 'process.exit(0);\n');
-  await writeFile(path.join(agentDir, 'config.json'), JSON.stringify({
-    agent_id: 'agent-1',
-    agent_name: 'droid',
-  }));
-  await writeConfig(configPath, hooks);
-  await writeConfig(legacyConfigPath, legacyHooks);
-  await writeConfig(settingsPath, settings);
-  const fixture = {
-    agentDir,
-    configPath,
-    factoryDir,
-    guardScriptPath,
-    homeDir,
-    hookScriptPath,
-    legacyConfigPath,
-    settingsPath,
-    workspaceDir,
-    async close() { await rm(rootDir, { recursive: true, force: true }); },
-  };
-  fixture.installResult = await runPlugin(fixture, 'install', {
-    agentName: 'droid',
-    agentId: 'agent-1',
-    guardScriptPath,
-    hookScriptPath,
-  });
-  return fixture;
-}
-
-function managedHandler(groups, scriptPath) {
-  for (const group of groups ?? []) {
-    const handler = group.hooks.find(
-      (candidate) => candidate.command?.includes(scriptPath),
-    );
-    if (handler) return handler;
-  }
-  return undefined;
+function currentHooks(root) {
+  return root.hooks;
 }
 
 test('Factory Droid is registered in the SDK and CLI', async () => {
@@ -141,142 +32,190 @@ test('Factory Droid is registered in the SDK and CLI', async () => {
     configDir: '~/.factory',
     configFile: 'hooks.json',
   });
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-droid-cli-'));
-  const workspaceDir = path.join(homeDir, 'workspace');
-  await mkdir(workspaceDir);
+  const fixture = await createFixture();
   try {
-    const result = await runNode(['--no-warnings', cliPath, 'status'], {
-      HOME: homeDir,
-      USERPROFILE: homeDir,
-    }, '', workspaceDir);
+    const result = await runNode(
+      ['--no-warnings', cliPath, 'agents'],
+      environment(fixture),
+      fixture.workspaceDir,
+    );
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Factory Droid \(droid\)/);
+    assert.match(result.stdout, /droid\s+Factory Droid/);
   } finally {
-    await rm(homeDir, { recursive: true, force: true });
+    await fixture.close();
   }
 });
 
-test('Droid install preserves JSONC and follows per-event source precedence', async () => {
-  const hooks = `{
-  // root hook source
-  "PreToolUse": [
-    // keep root group comment
-    { "matcher": "Read", "hooks": [{ "type": "command", "command": "root-user" }] }
-  ],
-  "Notification": []
+test('Droid installs the official hook container and complete managed runtime', async () => {
+  const fixture = await createFixture();
+  try {
+    const first = await fixture.install();
+    assert.equal(first.code, 0, first.stderr);
+    assert.match(first.stdout, /run \/hooks/);
+    const rootSource = await readFile(fixture.rootPath, 'utf-8');
+    assert.match(rootSource, /^\/\/ Managed by Elydora\r?\n/);
+    const hooks = currentHooks(await readJsonc(fixture.rootPath));
+    assertNativeGroup(managedGroup(hooks, 'PreToolUse', 'guard.js'));
+    assertNativeGroup(managedGroup(hooks, 'PostToolUse', 'hook.js'));
+    if (process.platform === 'win32') {
+      assert.match(managedHandler(hooks, 'PreToolUse', 'guard.js').command, /^& '/);
+    }
+    assert.deepEqual(JSON.parse(await readFile(path.join(fixture.agentDir, 'config.json'), 'utf-8')), {
+      org_id: 'org-1',
+      agent_id: fixture.agentId,
+      kid: 'kid-1',
+      base_url: fixture.baseUrl,
+      token: 'token-1',
+      agent_name: 'droid',
+    });
+    assert.equal(await readFile(path.join(fixture.agentDir, 'private.key'), 'utf-8'), VALID_PRIVATE_KEY);
+    assert.match(await readFile(fixture.hookScriptPath, 'utf-8'), /const NATIVE_PAYLOAD = true;/);
+
+    const managedPaths = [
+      fixture.rootPath,
+      fixture.guardScriptPath,
+      fixture.hookScriptPath,
+      path.join(fixture.agentDir, 'config.json'),
+      path.join(fixture.agentDir, 'private.key'),
+    ];
+    const before = new Map(await Promise.all(managedPaths.map(async (filePath) => [
+      filePath,
+      await readFile(filePath, 'utf-8'),
+    ])));
+    const second = await fixture.install();
+    assert.equal(second.code, 0, second.stderr);
+    for (const [filePath, source] of before) {
+      assert.equal(await readFile(filePath, 'utf-8'), source, filePath);
+    }
+    await assertNoTransactionFiles(fixture);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Droid migrates the legacy Windows command form to its native PowerShell contract', async (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('Legacy double-quoted commands are Windows-specific');
+    return;
+  }
+  const fixture = await createFixture({ rootConfig: { hooks: {} } });
+  try {
+    const legacyGroup = (scriptPath) => ({
+      matcher: '*',
+      hooks: [{
+        type: 'command',
+        command: `"${process.execPath}" "${scriptPath}"`,
+        timeout: 10,
+      }],
+    });
+    await writeConfig(fixture.rootPath, {
+      hooks: {
+        PreToolUse: [legacyGroup(fixture.guardScriptPath)],
+        PostToolUse: [legacyGroup(fixture.hookScriptPath)],
+      },
+    });
+    assert.equal((await fixture.install()).code, 0);
+    const hooks = currentHooks(await readJsonc(fixture.rootPath));
+    assert.equal(hooks.PreToolUse.length, 1);
+    assert.equal(hooks.PostToolUse.length, 1);
+    assert.match(hooks.PreToolUse[0].hooks[0].command, /^& '/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Droid applies whole-source precedence and preserves inactive user sources', async (t) => {
+  await t.test('root hooks.json wins over settings hooks', async () => {
+    const rootConfig = `{
+  // active root source
+  "hooks": {
+    "PreToolUse": [{ "matcher": "Read", "hooks": [{ "type": "command", "command": "root-user" }] }]
+  }
 }\n`;
-  const settings = `{
-  // general setting
+    const settings = `{
+  // inactive settings source
   "theme": "dark",
   "hooks": {
-    // settings fallback event
-    "PostToolUse": [
-      // keep settings group comment
-      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "settings-user" }] }
-    ],
-    "showHookOutput": true,
-  },
+    "PostToolUse": [{ "matcher": "Edit", "hooks": [{ "type": "command", "command": "settings-user" }] }]
+  }
 }\n`;
-  const fixture = await createFixture({ hooks, settings });
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const second = await runPlugin(fixture, 'install', {
-      agentName: 'droid',
-      agentId: 'agent-1',
-      guardScriptPath: fixture.guardScriptPath,
-      hookScriptPath: fixture.hookScriptPath,
-    });
-    assert.equal(second.code, 0, second.stderr);
-    const hooksRaw = await readFile(fixture.configPath, 'utf-8');
-    const settingsRaw = await readFile(fixture.settingsPath, 'utf-8');
-    const root = parseJsonc(hooksRaw);
-    const userSettings = parseJsonc(settingsRaw);
-    assert.match(hooksRaw, /root hook source/);
-    assert.match(hooksRaw, /keep root group comment/);
-    assert.match(settingsRaw, /general setting/);
-    assert.match(settingsRaw, /settings fallback event/);
-    assert.match(settingsRaw, /keep settings group comment/);
-    assert.equal(root.PreToolUse.length, 2);
-    assert.equal(root.PreToolUse[0].hooks[0].command, 'root-user');
-    assert.equal(root.PostToolUse, undefined);
-    assert.equal(userSettings.theme, 'dark');
-    assert.equal(userSettings.hooks.PostToolUse.length, 2);
-    assert.equal(userSettings.hooks.PostToolUse[0].hooks[0].command, 'settings-user');
-    assert.equal(userSettings.hooks.PreToolUse, undefined);
-    assert.equal(userSettings.hooks.showHookOutput, true);
-    for (const [groups, scriptPath] of [
-      [root.PreToolUse, fixture.guardScriptPath],
-      [userSettings.hooks.PostToolUse, fixture.hookScriptPath],
-    ]) {
-      const handler = managedHandler(groups, scriptPath);
-      assert.deepEqual(Object.keys(handler).sort(), ['command', 'timeout', 'type']);
-      assert.equal(handler.timeout, 10);
-      assert.equal(handler.type, 'command');
+    const fixture = await createFixture({ rootConfig, settings });
+    try {
+      assert.equal((await fixture.install()).code, 0);
+      const rootSource = await readFile(fixture.rootPath, 'utf-8');
+      const settingsSource = await readFile(fixture.settingsPath, 'utf-8');
+      const hooks = currentHooks(await readJsonc(fixture.rootPath));
+      assert.match(rootSource, /active root source/);
+      assert.equal(hooks.PreToolUse[0].hooks[0].command, 'root-user');
+      assertNativeGroup(managedGroup(hooks, 'PreToolUse', 'guard.js'));
+      assertNativeGroup(managedGroup(hooks, 'PostToolUse', 'hook.js'));
+      assert.equal(settingsSource, settings);
+    } finally {
+      await fixture.close();
     }
-    await assert.rejects(
-      readFile(path.join(fixture.workspaceDir, '.factory', 'hooks.json')),
-      { code: 'ENOENT' },
-    );
-  } finally {
-    await fixture.close();
-  }
+  });
+
+  await t.test('settings hooks are the fallback when hook files are absent', async () => {
+    const settings = '{\r\n\t"theme": "dark",\r\n\t"hooks": {}\r\n}\r\n';
+    const fixture = await createFixture({ settings });
+    try {
+      assert.equal((await fixture.install()).code, 0);
+      await assertMissing(fixture.rootPath);
+      const source = await readFile(fixture.settingsPath, 'utf-8');
+      const hooks = (await readJsonc(fixture.settingsPath)).hooks;
+      assert.match(source, /\r\n\t\t"PreToolUse"/);
+      assertNativeGroup(managedGroup(hooks, 'PreToolUse', 'guard.js'));
+      assertNativeGroup(managedGroup(hooks, 'PostToolUse', 'hook.js'));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('local settings hooks override base settings hooks', async () => {
+    const settings = { hooks: { Notification: [] } };
+    const localSettings = { hooks: { SessionStart: [] } };
+    const fixture = await createFixture({ settings, localSettings });
+    try {
+      assert.equal((await fixture.install()).code, 0);
+      await assertMissing(fixture.rootPath);
+      const base = await readJsonc(fixture.settingsPath);
+      const local = await readJsonc(fixture.localSettingsPath);
+      assert.equal(base.hooks.PreToolUse, undefined);
+      assertNativeGroup(managedGroup(local.hooks, 'PreToolUse', 'guard.js'));
+      assertNativeGroup(managedGroup(local.hooks, 'PostToolUse', 'hook.js'));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('legacy hook source stays active until Factory migrates it', async () => {
+    const legacyConfig = {
+      PreToolUse: [{ matcher: 'Read', hooks: [{ type: 'command', command: 'legacy-user' }] }],
+    };
+    const settings = { hooks: { PostToolUse: [] } };
+    const fixture = await createFixture({ legacyConfig, settings });
+    try {
+      assert.equal((await fixture.install()).code, 0);
+      await assertMissing(fixture.rootPath);
+      const legacy = await readJsonc(fixture.legacyPath);
+      assertNativeGroup(managedGroup(legacy, 'PreToolUse', 'guard.js'));
+      assertNativeGroup(managedGroup(legacy, 'PostToolUse', 'hook.js'));
+      assert.equal((await readJsonc(fixture.settingsPath)).hooks.PreToolUse, undefined);
+    } finally {
+      await fixture.close();
+    }
+  });
 });
 
-test('Droid keeps an active legacy source until Factory migrates it', async () => {
-  const legacyHooks = {
-    PreToolUse: [{ matcher: 'Read', hooks: [{ type: 'command', command: 'legacy-user' }] }],
-  };
-  const settings = {
-    hooks: {
-      PostToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'settings-user' }] }],
-    },
-  };
-  const fixture = await createFixture({ legacyHooks, settings });
+test('Droid guard blocks frozen agents and audit preserves the native event payload', async () => {
+  const api = await startApiServer();
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
-    const legacy = parseJsonc(await readFile(fixture.legacyConfigPath, 'utf-8'));
-    const currentSettings = parseJsonc(await readFile(fixture.settingsPath, 'utf-8'));
-    assert(managedHandler(legacy.PreToolUse, fixture.guardScriptPath));
-    assert(managedHandler(currentSettings.hooks.PostToolUse, fixture.hookScriptPath));
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Droid reuses an existing settings hook container', async () => {
-  const settingsSource = '{\r\n\t"owner": "user",\r\n\t"hooks": {}\r\n}\r\n';
-  const fixture = await createFixture({ settings: settingsSource });
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
-    const settingsRaw = await readFile(fixture.settingsPath, 'utf-8');
-    const settings = parseJsonc(settingsRaw);
-    assert.match(settingsRaw, /\r\n\t\t"PreToolUse"/);
-    assert.match(settingsRaw, /\r\n\t\t"PostToolUse"/);
-    assert.equal(settings.owner, 'user');
-    assert(managedHandler(settings.hooks.PreToolUse, fixture.guardScriptPath));
-    assert(managedHandler(settings.hooks.PostToolUse, fixture.hookScriptPath));
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Droid commands block freezes and forward official input byte-for-byte', async () => {
-  const capturePath = path.join(os.tmpdir(), `elydora-droid-event-${process.pid}-${Date.now()}.json`);
-  const hookSource = `
-    const fs = require('node:fs');
-    const chunks = [];
-    process.stdin.on('data', (chunk) => chunks.push(chunk));
-    process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(capturePath)}, Buffer.concat(chunks)));
-  `;
-  const fixture = await createFixture({ hookSource });
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const root = parseJsonc(await readFile(fixture.configPath, 'utf-8'));
-    const guard = managedHandler(root.PreToolUse, fixture.guardScriptPath);
-    const audit = managedHandler(root.PostToolUse, fixture.hookScriptPath);
-    const prePayload = JSON.stringify({
+    assert.equal((await fixture.install()).code, 0);
+    const hooks = currentHooks(await readJsonc(fixture.rootPath));
+    const guard = managedHandler(hooks, 'PreToolUse', 'guard.js');
+    const audit = managedHandler(hooks, 'PostToolUse', 'hook.js');
+    const prePayload = {
       session_id: 'session-1',
       transcript_path: path.join(fixture.homeDir, 'transcript.jsonl'),
       cwd: fixture.workspaceDir,
@@ -284,192 +223,250 @@ test('Droid commands block freezes and forward official input byte-for-byte', as
       hook_event_name: 'PreToolUse',
       tool_name: 'Execute',
       tool_input: { command: 'echo test' },
+    };
+    await writeConfig(path.join(fixture.agentDir, 'status-cache.json'), {
+      status: 'frozen',
+      cached_at: Date.now(),
     });
-    const guardResult = await runCommand(guard.command, prePayload);
-    assert.equal(guardResult.code, 2);
-    assert.match(guardResult.stderr, /Agent is frozen by Elydora/);
-    const postPayload = JSON.stringify({
-      ...JSON.parse(prePayload),
+    const guardResult = await runHook(guard.command, fixture, JSON.stringify(prePayload));
+    assert.equal(guardResult.code, 2, guardResult.stderr);
+    assert.match(guardResult.stderr, /Agent "droid" is frozen/);
+
+    const postPayload = {
+      ...prePayload,
       hook_event_name: 'PostToolUse',
       tool_response: { output: 'test', success: true },
-    });
-    const auditResult = await runCommand(audit.command, postPayload);
+    };
+    const auditResult = await runHook(audit.command, fixture, JSON.stringify(postPayload));
     assert.equal(auditResult.code, 0, auditResult.stderr);
-    assert.equal(await readFile(capturePath, 'utf-8'), postPayload);
+    const operation = JSON.parse(api.requests.find((request) => request.method === 'POST').raw);
+    assert.deepEqual(operation.payload, postPayload);
+    assert.deepEqual(operation.subject, { session_id: 'session-1' });
+    assert.deepEqual(operation.action, { tool: 'Execute' });
   } finally {
+    await api.close();
     await fixture.close();
-    await rm(capturePath, { force: true });
   }
 });
 
-test('Droid status requires an effective pair and both runtime files', async () => {
-  const fixture = await createFixture({
-    hooks: { PreToolUse: [] },
-    settings: { hooks: { PostToolUse: [] } },
+test('Droid status requires the exact hook and runtime contract', async (t) => {
+  const cases = [
+    ['missing audit group', async (fixture) => {
+      const root = await readJsonc(fixture.rootPath);
+      delete root.hooks.PostToolUse;
+      await writeConfig(fixture.rootPath, root);
+    }, /"hookConfigured":false/],
+    ['tampered guard', (fixture) => writeFile(fixture.guardScriptPath, 'tampered\n'), /"installed":false/],
+    ['tampered audit', (fixture) => writeFile(fixture.hookScriptPath, 'tampered\n'), /"installed":false/],
+    ['malformed runtime config', (fixture) => writeFile(
+      path.join(fixture.agentDir, 'config.json'),
+      '{ malformed',
+    ), /parse Elydora runtime config/i],
+    ['invalid private key', (fixture) => writeFile(
+      path.join(fixture.agentDir, 'private.key'),
+      'invalid',
+    ), /private key is invalid/i],
+  ];
+  for (const [label, mutate, expected] of cases) {
+    await t.test(label, async () => {
+      const fixture = await createFixture();
+      try {
+        assert.equal((await fixture.install()).code, 0);
+        const healthy = JSON.parse((await runPlugin(fixture, 'status', null)).stdout);
+        assert.deepEqual(healthy, {
+          installed: true,
+          agentName: 'droid',
+          displayName: 'Factory Droid',
+          hookConfigured: true,
+          hookScriptExists: true,
+          configPath: fixture.rootPath,
+        });
+        await mutate(fixture);
+        const status = await runPlugin(fixture, 'status', null);
+        assert.match(`${status.stdout}\n${status.stderr}`, expected);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test('Droid accepts current extension fields and rejects malformed hook contracts', async () => {
+  const valid = await createFixture({
+    rootConfig: {
+      hooks: {
+        FutureEvent: [{
+          commandRegex: '^git (status|diff)$',
+          hooks: [{ type: 'command', command: 'future-user', timeout: 2 }],
+        }],
+      },
+    },
   });
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    let status = await runPlugin(fixture, 'status', null);
-    assert.equal(status.code, 0, status.stderr);
-    assert.equal(JSON.parse(status.stdout).installed, true);
-    await rm(fixture.hookScriptPath);
-    status = await runPlugin(fixture, 'status', null);
-    assert.equal(JSON.parse(status.stdout).installed, false);
-    const root = parseJsonc(await readFile(fixture.configPath, 'utf-8'));
-    root.hooksDisabled = true;
-    await writeFile(fixture.configPath, `${JSON.stringify(root, null, 2)}\n`);
-    status = await runPlugin(fixture, 'status', null);
-    assert.equal(JSON.parse(status.stdout).hookConfigured, false);
+    assert.equal((await valid.install()).code, 0);
+    assert.equal((await readJsonc(valid.rootPath)).hooks.FutureEvent[0].hooks[0].command, 'future-user');
   } finally {
-    await fixture.close();
+    await valid.close();
   }
-});
 
-test('Droid uninstall removes exact ownership and preserves user sources', async () => {
-  const hooks = `{
-  // keep root comment
-  "PreToolUse": [{ "matcher": "Read", "hooks": [{ "type": "command", "command": "root-user" }] }]
-}\n`;
-  const settings = `{
-  "theme": "dark",
-  "hooks": {
-    // keep settings comment
-    "PostToolUse": [{ "matcher": "Edit", "hooks": [{ "type": "command", "command": "settings-user" }] }]
-  }
-}\n`;
-  const fixture = await createFixture({ hooks, settings });
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const uninstallId = process.platform === 'win32' ? 'AGENT-1' : 'agent-1';
-    const result = await runPlugin(fixture, 'uninstall', uninstallId);
-    assert.equal(result.code, 0, result.stderr);
-    const hooksRaw = await readFile(fixture.configPath, 'utf-8');
-    const settingsRaw = await readFile(fixture.settingsPath, 'utf-8');
-    const root = parseJsonc(hooksRaw);
-    const currentSettings = parseJsonc(settingsRaw);
-    assert.match(hooksRaw, /keep root comment/);
-    assert.match(settingsRaw, /keep settings comment/);
-    assert.deepEqual(root.PreToolUse, [{
-      matcher: 'Read',
-      hooks: [{ type: 'command', command: 'root-user' }],
-    }]);
-    assert.deepEqual(currentSettings.hooks.PostToolUse, [{
-      matcher: 'Edit',
-      hooks: [{ type: 'command', command: 'settings-user' }],
-    }]);
-    assert.equal(currentSettings.theme, 'dark');
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Droid uninstall deletes only a hooks file marked as Elydora-owned', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    assert.match(await readFile(fixture.configPath, 'utf-8'), /Managed by Elydora/);
-    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
-    assert.equal(result.code, 0, result.stderr);
-    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Droid uninstall preserves mixed groups and lookalike commands', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const root = parseJsonc(await readFile(fixture.configPath, 'utf-8'));
-    const managedGroup = root.PreToolUse.find(
-      (group) => managedHandler([group], fixture.guardScriptPath),
-    );
-    const command = managedGroup.hooks[0].command;
-    managedGroup.hooks.push({ type: 'command', command: 'user-command' });
-    root.PreToolUse.push({
-      matcher: '*',
-      hooks: [{ type: 'command', command: command.replace('guard.js', 'guard.js.backup'), timeout: 10 }],
-    });
-    root.PreToolUse.push({
-      matcher: '*',
-      hooks: [{ type: 'command', command: command.replace('agent-1', 'agent-10'), timeout: 10 }],
-    });
-    await writeFile(fixture.configPath, `${JSON.stringify(root, null, 2)}\n`);
-    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
-    assert.equal(result.code, 0, result.stderr);
-    const remaining = parseJsonc(await readFile(fixture.configPath, 'utf-8'));
-    assert(remaining.PreToolUse.some(
-      (group) => group.hooks.some((handler) => handler.command === 'user-command'),
-    ));
-    assert.match(JSON.stringify(remaining), /guard\.js\.backup/);
-    assert.match(JSON.stringify(remaining), /agent-10/);
-    assert.equal(remaining.PostToolUse, undefined);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Droid preserves every malformed source before the first write', async () => {
   const cases = [
-    { hooks: '{ malformed', target: 'configPath' },
-    { hooks: '[]', target: 'configPath' },
-    { hooks: '{ "PreToolUse": [], "PreToolUse": [] }', target: 'configPath' },
-    { hooks: { PreToolUse: null }, target: 'configPath' },
-    { hooks: { PreToolUse: [null] }, target: 'configPath' },
-    { hooks: { PreToolUse: [{ matcher: '[', hooks: [] }] }, target: 'configPath' },
-    { hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 1 }] }] }, target: 'configPath' },
-    { legacyHooks: '{ malformed', target: 'legacyConfigPath' },
-    { hooks: { PreToolUse: [] }, settings: '{ malformed', target: 'settingsPath' },
-    { settings: { hooks: null }, target: 'settingsPath' },
+    { rootConfig: '{ malformed', target: 'rootPath' },
+    { rootConfig: '{"hooks":{},"hooks":{}}', target: 'rootPath' },
+    { rootConfig: { hooks: [] }, target: 'rootPath' },
+    { rootConfig: { hooks: { PreToolUse: null } }, target: 'rootPath' },
+    { rootConfig: { hooks: { PreToolUse: [null] } }, target: 'rootPath' },
+    { rootConfig: { hooks: { PreToolUse: [{ matcher: '[', hooks: [] }] } }, target: 'rootPath' },
+    { rootConfig: { hooks: { PreToolUse: [{ commandRegex: '[', hooks: [] }] } }, target: 'rootPath' },
+    { rootConfig: { hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'x', timeout: 0 }] }] } }, target: 'rootPath' },
+    { rootConfig: { hooks: { PreToolUse: [{ hooks: [{ type: 'http', command: 'x' }] }] } }, target: 'rootPath' },
+    { settings: { hooks: { showHookOutput: true } }, target: 'settingsPath' },
+    { localSettings: '{ malformed', target: 'localSettingsPath' },
   ];
   for (const input of cases) {
     const fixture = await createFixture(input);
     try {
-      assert.equal(fixture.installResult.code, 1, fixture.installResult.stderr);
-      assert.equal(
-        await readFile(fixture[input.target], 'utf-8'),
-        serialize(input[input.target === 'legacyConfigPath' ? 'legacyHooks'
-          : input.target === 'settingsPath' ? 'settings' : 'hooks']),
-      );
+      const target = fixture[input.target];
+      const before = await readFile(target, 'utf-8');
+      const result = await fixture.install();
+      assert.equal(result.code, 1, `${JSON.stringify(input)}\n${result.stderr}`);
+      assert.equal(await readFile(target, 'utf-8'), before);
+      await assertMissing(path.join(fixture.agentDir, 'config.json'));
     } finally {
       await fixture.close();
     }
   }
 });
 
-test('Droid rejects missing runtimes before creating a hook source', async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-droid-missing-'));
-  const workspaceDir = path.join(homeDir, 'workspace');
-  const fixture = { homeDir, workspaceDir };
-  await mkdir(workspaceDir);
-  try {
-    const result = await runPlugin(fixture, 'install', {
-      agentName: 'droid',
-      agentId: 'agent-1',
-      guardScriptPath: path.join(homeDir, '.elydora', 'agent-1', 'guard.js'),
-      hookScriptPath: path.join(homeDir, '.elydora', 'agent-1', 'hook.js'),
+test('Droid uninstall removes exact ownership and preserves user hooks', async (t) => {
+  await t.test('pre-existing JSONC keeps comments and user groups', async () => {
+    const rootConfig = `{
+  // user source
+  "hooks": {
+    "Notification": [{ "hooks": [{ "type": "command", "command": "keep" }] }]
+  }
+}\n`;
+    const fixture = await createFixture({ rootConfig });
+    try {
+      assert.equal((await fixture.install()).code, 0);
+      assert.equal((await runPlugin(fixture, 'uninstall', fixture.agentId)).code, 0);
+      const source = await readFile(fixture.rootPath, 'utf-8');
+      const root = await readJsonc(fixture.rootPath);
+      assert.match(source, /user source/);
+      assert.equal(root.hooks.Notification[0].hooks[0].command, 'keep');
+      assert.equal(root.hooks.PreToolUse, undefined);
+      assert.equal(root.hooks.PostToolUse, undefined);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('mixed groups and lookalike paths stay user-owned', async () => {
+    const fixture = await createFixture({ rootConfig: { hooks: {} } });
+    try {
+      assert.equal((await fixture.install()).code, 0);
+      const root = await readJsonc(fixture.rootPath);
+      const group = managedGroup(root.hooks, 'PreToolUse', 'guard.js');
+      const command = group.hooks[0].command;
+      group.hooks.push({ type: 'command', command: 'user-command' });
+      root.hooks.PreToolUse.push({
+        matcher: '*',
+        hooks: [{ type: 'command', command: command.replace('guard.js', 'guard.js.backup'), timeout: 10 }],
+      });
+      root.hooks.PreToolUse.push({
+        matcher: '*',
+        hooks: [{ type: 'command', command: command.replace('agent-1', 'agent-10'), timeout: 10 }],
+      });
+      await writeConfig(fixture.rootPath, root);
+      assert.equal((await runPlugin(fixture, 'uninstall', fixture.agentId)).code, 0);
+      const remaining = await readJsonc(fixture.rootPath);
+      assert.match(JSON.stringify(remaining), /user-command/);
+      assert.match(JSON.stringify(remaining), /guard\.js\.backup/);
+      assert.match(JSON.stringify(remaining), /agent-10/);
+      assert.equal(remaining.hooks.PostToolUse, undefined);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('an empty Elydora-owned hook file is removed', async () => {
+    const fixture = await createFixture();
+    try {
+      assert.equal((await fixture.install()).code, 0);
+      assert.equal((await runPlugin(fixture, 'uninstall', fixture.agentId)).code, 0);
+      await assertMissing(fixture.rootPath);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('an empty installation stays empty', async () => {
+    const fixture = await createFixture();
+    try {
+      assert.equal((await runPlugin(fixture, 'uninstall', fixture.agentId)).code, 0);
+      await assertMissing(fixture.rootPath);
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
+test('Droid rejects linked configuration and runtime paths before writes', async (t) => {
+  for (const kind of ['factory', 'hook', 'runtime']) {
+    await t.test(kind, async () => {
+      const fixture = await createFixture();
+      try {
+        const target = path.join(fixture.rootDir, `${kind}-target`);
+        await mkdir(target, { recursive: true });
+        if (kind === 'factory') {
+          await mkdir(fixture.homeDir, { recursive: true });
+          await symlink(target, fixture.factoryDir, 'junction');
+        } else if (kind === 'hook') {
+          await mkdir(fixture.factoryDir, { recursive: true });
+          const targetFile = path.join(target, 'hooks.json');
+          await writeConfig(targetFile, { hooks: {} });
+          await symlink(targetFile, fixture.rootPath, 'file');
+        } else {
+          await mkdir(fixture.homeDir, { recursive: true });
+          await symlink(target, path.join(fixture.homeDir, '.elydora'), 'junction');
+        }
+        const result = await fixture.install();
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /physical (directory|file)/i);
+      } catch (error) {
+        if (error?.code === 'EPERM') {
+          t.skip(`Symbolic links unavailable: ${error.message}`);
+          return;
+        }
+        throw error;
+      } finally {
+        await fixture.close();
+      }
     });
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /runtime is missing/i);
-    await assert.rejects(
-      readFile(path.join(homeDir, '.factory', 'hooks.json')),
-      { code: 'ENOENT' },
-    );
-  } finally {
-    await rm(homeDir, { recursive: true, force: true });
   }
 });
 
-test('Droid atomic transactions leave no staging files', async () => {
-  const fixture = await createFixture({
-    hooks: { PreToolUse: [] },
-    settings: { hooks: { PostToolUse: [] } },
-  });
+test('Droid CLI preflight blocks disabled hooks before creating runtime files', async () => {
+  const fixture = await createFixture({ settings: { hooksDisabled: true } });
+  const privateKeyPath = path.join(fixture.rootDir, 'private.key');
   try {
-    assert.equal(fixture.installResult.code, 0, fixture.installResult.stderr);
-    const names = await readdir(fixture.factoryDir, { recursive: true });
-    assert.equal(names.some((name) => /\.(tmp|rollback)$/.test(name)), false);
+    await writeFile(privateKeyPath, VALID_PRIVATE_KEY, { mode: 0o600 });
+    const result = await runNode([
+      '--no-warnings',
+      cliPath,
+      'install',
+      '--agent', 'droid',
+      '--org_id', 'org-1',
+      '--agent_id', fixture.agentId,
+      '--kid', 'kid-1',
+      '--private_key_file', privateKeyPath,
+      '--base_url', fixture.baseUrl,
+    ], environment(fixture), fixture.workspaceDir);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /hooks are disabled/i);
+    await assertMissing(path.join(fixture.agentDir, 'config.json'));
+    await assertMissing(fixture.rootPath);
   } finally {
+    await rm(privateKeyPath, { force: true });
     await fixture.close();
   }
 });
