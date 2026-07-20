@@ -6,15 +6,25 @@ import (
 	"sort"
 )
 
+const (
+	qwenSystemDefaultsKind = "system-defaults"
+	qwenUserKind           = "user"
+	qwenWorkspaceKind      = "workspace"
+	qwenSystemKind         = "system"
+)
+
 type qwenDocument struct {
-	filePath          string
-	exists            bool
-	raw               []byte
-	root              map[string]any
-	hooks             qwenHookSettings
-	hasHooksContainer bool
-	hooksDisabled     bool
-	ownedFile         bool
+	kind               string
+	filePath           string
+	exists             bool
+	raw                []byte
+	snapshot           *managedFileSnapshot
+	root               map[string]any
+	hooks              qwenHookSettings
+	hasHooksContainer  bool
+	disableAllHooks    *bool
+	folderTrustEnabled *bool
+	ownedFile          bool
 }
 
 type qwenRenderedDocument struct {
@@ -24,23 +34,79 @@ type qwenRenderedDocument struct {
 	remove   bool
 }
 
-func qwenDocumentLabel(filePath string) string {
-	return fmt.Sprintf("Qwen Code settings at %s", filePath)
+func qwenSourceLabel(kind string) string {
+	switch kind {
+	case qwenSystemDefaultsKind:
+		return "Qwen Code system defaults"
+	case qwenWorkspaceKind:
+		return "Qwen Code workspace settings"
+	case qwenSystemKind:
+		return "Qwen Code system override settings"
+	default:
+		return "Qwen Code user settings"
+	}
 }
 
-func parseQwenDocument(exists bool, filePath string, raw []byte) (*qwenDocument, error) {
-	label := qwenDocumentLabel(filePath)
+func qwenDocumentLabel(document *qwenDocument) string {
+	if document == nil {
+		return "Qwen Code settings"
+	}
+	return qwenSourceLabel(document.kind)
+}
+
+func readQwenFolderTrust(
+	root map[string]any,
+	label string,
+) (*bool, error) {
+	securityValue, exists := root["security"]
+	if !exists {
+		return nil, nil
+	}
+	security, ok := securityValue.(map[string]any)
+	if !ok || security == nil {
+		return nil, fmt.Errorf(`%s field "security" must be an object`, label)
+	}
+	folderTrustValue, exists := security["folderTrust"]
+	if !exists {
+		return nil, nil
+	}
+	folderTrust, ok := folderTrustValue.(map[string]any)
+	if !ok || folderTrust == nil {
+		return nil, fmt.Errorf(`%s field "security.folderTrust" must be an object`, label)
+	}
+	enabledValue, exists := folderTrust["enabled"]
+	if !exists {
+		return nil, nil
+	}
+	enabled, ok := enabledValue.(bool)
+	if !ok {
+		return nil, fmt.Errorf(
+			`%s field "security.folderTrust.enabled" must be a boolean`,
+			label,
+		)
+	}
+	return &enabled, nil
+}
+
+func parseQwenDocument(
+	kind string,
+	exists bool,
+	filePath string,
+	raw []byte,
+	snapshot *managedFileSnapshot,
+) (*qwenDocument, error) {
+	label := fmt.Sprintf("%s at %s", qwenSourceLabel(kind), filePath)
 	root, err := decodeJSONCObject(raw, label, false)
 	if err != nil {
 		return nil, err
 	}
-	disabled := false
+	var disabled *bool
 	if value, hasFlag := root["disableAllHooks"]; hasFlag {
 		flag, ok := value.(bool)
 		if !ok {
 			return nil, fmt.Errorf(`%s field "disableAllHooks" must be a boolean`, label)
 		}
-		disabled = flag
+		disabled = &flag
 	}
 	hooks := qwenHookSettings{}
 	hooksValue, hasHooks := root["hooks"]
@@ -50,15 +116,25 @@ func parseQwenDocument(exists bool, filePath string, raw []byte) (*qwenDocument,
 			return nil, err
 		}
 	}
+	folderTrustEnabled, err := readQwenFolderTrust(root, label)
+	if err != nil {
+		return nil, err
+	}
 	return &qwenDocument{
-		filePath: filePath, exists: exists, raw: append([]byte(nil), raw...), root: root,
-		hooks: hooks, hasHooksContainer: hasHooks, hooksDisabled: disabled,
-		ownedFile: bytes.HasPrefix(raw, []byte(qwenOwnedFileMarker)),
+		kind: kind, filePath: filePath, exists: exists,
+		raw: append([]byte(nil), raw...), snapshot: snapshot, root: root,
+		hooks: hooks, hasHooksContainer: hasHooks,
+		disableAllHooks: disabled, folderTrustEnabled: folderTrustEnabled,
+		ownedFile: kind == qwenUserKind && bytes.HasPrefix(raw, []byte(qwenOwnedFileMarker)),
 	}, nil
 }
 
-func createOwnedQwenDocument(filePath string) (*qwenDocument, error) {
-	return parseQwenDocument(false, filePath, []byte(qwenOwnedFileMarker+"\n{}\n"))
+func createQwenDocument(kind, filePath string) (*qwenDocument, error) {
+	raw := []byte("{}\n")
+	if kind == qwenUserKind {
+		raw = []byte(qwenOwnedFileMarker + "\n{}\n")
+	}
+	return parseQwenDocument(kind, false, filePath, raw, nil)
 }
 
 func renderQwenDocument(
@@ -66,13 +142,16 @@ func renderQwenDocument(
 	agentID, runtimeRoot string,
 	additions map[string]map[string]any,
 ) (*qwenRenderedDocument, error) {
-	label := qwenDocumentLabel(document.filePath)
+	if document == nil {
+		return nil, fmt.Errorf("Qwen Code user settings are required")
+	}
+	label := fmt.Sprintf("%s at %s", qwenDocumentLabel(document), document.filePath)
 	editor, err := newJSONCEditor(document.raw, label, false)
 	if err != nil {
 		return nil, err
 	}
 	removals := managedQwenRemovals(document.hooks, agentID, runtimeRoot)
-	for _, event := range qwenToolEvents {
+	for _, event := range qwenManagedEvents {
 		eventRemovals := make([]qwenManagedRemoval, 0)
 		for _, removal := range removals {
 			if removal.event == event {
@@ -98,7 +177,13 @@ func renderQwenDocument(
 			}
 		}
 		if len(eventRemovals) > 0 {
-			current, parseErr := parseQwenDocument(document.exists, document.filePath, editor.pack())
+			current, parseErr := parseQwenDocument(
+				document.kind,
+				document.exists,
+				document.filePath,
+				editor.pack(),
+				document.snapshot,
+			)
 			if parseErr != nil {
 				return nil, parseErr
 			}
@@ -109,7 +194,13 @@ func renderQwenDocument(
 			}
 		}
 	}
-	current, err := parseQwenDocument(document.exists, document.filePath, editor.pack())
+	current, err := parseQwenDocument(
+		document.kind,
+		document.exists,
+		document.filePath,
+		editor.pack(),
+		document.snapshot,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -118,12 +209,18 @@ func renderQwenDocument(
 			return nil, err
 		}
 	}
-	for _, event := range qwenToolEvents {
+	for _, event := range qwenManagedEvents {
 		group, exists := additions[event]
 		if !exists {
 			continue
 		}
-		current, err = parseQwenDocument(document.exists, document.filePath, editor.pack())
+		current, err = parseQwenDocument(
+			document.kind,
+			document.exists,
+			document.filePath,
+			editor.pack(),
+			document.snapshot,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -140,13 +237,22 @@ func renderQwenDocument(
 		}
 	}
 	next := editor.pack()
-	nextDocument, err := parseQwenDocument(document.exists, document.filePath, next)
+	nextDocument, err := parseQwenDocument(
+		document.kind,
+		document.exists,
+		document.filePath,
+		next,
+		document.snapshot,
+	)
 	if err != nil {
 		return nil, err
 	}
 	remove := len(additions) == 0 && document.ownedFile && len(nextDocument.root) == 0
 	return &qwenRenderedDocument{
-		document: document, changed: remove || !bytes.Equal(next, document.raw), next: next, remove: remove,
+		document: document,
+		changed:  remove || !bytes.Equal(next, document.raw),
+		next:     next,
+		remove:   remove,
 	}, nil
 }
 

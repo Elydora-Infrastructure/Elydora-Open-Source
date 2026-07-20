@@ -11,18 +11,46 @@ import (
 	"time"
 )
 
-var qwenEventNames = map[string]bool{
-	"PreToolUse": true, "PostToolUse": true, "PostToolUseFailure": true,
-	"PostToolBatch": true, "Notification": true, "UserPromptSubmit": true,
-	"UserPromptExpansion": true, "SessionStart": true, "Stop": true,
-	"MessageDisplay": true, "SubagentStart": true, "SubagentStop": true,
-	"PreCompact": true, "PostCompact": true, "SessionEnd": true,
-	"PermissionRequest": true, "PermissionDenied": true, "StopFailure": true,
-	"TodoCreated": true, "TodoCompleted": true, "InstructionsLoaded": true,
-}
+var qwenEventNames = stringSet(
+	"PreToolUse",
+	"PostToolUse",
+	"PostToolUseFailure",
+	"PostToolBatch",
+	"Notification",
+	"UserPromptSubmit",
+	"UserPromptExpansion",
+	"SessionStart",
+	"Stop",
+	"MessageDisplay",
+	"SubagentStart",
+	"SubagentStop",
+	"PreCompact",
+	"PostCompact",
+	"SessionEnd",
+	"PermissionRequest",
+	"PermissionDenied",
+	"StopFailure",
+	"TodoCreated",
+	"TodoCompleted",
+	"InstructionsLoaded",
+)
 
-var qwenConfigFields = map[string]bool{
-	"enabled": true, "disabled": true, "notifications": true,
+var qwenRegexMatcherEvents = [...]string{
+	"PreToolUse",
+	"PostToolUse",
+	"PostToolUseFailure",
+	"PermissionRequest",
+	"PermissionDenied",
+	"SubagentStart",
+	"SubagentStop",
+	"PreCompact",
+	"PostCompact",
+	"SessionStart",
+	"SessionEnd",
+	"StopFailure",
+	"Notification",
+	"InstructionsLoaded",
+	"UserPromptExpansion",
 }
 
 type qwenRegexEntry struct {
@@ -36,24 +64,21 @@ func readQwenHookSettings(value any, label string) (qwenHookSettings, error) {
 		return nil, fmt.Errorf("%s must contain a JSON object", label)
 	}
 	settings := make(qwenHookSettings, len(object))
-	for key, item := range object {
-		if qwenConfigFields[key] {
-			settings[key] = item
+	for event, item := range object {
+		if _, known := qwenEventNames[event]; !known {
+			settings[event] = item
 			continue
-		}
-		if !qwenEventNames[key] {
-			return nil, fmt.Errorf(`%s contains unsupported field %q`, label, key)
 		}
 		groups, ok := item.([]any)
 		if !ok {
-			return nil, fmt.Errorf(`%s field %q must be an array`, label, key)
+			return nil, fmt.Errorf(`%s field %q must be an array`, label, event)
 		}
 		for groupIndex, group := range groups {
-			if err := validateQwenGroup(group, label, key, groupIndex); err != nil {
+			if err := validateQwenGroup(group, label, event, groupIndex); err != nil {
 				return nil, err
 			}
 		}
-		settings[key] = item
+		settings[event] = item
 	}
 	return settings, nil
 }
@@ -94,7 +119,7 @@ func validateQwenHandler(value any, groupLabel string, handlerIndex int) error {
 	}
 	kind, _ := handler["type"].(string)
 	if kind != "command" && kind != "http" && kind != "prompt" {
-		return fmt.Errorf(`%s type must be "command", "http", or "prompt"`, location)
+		return fmt.Errorf("%s has unsupported type %q", location, kind)
 	}
 	if timeout, exists := handler["timeout"]; exists {
 		number, ok := timeout.(float64)
@@ -111,7 +136,7 @@ func validateQwenHandler(value any, groupLabel string, handlerIndex int) error {
 	case "command":
 		command, ok := handler["command"].(string)
 		if !ok || command == "" {
-			return fmt.Errorf("%s command must be a non-empty string", location)
+			return fmt.Errorf("%s requires a non-empty command", location)
 		}
 		if err := optionalQwenStringMap(handler, "env", location); err != nil {
 			return err
@@ -125,7 +150,7 @@ func validateQwenHandler(value any, groupLabel string, handlerIndex int) error {
 	case "http":
 		url, ok := handler["url"].(string)
 		if !ok || url == "" {
-			return fmt.Errorf("%s url must be a non-empty string", location)
+			return fmt.Errorf("%s requires a non-empty url", location)
 		}
 		if err := optionalQwenStringMap(handler, "headers", location); err != nil {
 			return err
@@ -145,7 +170,7 @@ func validateQwenHandler(value any, groupLabel string, handlerIndex int) error {
 	case "prompt":
 		prompt, ok := handler["prompt"].(string)
 		if !ok || prompt == "" {
-			return fmt.Errorf("%s prompt must be a non-empty string", location)
+			return fmt.Errorf("%s requires a non-empty prompt", location)
 		}
 		if err := optionalQwenString(handler, "model", location); err != nil {
 			return err
@@ -179,11 +204,11 @@ func optionalQwenStringMap(value map[string]any, key, label string) error {
 	}
 	entries, ok := item.(map[string]any)
 	if !ok {
-		return fmt.Errorf(`%s field %q must contain string values`, label, key)
+		return fmt.Errorf(`%s field %q must map names to strings`, label, key)
 	}
 	for _, entry := range entries {
 		if _, ok := entry.(string); !ok {
-			return fmt.Errorf(`%s field %q must contain string values`, label, key)
+			return fmt.Errorf(`%s field %q must map names to strings`, label, key)
 		}
 	}
 	return nil
@@ -198,24 +223,40 @@ func allQwenStrings(values []any) bool {
 	return true
 }
 
-func validateQwenRegexes(nodePath string, settings qwenHookSettings) error {
+func collectQwenRegexes(sources []qwenHookSettings) []qwenRegexEntry {
 	entries := make([]qwenRegexEntry, 0)
-	for event, value := range settings {
-		if qwenConfigFields[event] {
-			continue
-		}
-		for index, groupValue := range value.([]any) {
-			group := groupValue.(map[string]any)
-			matcher, ok := group["matcher"].(string)
-			if ok && strings.TrimSpace(matcher) != "" && strings.TrimSpace(matcher) != "*" {
+	for sourceIndex, settings := range sources {
+		for _, event := range qwenRegexMatcherEvents {
+			groups, _ := settings[event].([]any)
+			for groupIndex, groupValue := range groups {
+				group := groupValue.(map[string]any)
+				matcher, ok := group["matcher"].(string)
+				if !ok || strings.TrimSpace(matcher) == "" || strings.TrimSpace(matcher) == "*" {
+					continue
+				}
 				entries = append(entries, qwenRegexEntry{
-					Label: fmt.Sprintf(`Qwen Code hooks field %q[%d] matcher`, event, index), Pattern: matcher,
+					Label: fmt.Sprintf(
+						`Qwen Code hook source %d field %q[%d] matcher`,
+						sourceIndex,
+						event,
+						groupIndex,
+					),
+					Pattern: matcher,
 				})
 			}
 		}
 	}
+	return entries
+}
+
+func validateQwenJavaScriptMatchers(sources []qwenHookSettings) error {
+	entries := collectQwenRegexes(sources)
 	if len(entries) == 0 {
 		return nil
+	}
+	nodePath, err := resolveNodeRuntime()
+	if err != nil {
+		return err
 	}
 	payload, err := json.Marshal(entries)
 	if err != nil {
@@ -244,7 +285,10 @@ for (const entry of entries) {
 		if message == "" {
 			message = runErr.Error()
 		}
-		return fmt.Errorf("Qwen Code matcher must be a valid JavaScript regular expression: %s", message)
+		return fmt.Errorf(
+			"Qwen Code matcher must be a valid JavaScript regular expression: %s",
+			message,
+		)
 	}
 	return nil
 }

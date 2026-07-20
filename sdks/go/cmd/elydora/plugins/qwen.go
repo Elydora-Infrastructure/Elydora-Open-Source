@@ -1,112 +1,115 @@
 package plugins
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-)
+import "fmt"
 
+// QwenPlugin manages Qwen Code native user hooks.
 type QwenPlugin struct {
 	rename renameFunc
 }
 
-type qwenRuntimeConfig struct {
-	OrgID     string `json:"org_id"`
-	AgentID   string `json:"agent_id"`
-	KID       string `json:"kid"`
-	BaseURL   string `json:"base_url"`
-	Token     string `json:"token"`
-	AgentName string `json:"agent_name"`
+// ManagesGuardRuntime reports that Qwen commits its guard, audit runtime, and
+// settings in one transaction.
+func (p *QwenPlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+// PreflightInstall validates every effective source and runtime identity before
+// the CLI writes any managed file.
+func (p *QwenPlugin) PreflightInstall(config InstallConfig) error {
+	sources, err := readQwenSources()
+	if err != nil {
+		return err
+	}
+	_, _, err = preflightQwenInstallation(config, sources)
+	return err
+}
+
+func qwenInstalledGroups(
+	nodePath, guardPath, auditPath string,
+) map[string]map[string]any {
+	return map[string]map[string]any{
+		"PreToolUse":  buildQwenGroup(nodePath, guardPath, qwenGuardHookName),
+		"PostToolUse": buildQwenGroup(nodePath, auditPath, qwenAuditHookName),
+		"PostToolUseFailure": buildQwenGroup(
+			nodePath,
+			auditPath,
+			qwenAuditHookName,
+		),
+	}
 }
 
 func (p *QwenPlugin) Install(config InstallConfig) error {
-	runtimeRoot, agentDirectory, err := qwenAgentDirectory(config.AgentID)
+	sources, err := readQwenSources()
 	if err != nil {
 		return err
 	}
-	document, err := readQwenDocument()
+	paths, nodePath, err := preflightQwenInstallation(config, sources)
 	if err != nil {
 		return err
 	}
-	expectedGuard := filepath.Join(agentDirectory, qwenGuardScript)
-	if !sameQwenPath(config.GuardScriptPath, expectedGuard) {
-		return fmt.Errorf("Elydora guard runtime must use the managed agent directory: %s", expectedGuard)
-	}
-	guardExists, err := regularFileExists(config.GuardScriptPath, "Elydora guard runtime")
+	rendered, err := renderQwenDocument(
+		sources.user,
+		"",
+		paths.runtimeRoot,
+		qwenInstalledGroups(nodePath, paths.guardPath, paths.auditPath),
+	)
 	if err != nil {
 		return err
 	}
-	if !guardExists {
-		return fmt.Errorf("Elydora guard runtime is missing: %s", config.GuardScriptPath)
-	}
-	nodePath, err := resolveNodeRuntime()
+	prepared, err := prepareQwenInstallation(config, sources, rendered)
 	if err != nil {
 		return err
 	}
-	if err := validateQwenRegexes(nodePath, document.hooks); err != nil {
+	if err := commitQwenInstallation(prepared, p.rename); err != nil {
 		return err
 	}
-	auditPath := filepath.Join(agentDirectory, qwenAuditScript)
-	rendered, err := renderQwenDocument(document, "", runtimeRoot, map[string]map[string]any{
-		"PreToolUse":  buildQwenGroup(nodePath, config.GuardScriptPath),
-		"PostToolUse": buildQwenGroup(nodePath, auditPath),
-	})
-	if err != nil {
-		return err
-	}
-	changes, err := prepareQwenInstallationChanges(config, agentDirectory, auditPath, rendered)
-	if err != nil {
-		return err
-	}
-	if err := writeChanges(changes, "Write Qwen Code installation", p.rename); err != nil {
-		return err
-	}
-	fmt.Printf("  Qwen Code: user hooks installed at %s\n", document.filePath)
-	fmt.Println("  Qwen Code: run /hooks to review the Elydora hook changes.")
+	fmt.Printf("Qwen Code hooks: %s\n", sources.user.filePath)
+	fmt.Println("Qwen Code verification: run /hooks.")
 	return nil
 }
 
 func (p *QwenPlugin) Uninstall(agentID string) error {
+	sources, err := readQwenSources()
+	if err != nil {
+		return err
+	}
 	runtimeRoot, err := qwenRuntimeRoot()
 	if err != nil {
 		return err
 	}
-	document, err := readQwenDocument()
+	rendered, err := renderQwenDocument(
+		sources.user,
+		agentID,
+		runtimeRoot,
+		map[string]map[string]any{},
+	)
 	if err != nil {
 		return err
 	}
-	if !document.exists {
+	if !rendered.changed {
 		return nil
 	}
-	rendered, err := renderQwenDocument(document, agentID, runtimeRoot, nil)
+	change, preconditions, err := prepareQwenUninstall(sources, rendered)
 	if err != nil {
 		return err
 	}
-	change, err := prepareRenderedQwenChange(rendered)
-	if err != nil {
-		return err
-	}
-	return writeChanges([]*fileChange{change}, "Write Qwen Code settings", p.rename)
+	return commitQwenUninstall(change, preconditions, p.rename)
 }
 
 func (p *QwenPlugin) Status() (PluginStatus, error) {
 	entry := SupportedAgents[qwenAgentKey]
 	status := PluginStatus{AgentName: qwenAgentKey, DisplayName: entry.Name}
-	document, err := readQwenDocument()
+	sources, err := readQwenSources()
 	if err != nil {
 		return status, err
 	}
-	status.ConfigPath = document.filePath
-	if document.hooksDisabled {
-		return status, nil
-	}
+	status.ConfigPath = sources.user.filePath
 	runtimeRoot, err := qwenRuntimeRoot()
 	if err != nil {
 		return status, err
 	}
-	contracts := qwenRuntimeContracts(document.hooks, runtimeRoot)
-	status.HookConfigured = len(contracts) > 0
+	contracts := qwenRuntimeContracts(sources.user.hooks, runtimeRoot)
+	status.HookConfigured = !sources.disableControl.disabled && len(contracts) > 0
 	if !status.HookConfigured {
 		return status, nil
 	}
@@ -116,58 +119,4 @@ func (p *QwenPlugin) Status() (PluginStatus, error) {
 	}
 	status.Installed = status.HookScriptExists
 	return status, nil
-}
-
-func qwenAgentDirectory(agentID string) (string, string, error) {
-	runtimeRoot, err := qwenRuntimeRoot()
-	if err != nil {
-		return "", "", err
-	}
-	agentDirectory, err := ResolveAgentRuntimeDirectory(agentID)
-	if err != nil {
-		return "", "", err
-	}
-	return runtimeRoot, agentDirectory, nil
-}
-
-func prepareQwenInstallationChanges(
-	config InstallConfig,
-	agentDirectory, auditPath string,
-	rendered *qwenRenderedDocument,
-) ([]*fileChange, error) {
-	baseURL := config.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.elydora.com"
-	}
-	runtimeConfig, err := json.MarshalIndent(qwenRuntimeConfig{
-		OrgID: config.OrgID, AgentID: config.AgentID, KID: config.KID,
-		BaseURL: baseURL, Token: config.Token, AgentName: qwenAgentKey,
-	}, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("encode Elydora runtime config: %w", err)
-	}
-	runtimeConfig = append(runtimeConfig, '\n')
-	items := []struct {
-		path, label string
-		content     []byte
-		mode        os.FileMode
-	}{
-		{filepath.Join(agentDirectory, "config.json"), "Elydora runtime config", runtimeConfig, 0600},
-		{filepath.Join(agentDirectory, "private.key"), "Elydora private key", []byte(config.PrivateKey), 0600},
-		{auditPath, "Elydora audit runtime", []byte(buildHookScript(qwenAgentKey, config.AgentID)), 0700},
-	}
-	changes := make([]*fileChange, 0, len(items)+1)
-	for _, item := range items {
-		change, changeErr := prepareFileChange(item.path, item.label, item.content, item.mode)
-		if changeErr != nil {
-			return nil, changeErr
-		}
-		changes = append(changes, change)
-	}
-	settingsChange, err := prepareRenderedQwenChange(rendered)
-	if err != nil {
-		return nil, err
-	}
-	changes = append(changes, settingsChange)
-	return changes, nil
 }

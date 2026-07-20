@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -16,26 +15,30 @@ import (
 const qwenTestAgentID = "agent-1"
 
 type qwenFixtureOptions struct {
-	settings  *string
-	skipGuard bool
+	settings *string
 }
 
 type qwenFixture struct {
-	plugin        *QwenPlugin
-	config        InstallConfig
-	homeDir       string
-	workspaceDir  string
-	qwenDir       string
-	configPath    string
-	agentDir      string
-	guardPath     string
-	hookPath      string
-	runtimeConfig string
-	privateKey    string
+	plugin          *QwenPlugin
+	config          InstallConfig
+	homeDir         string
+	workspaceDir    string
+	qwenDir         string
+	configPath      string
+	workspaceConfig string
+	systemConfig    string
+	systemDefaults  string
+	trustedFolders  string
+	agentDir        string
+	guardPath       string
+	hookPath        string
+	runtimeConfig   string
+	privateKey      string
 }
 
 type qwenCommandResult struct {
 	exitCode int
+	stdout   string
 	stderr   string
 }
 
@@ -58,24 +61,25 @@ func prepareQwenFixture(t *testing.T, options qwenFixtureOptions) *qwenFixture {
 	workspaceDir := filepath.Join(homeDir, "workspace")
 	qwenDir := filepath.Join(homeDir, ".qwen")
 	configPath := filepath.Join(qwenDir, "settings.json")
+	workspaceConfig := filepath.Join(workspaceDir, ".qwen", "settings.json")
+	systemDirectory := filepath.Join(rootDir, "system")
+	systemConfig := filepath.Join(systemDirectory, "settings.json")
+	systemDefaults := filepath.Join(systemDirectory, "system-defaults.json")
+	trustedFolders := filepath.Join(rootDir, "trustedFolders.json")
 	agentDir := filepath.Join(homeDir, ".elydora", qwenTestAgentID)
 	guardPath := filepath.Join(agentDir, qwenGuardScript)
 	hookPath := filepath.Join(agentDir, qwenAuditScript)
-	for _, directory := range []string{workspaceDir, agentDir} {
-		if err := os.MkdirAll(directory, 0755); err != nil {
-			t.Fatalf("create fixture directory %s: %v", directory, err)
-		}
-	}
-	if !options.skipGuard {
-		guard := "process.stdin.resume(); process.stderr.write('Agent is frozen by Elydora.\\n'); process.exit(2);\n"
-		if err := os.WriteFile(guardPath, []byte(guard), 0700); err != nil {
-			t.Fatalf("write guard runtime: %v", err)
-		}
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		t.Fatalf("create fixture workspace: %v", err)
 	}
 	writeOptionalQwenFile(t, configPath, options.settings)
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
 	unsetQwenTestEnv(t, "QWEN_HOME")
+	unsetQwenTestEnv(t, "QWEN_RUNTIME_DIR")
+	t.Setenv("QWEN_CODE_SYSTEM_SETTINGS_PATH", systemConfig)
+	t.Setenv("QWEN_CODE_SYSTEM_DEFAULTS_PATH", systemDefaults)
+	t.Setenv("QWEN_CODE_TRUSTED_FOLDERS_PATH", trustedFolders)
 	previousDirectory, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("read current directory: %v", err)
@@ -89,16 +93,20 @@ func prepareQwenFixture(t *testing.T, options qwenFixtureOptions) *qwenFixture {
 		}
 	})
 	return &qwenFixture{
-		plugin:        &QwenPlugin{},
-		homeDir:       homeDir,
-		workspaceDir:  workspaceDir,
-		qwenDir:       qwenDir,
-		configPath:    configPath,
-		agentDir:      agentDir,
-		guardPath:     guardPath,
-		hookPath:      hookPath,
-		runtimeConfig: filepath.Join(agentDir, "config.json"),
-		privateKey:    filepath.Join(agentDir, "private.key"),
+		plugin:          &QwenPlugin{},
+		homeDir:         homeDir,
+		workspaceDir:    workspaceDir,
+		qwenDir:         qwenDir,
+		configPath:      configPath,
+		workspaceConfig: workspaceConfig,
+		systemConfig:    systemConfig,
+		systemDefaults:  systemDefaults,
+		trustedFolders:  trustedFolders,
+		agentDir:        agentDir,
+		guardPath:       guardPath,
+		hookPath:        hookPath,
+		runtimeConfig:   filepath.Join(agentDir, "config.json"),
+		privateKey:      filepath.Join(agentDir, "private.key"),
 		config: InstallConfig{
 			AgentName:       qwenAgentKey,
 			OrgID:           "org-1",
@@ -126,16 +134,16 @@ func unsetQwenTestEnv(t *testing.T, name string) {
 	})
 }
 
-func writeOptionalQwenFile(t *testing.T, path string, source *string) {
+func writeOptionalQwenFile(t *testing.T, filePath string, source *string) {
 	t.Helper()
 	if source == nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("create directory for %s: %v", path, err)
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatalf("create directory for %s: %v", filePath, err)
 	}
-	if err := os.WriteFile(path, []byte(*source), 0600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
+	if err := os.WriteFile(filePath, []byte(*source), 0600); err != nil {
+		t.Fatalf("write %s: %v", filePath, err)
 	}
 }
 
@@ -146,22 +154,24 @@ func installQwenFixture(t *testing.T, fixture *qwenFixture) {
 	}
 }
 
-func readQwenTestFile(t *testing.T, path string) string {
+func readQwenTestFile(t *testing.T, filePath string) string {
 	t.Helper()
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filePath)
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		t.Fatalf("read %s: %v", filePath, err)
 	}
 	return string(raw)
 }
 
-func readQwenTestObject(t *testing.T, path string) map[string]any {
+func readQwenTestObject(t *testing.T, filePath string) map[string]any {
 	t.Helper()
 	object, err := decodeJSONCObject(
-		[]byte(readQwenTestFile(t, path)), "Qwen test settings", false,
+		[]byte(readQwenTestFile(t, filePath)),
+		"Qwen test settings",
+		false,
 	)
 	if err != nil {
-		t.Fatalf("decode %s: %v", path, err)
+		t.Fatalf("decode %s: %v", filePath, err)
 	}
 	return object
 }
@@ -184,8 +194,16 @@ func requireQwenArray(t *testing.T, value any) []any {
 	return array
 }
 
-func qwenManagedGroup(t *testing.T, settings map[string]any, event, scriptPath string) map[string]any {
+func qwenManagedGroup(
+	t *testing.T,
+	settings map[string]any,
+	event, scriptPath string,
+) map[string]any {
 	t.Helper()
+	expectedName := qwenAuditHookName
+	if event == "PreToolUse" {
+		expectedName = qwenGuardHookName
+	}
 	hooks := requireQwenObject(t, settings["hooks"])
 	for _, groupValue := range requireQwenArray(t, hooks[event]) {
 		group := requireQwenObject(t, groupValue)
@@ -193,7 +211,7 @@ func qwenManagedGroup(t *testing.T, settings map[string]any, event, scriptPath s
 			handler := requireQwenObject(t, handlerValue)
 			command, _ := handler["command"].(string)
 			_, candidate, managed := parseQwenCommand(command)
-			if managed && sameQwenPath(candidate, scriptPath) {
+			if managed && handler["name"] == expectedName && sameQwenPath(candidate, scriptPath) {
 				return group
 			}
 		}
@@ -202,7 +220,11 @@ func qwenManagedGroup(t *testing.T, settings map[string]any, event, scriptPath s
 	return nil
 }
 
-func qwenManagedHandler(t *testing.T, settings map[string]any, event, scriptPath string) map[string]any {
+func qwenManagedHandler(
+	t *testing.T,
+	settings map[string]any,
+	event, scriptPath string,
+) map[string]any {
 	t.Helper()
 	group := qwenManagedGroup(t, settings, event, scriptPath)
 	for _, handlerValue := range requireQwenArray(t, group["hooks"]) {
@@ -217,35 +239,49 @@ func qwenManagedHandler(t *testing.T, settings map[string]any, event, scriptPath
 	return nil
 }
 
-func runQwenHandler(t *testing.T, handler map[string]any, homeDir, payload string) qwenCommandResult {
+func runQwenHandler(
+	t *testing.T,
+	handler map[string]any,
+	homeDir, payload string,
+) qwenCommandResult {
 	t.Helper()
 	command := handler["command"].(string)
 	var process *exec.Cmd
 	if handler["shell"] == "powershell" {
-		process = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", command)
+		process = exec.Command(
+			"powershell",
+			"-NoProfile",
+			"-NonInteractive",
+			"-Command",
+			command,
+		)
 	} else {
 		process = exec.Command("bash", "-c", command)
 	}
 	process.Env = append(os.Environ(), "HOME="+homeDir, "USERPROFILE="+homeDir)
 	process.Stdin = bytes.NewBufferString(payload)
+	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	process.Stdout = &stdout
 	process.Stderr = &stderr
 	err := process.Run()
+	result := qwenCommandResult{stdout: stdout.String(), stderr: stderr.String()}
 	if err == nil {
-		return qwenCommandResult{stderr: stderr.String()}
+		return result
 	}
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
-		return qwenCommandResult{exitCode: exitError.ExitCode(), stderr: stderr.String()}
+		result.exitCode = exitError.ExitCode()
+		return result
 	}
 	t.Fatalf("run Qwen Code hook command: %v", err)
 	return qwenCommandResult{}
 }
 
-func requireMissingQwenFile(t *testing.T, path string) {
+func requireMissingQwenFile(t *testing.T, filePath string) {
 	t.Helper()
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("expected %s to be missing, got %v", path, err)
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected %s to be missing, got %v", filePath, err)
 	}
 }
 
@@ -265,9 +301,16 @@ func requireNoQwenStagingFiles(t *testing.T, root string) {
 	}
 }
 
-func expectedQwenShell() string {
-	if runtime.GOOS == "windows" {
-		return "powershell"
+func writeQwenTestObject(t *testing.T, filePath string, value map[string]any) {
+	t.Helper()
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("encode %s: %v", filePath, err)
 	}
-	return "bash"
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatalf("create directory for %s: %v", filePath, err)
+	}
+	if err := os.WriteFile(filePath, append(encoded, '\n'), 0600); err != nil {
+		t.Fatalf("write %s: %v", filePath, err)
+	}
 }

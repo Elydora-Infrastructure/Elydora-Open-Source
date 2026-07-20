@@ -1,148 +1,264 @@
 package plugins
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 )
 
 var qwenPathSeparatorPattern = regexp.MustCompile(`[/\\]+`)
 
-func defaultQwenHome() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
+func readQwenRuntimeConfig(path string) (map[string]any, bool, error) {
+	snapshot, err := readManagedFile(path, "Elydora runtime config", maxRuntimeConfigBytes)
+	if err != nil || snapshot == nil {
+		return nil, snapshot != nil, err
 	}
-	return filepath.Join(home, ".qwen"), nil
+	label := fmt.Sprintf("Elydora runtime config at %s", path)
+	config, err := decodeStrictJSONObject(snapshot.contents, label)
+	return config, true, err
 }
 
-func resolveQwenStoragePath(value string) (string, error) {
-	resolved := value
-	if value == "~" || len(value) >= 2 && value[0] == '~' && (value[1] == '/' || value[1] == '\\') {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home directory: %w", err)
-		}
-		resolved = home
-		if value != "~" {
-			for _, segment := range qwenPathSeparatorPattern.Split(value[2:], -1) {
-				if segment != "" {
-					resolved = filepath.Join(resolved, segment)
-				}
-			}
-		}
+func requireQwenRuntimeString(
+	config map[string]any,
+	field, configPath string,
+) (string, error) {
+	value, ok := config[field].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf(
+			"Elydora runtime config %s is invalid: %s",
+			field,
+			configPath,
+		)
 	}
-	if filepath.IsAbs(resolved) {
-		return filepath.Clean(resolved), nil
-	}
-	absolute, err := filepath.Abs(resolved)
-	if err != nil {
-		return "", fmt.Errorf("resolve Qwen Code storage path %q: %w", value, err)
-	}
-	return absolute, nil
+	return value, nil
 }
 
-func qwenHomeFromEnvFile(filePath string) (string, bool, error) {
-	raw, exists, err := readOptionalFile(filePath, "Qwen home environment")
-	if err != nil || !exists {
-		return "", false, err
-	}
-	value := parseDotenv(raw)["QWEN_HOME"]
-	if value == "" {
-		return "", false, nil
-	}
-	resolved, err := resolveQwenStoragePath(value)
-	return resolved, err == nil, err
-}
-
-func resolveQwenHome() (string, error) {
-	defaultHome, err := defaultQwenHome()
-	if err != nil {
-		return "", err
-	}
-	value, explicit := os.LookupEnv("QWEN_HOME")
-	initialHome := defaultHome
-	if value != "" {
-		initialHome, err = resolveQwenStoragePath(value)
-		if err != nil {
-			return "", err
-		}
-	}
-	if explicit {
-		return initialHome, nil
-	}
-	for _, candidate := range []string{
-		filepath.Join(initialHome, ".env"), filepath.Join(filepath.Dir(initialHome), ".env"),
-	} {
-		if discovered, exists, readErr := qwenHomeFromEnvFile(candidate); readErr != nil {
-			return "", readErr
-		} else if exists {
-			return discovered, nil
-		}
-	}
-	return initialHome, nil
-}
-
-func readQwenDocument() (*qwenDocument, error) {
-	home, err := resolveQwenHome()
-	if err != nil {
-		return nil, err
-	}
-	configPath := filepath.Join(home, "settings.json")
-	raw, exists, err := readOptionalFile(configPath, "Qwen Code settings")
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return createOwnedQwenDocument(configPath)
-	}
-	return parseQwenDocument(true, configPath, raw)
-}
-
-func prepareRenderedQwenChange(rendered *qwenRenderedDocument) (*fileChange, error) {
-	if rendered == nil || !rendered.changed {
-		return nil, nil
-	}
-	return prepareSourceChange(
-		rendered.document.filePath,
-		"Qwen Code settings",
-		rendered.document.raw,
-		rendered.document.exists,
-		rendered.next,
-		os.FileMode(0600),
-		rendered.remove,
+func validateQwenRuntimeConfig(
+	config map[string]any,
+	expectedAgentID, configPath string,
+) error {
+	supported := stringSet(
+		"org_id",
+		"agent_id",
+		"kid",
+		"base_url",
+		"token",
+		"agent_name",
 	)
+	fields := make([]string, 0, len(config))
+	for field := range config {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	for _, field := range fields {
+		if _, ok := supported[field]; !ok {
+			return fmt.Errorf(
+				`Elydora runtime config has unsupported field %q: %s`,
+				field,
+				configPath,
+			)
+		}
+	}
+	if _, err := requireQwenRuntimeString(config, "org_id", configPath); err != nil {
+		return err
+	}
+	if _, err := requireQwenRuntimeString(config, "kid", configPath); err != nil {
+		return err
+	}
+	agentID, err := requireQwenRuntimeString(config, "agent_id", configPath)
+	if err != nil {
+		return err
+	}
+	if !sameQwenAgentID(agentID, expectedAgentID) || config["agent_name"] != qwenAgentKey {
+		return fmt.Errorf(
+			"Elydora runtime identity does not match Qwen Code hooks: %s",
+			configPath,
+		)
+	}
+	if _, exists := config["token"]; exists {
+		if _, err := requireQwenRuntimeString(config, "token", configPath); err != nil {
+			return err
+		}
+	}
+	baseURL, err := requireQwenRuntimeString(config, "base_url", configPath)
+	if err != nil {
+		return err
+	}
+	if err := validateManagedBaseURL(baseURL); err != nil {
+		return fmt.Errorf(
+			"Elydora runtime config base URL is invalid at %s: %w",
+			configPath,
+			err,
+		)
+	}
+	return nil
+}
+
+func validateQwenRuntimeIdentity(agentDirectory, agentID string) error {
+	runtimeRoot := filepath.Dir(agentDirectory)
+	rootExists, err := managedPhysicalDirectoryExists(
+		runtimeRoot,
+		"Elydora runtime directory",
+	)
+	if err != nil || !rootExists {
+		return err
+	}
+	directoryExists, err := managedPhysicalDirectoryExists(
+		agentDirectory,
+		"Elydora agent runtime directory",
+	)
+	if err != nil || !directoryExists {
+		return err
+	}
+	configPath := filepath.Join(agentDirectory, "config.json")
+	config, configExists, err := readQwenRuntimeConfig(configPath)
+	if err != nil {
+		return err
+	}
+	artifactExists := false
+	for _, item := range []struct {
+		path  string
+		label string
+		limit int64
+	}{
+		{filepath.Join(agentDirectory, "private.key"), "Elydora private key", maxProtectedSecretBytes},
+		{filepath.Join(agentDirectory, qwenGuardScript), "Elydora guard runtime", maxManagedSourceBytes},
+		{filepath.Join(agentDirectory, qwenAuditScript), "Elydora audit runtime", maxManagedSourceBytes},
+		{filepath.Join(agentDirectory, "chain-state.json"), "Elydora chain state", maxRuntimeConfigBytes},
+		{filepath.Join(agentDirectory, "status-cache.json"), "Elydora status cache", maxRuntimeConfigBytes},
+		{filepath.Join(agentDirectory, "error.log"), "Elydora error log", maxManagedSourceBytes},
+	} {
+		exists, inspectErr := managedPhysicalFileExists(item.path, item.label, item.limit)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		artifactExists = artifactExists || exists
+	}
+	if !configExists {
+		if artifactExists {
+			return fmt.Errorf(
+				"Elydora runtime identity cannot be verified without config.json: %s",
+				agentDirectory,
+			)
+		}
+		return nil
+	}
+	configuredID, ok := config["agent_id"].(string)
+	if !ok || config["agent_name"] != qwenAgentKey ||
+		!sameQwenAgentID(configuredID, agentID) {
+		return fmt.Errorf(
+			"Elydora runtime config identity does not match Qwen Code agent %s: %s",
+			agentID,
+			configPath,
+		)
+	}
+	return nil
+}
+
+func validQwenContractPaths(contract qwenRuntimeContract) (bool, error) {
+	runtimeRoot, err := AgentRuntimeRoot()
+	if err != nil {
+		return false, err
+	}
+	agentDirectory := qwenContractDirectory(contract)
+	return sameQwenPath(filepath.Dir(agentDirectory), runtimeRoot) &&
+		sameQwenPath(
+			contract.guardPath,
+			filepath.Join(agentDirectory, qwenGuardScript),
+		) &&
+		sameQwenPath(
+			contract.auditPath,
+			filepath.Join(agentDirectory, qwenAuditScript),
+		), nil
+}
+
+func qwenRuntimeContractExists(contract qwenRuntimeContract) (bool, error) {
+	validPaths, err := validQwenContractPaths(contract)
+	if err != nil || !validPaths {
+		return false, err
+	}
+	runtimeRoot, err := AgentRuntimeRoot()
+	if err != nil {
+		return false, err
+	}
+	agentDirectory := qwenContractDirectory(contract)
+	rootExists, err := managedPhysicalDirectoryExists(
+		runtimeRoot,
+		"Elydora runtime directory",
+	)
+	if err != nil || !rootExists {
+		return false, err
+	}
+	directoryExists, err := managedPhysicalDirectoryExists(
+		agentDirectory,
+		"Elydora agent runtime directory",
+	)
+	if err != nil || !directoryExists {
+		return false, err
+	}
+	configPath := filepath.Join(agentDirectory, "config.json")
+	keyPath := filepath.Join(agentDirectory, "private.key")
+	config, configExists, err := readQwenRuntimeConfig(configPath)
+	if err != nil {
+		return false, err
+	}
+	key, err := readManagedFile(keyPath, "Elydora private key", maxProtectedSecretBytes)
+	if err != nil {
+		return false, err
+	}
+	guard, err := readManagedFile(
+		contract.guardPath,
+		"Elydora guard runtime",
+		maxManagedSourceBytes,
+	)
+	if err != nil {
+		return false, err
+	}
+	audit, err := readManagedFile(
+		contract.auditPath,
+		"Elydora audit runtime",
+		maxManagedSourceBytes,
+	)
+	if err != nil {
+		return false, err
+	}
+	if !configExists || key == nil || guard == nil || audit == nil {
+		return false, nil
+	}
+	if err := validateQwenRuntimeConfig(config, contract.agentID, configPath); err != nil {
+		return false, err
+	}
+	if err := validateManagedPrivateKey(string(key.contents)); err != nil {
+		return false, fmt.Errorf("Elydora private key at %s: %w", keyPath, err)
+	}
+	expectedGuard := []byte(generateGuardScript(
+		qwenAgentKey,
+		contract.agentID,
+		"",
+		false,
+		"",
+	))
+	expectedAudit := []byte(buildHookScriptWithOutput(
+		qwenAgentKey,
+		contract.agentID,
+		"",
+		false,
+		true,
+	))
+	return bytes.Equal(guard.contents, expectedGuard) &&
+		bytes.Equal(audit.contents, expectedAudit), nil
 }
 
 func qwenRuntimeFilesExist(contracts []qwenRuntimeContract) (bool, error) {
 	for _, contract := range contracts {
-		configPath := filepath.Join(filepath.Dir(contract.guardPath), "config.json")
-		raw, exists, err := readOptionalFile(configPath, "Elydora runtime config")
+		exists, err := qwenRuntimeContractExists(contract)
 		if err != nil {
 			return false, err
 		}
-		if !exists {
-			continue
-		}
-		var config map[string]any
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return false, fmt.Errorf("parse Elydora runtime config at %s: %w", configPath, err)
-		}
-		agentID, ok := config["agent_id"].(string)
-		if !ok || config["agent_name"] != qwenAgentKey || !sameQwenAgentID(agentID, contract.agentID) {
-			continue
-		}
-		guardExists, err := regularFileExists(contract.guardPath, "Elydora guard runtime")
-		if err != nil {
-			return false, err
-		}
-		auditExists, err := regularFileExists(contract.auditPath, "Elydora audit runtime")
-		if err != nil {
-			return false, err
-		}
-		if guardExists && auditExists {
+		if exists {
 			return true, nil
 		}
 	}
