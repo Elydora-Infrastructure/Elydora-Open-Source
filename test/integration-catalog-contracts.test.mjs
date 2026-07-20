@@ -197,6 +197,38 @@ test('high-drift providers retain their verified hook contracts', async () => {
       source_url: 'https://docs.factory.ai/reference/hooks-reference',
     },
   ]);
+  assert.deepEqual(providers.get('gemini').config_paths, [
+    '$GEMINI_CLI_HOME/.gemini/settings.json',
+    '~/.gemini/settings.json',
+    '.gemini/settings.json',
+    '$GEMINI_CLI_SYSTEM_DEFAULTS_PATH',
+    '$GEMINI_CLI_SYSTEM_SETTINGS_PATH',
+    '/Library/Application Support/GeminiCli/system-defaults.json',
+    '/Library/Application Support/GeminiCli/settings.json',
+    '/etc/gemini-cli/system-defaults.json',
+    '/etc/gemini-cli/settings.json',
+    'C:\\ProgramData\\gemini-cli\\system-defaults.json',
+    'C:\\ProgramData\\gemini-cli\\settings.json',
+  ]);
+  assert.deepEqual(providers.get('gemini').events, {
+    before_tool: 'BeforeTool',
+    after_tool: 'AfterTool',
+  });
+  assert.deepEqual(providers.get('gemini').event_fields, {
+    name: 'tool_name',
+    input: 'tool_input',
+    session: 'session_id',
+    output: 'tool_response',
+    error: 'tool_response.error',
+  });
+  assert.deepEqual(providers.get('gemini').blocking, {
+    mechanism: 'exit_code_2',
+    failure_mode: 'fail_open',
+  });
+  assert.equal(
+    providers.get('gemini').source_url,
+    'https://geminicli.com/docs/hooks/reference/',
+  );
   assert.equal(providers.get('cline').integration_mode, 'command_hooks');
   assert.equal(providers.get('cline').config_format, 'script');
   assert.deepEqual(providers.get('cline').config_paths, [

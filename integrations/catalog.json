@@ -210,11 +210,26 @@
       "integration_mode": "command_hooks",
       "config_format": "json",
       "config_paths": [
+        "$GEMINI_CLI_HOME/.gemini/settings.json",
         "~/.gemini/settings.json",
-        ".gemini/settings.json"
+        ".gemini/settings.json",
+        "$GEMINI_CLI_SYSTEM_DEFAULTS_PATH",
+        "$GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+        "/Library/Application Support/GeminiCli/system-defaults.json",
+        "/Library/Application Support/GeminiCli/settings.json",
+        "/etc/gemini-cli/system-defaults.json",
+        "/etc/gemini-cli/settings.json",
+        "C:\\ProgramData\\gemini-cli\\system-defaults.json",
+        "C:\\ProgramData\\gemini-cli\\settings.json"
       ],
       "events": { "before_tool": "BeforeTool", "after_tool": "AfterTool" },
-      "event_fields": { "name": "tool_name", "input": "tool_input", "session": "session_id" },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "session_id",
+        "output": "tool_response",
+        "error": "tool_response.error"
+      },
       "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
