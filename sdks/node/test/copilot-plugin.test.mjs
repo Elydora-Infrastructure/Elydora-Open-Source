@@ -1,161 +1,49 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
+import {
+  VALID_PRIVATE_KEY,
+  assertNativeHandler,
+  cliPath,
+  createFixture,
+  environment,
+  legacyManagedConfig,
+  managedHandler,
+  readJson,
+  registryModuleUrl,
+  runHook,
+  runNode,
+  runPlugin,
+  startApiServer,
+  writeJson,
+} from '../test-support/copilot-test-helpers.mjs';
 
-const pluginModuleUrl = pathToFileURL(path.resolve('dist/plugins/copilot.js')).href;
-const registryModuleUrl = pathToFileURL(path.resolve('dist/plugins/registry.js')).href;
-
-function runNode(args, env, cwd, input = '') {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, {
-      cwd,
-      env: { ...process.env, ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
+async function assertMissing(filePath) {
+  await assert.rejects(lstat(filePath), { code: 'ENOENT' });
 }
 
-function runHook(handler, input) {
-  const command = process.platform === 'win32'
-    ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', handler.powershell]]
-    : ['/bin/sh', ['-c', handler.bash]];
-  return new Promise((resolve, reject) => {
-    const child = spawn(command[0], command[1], { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
-async function writeJson(filePath, value) {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, typeof value === 'string' ? value : JSON.stringify(value, null, 2));
-}
-
-async function runPlugin(fixture, method, argument) {
-  const source = `
-    import { copilotPlugin } from ${JSON.stringify(pluginModuleUrl)};
-    const argument = JSON.parse(process.env.ELYDORA_TEST_ARGUMENT);
-    const result = await copilotPlugin[process.env.ELYDORA_TEST_METHOD](argument);
-    if (result !== undefined) console.log(JSON.stringify(result));
-  `;
-  return runNode(
-    ['--input-type=module', '--eval', source],
-    {
-      HOME: fixture.homeDir,
-      USERPROFILE: fixture.homeDir,
-      COPILOT_HOME: fixture.copilotHome,
-      ELYDORA_TEST_ARGUMENT: JSON.stringify(argument),
-      ELYDORA_TEST_METHOD: method,
-    },
-    fixture.projectDir,
-  );
-}
-
-async function createFixture({
-  userConfig,
-  legacyConfig,
-  guardSource,
-  hookSource,
-  createRuntimes = true,
-} = {}) {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-copilot-'));
-  const projectDir = path.join(homeDir, 'project');
-  const copilotHome = path.join(homeDir, 'custom-copilot');
-  const configPath = path.join(copilotHome, 'hooks', 'elydora-audit.json');
-  const legacyPath = path.join(projectDir, '.github', 'hooks', 'hooks.json');
-  const agentDir = path.join(homeDir, '.elydora', 'agent-1');
-  const guardScriptPath = path.join(agentDir, 'guard.js');
-  const hookScriptPath = path.join(agentDir, 'hook.js');
-  await mkdir(projectDir, { recursive: true });
-  if (createRuntimes) {
-    await mkdir(agentDir, { recursive: true });
-    await writeFile(
-      guardScriptPath,
-      guardSource ?? "process.stdin.resume(); process.stdin.once('end', () => { process.stderr.write('Agent is frozen by Elydora.'); process.exit(2); });\n",
-    );
-    await writeFile(hookScriptPath, hookSource ?? 'process.stdin.resume();\n');
-    await writeFile(path.join(agentDir, 'config.json'), JSON.stringify({
-      agent_id: 'agent-1',
-      agent_name: 'copilot',
-    }));
+async function assertNoTransactionFiles(fixture) {
+  const names = [];
+  for (const directory of [fixture.agentDir, fixture.hooksDir, path.dirname(fixture.legacyPath)]) {
+    try {
+      names.push(...await readdir(directory));
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
   }
-  if (userConfig !== undefined) await writeJson(configPath, userConfig);
-  if (legacyConfig !== undefined) await writeJson(legacyPath, legacyConfig);
-  return {
-    agentDir,
-    configPath,
-    copilotHome,
-    guardScriptPath,
-    homeDir,
-    hookScriptPath,
-    legacyPath,
-    projectDir,
-    async install() {
-      return runPlugin(this, 'install', {
-        agentName: 'copilot',
-        agentId: 'agent-1',
-        guardScriptPath,
-        hookScriptPath,
-      });
-    },
-    async close() {
-      await rm(homeDir, { recursive: true, force: true });
-    },
-  };
+  assert.equal(names.some((name) => /\.(tmp|rollback)$/.test(name)), false, names.join(', '));
 }
 
-function managedHandler(config, event, scriptName) {
-  return config.hooks?.[event]?.find(
-    (handler) => handler.bash?.includes(scriptName) || handler.powershell?.includes(scriptName),
-  );
-}
-
-function assertNativeHandler(handler) {
-  assert.deepEqual(Object.keys(handler).sort(), ['bash', 'powershell', 'timeoutSec', 'type']);
-  assert.equal(handler.type, 'command');
-  assert.equal(handler.timeoutSec, 10);
-  assert.match(handler.bash, /node(?:\.exe)?/i);
-  assert.match(handler.powershell, /^& /);
-}
-
-function legacyManagedConfig(fixture, extraHooks = {}) {
-  return {
-    version: 1,
-    hooks: {
-      preToolUse: [{
-        type: 'command',
-        bash: `node "${fixture.guardScriptPath}"`,
-        powershell: `node "${fixture.guardScriptPath}"`,
-        timeoutSec: 5,
-      }],
-      postToolUse: [{
-        type: 'command',
-        bash: `node "${fixture.hookScriptPath}"`,
-        powershell: `node "${fixture.hookScriptPath}"`,
-        timeoutSec: 5,
-      }],
-      ...extraHooks,
-    },
-  };
-}
-
-test('GitHub Copilot CLI is registered with the native user hook file', async () => {
+test('GitHub Copilot CLI is registered with its native user hook directory', async () => {
   const { SUPPORTED_AGENTS } = await import(registryModuleUrl);
   assert.deepEqual(SUPPORTED_AGENTS.get('copilot'), {
     name: 'GitHub Copilot CLI',
@@ -164,44 +52,77 @@ test('GitHub Copilot CLI is registered with the native user hook file', async ()
   });
 });
 
-test('Copilot install preserves user hooks, migrates legacy entries, and is idempotent', async () => {
+test('Copilot installs five managed files, preserves valid hooks, and migrates legacy entries', async () => {
   const fixture = await createFixture({
     userConfig: {
       version: 1,
       disableAllHooks: false,
+      owner: 'user',
       hooks: {
-        sessionStart: [{ type: 'command', command: 'user-session-hook' }],
-        preToolUse: [{ type: 'command', command: 'user-pre-hook' }],
+        sessionStart: [{ type: 'prompt', prompt: '/compact' }],
+        preToolUse: [{ type: 'command', command: 'user-pre-hook', timeout: 3 }],
+        postToolUse: [{ type: 'command', bash: 'user-post-hook' }],
+        postToolUseFailure: [{ command: 'user-failure-hook', matcher: 'powershell' }],
       },
     },
   });
   try {
     await writeJson(fixture.legacyPath, legacyManagedConfig(fixture, {
-      notification: [{ type: 'command', command: 'user-notification-hook' }],
+      notification: [{
+        type: 'command',
+        command: 'user-notification-hook',
+        matcher: 'agent_idle|permission_prompt',
+      }],
     }));
-
     const first = await fixture.install();
     assert.equal(first.code, 0, first.stderr);
-    const second = await fixture.install();
-    assert.equal(second.code, 0, second.stderr);
-
-    const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    assert.equal(config.version, 1);
+    const managedFiles = [
+      fixture.guardScriptPath,
+      path.join(fixture.agentDir, 'config.json'),
+      path.join(fixture.agentDir, 'private.key'),
+      fixture.hookScriptPath,
+      fixture.configPath,
+    ];
+    const snapshot = new Map(await Promise.all(managedFiles.map(async (filePath) => [
+      filePath,
+      await readFile(filePath, 'utf-8'),
+    ])));
+    const config = JSON.parse(snapshot.get(fixture.configPath));
+    assert.equal(config.owner, 'user');
     assert.equal(config.disableAllHooks, false);
-    assert.deepEqual(config.hooks.sessionStart, [{ type: 'command', command: 'user-session-hook' }]);
-    assert.deepEqual(config.hooks.preToolUse[0], { type: 'command', command: 'user-pre-hook' });
+    assert.deepEqual(config.hooks.sessionStart, [{ type: 'prompt', prompt: '/compact' }]);
     assert.equal(config.hooks.preToolUse.length, 2);
-    assert.equal(config.hooks.postToolUse.length, 1);
+    assert.equal(config.hooks.postToolUse.length, 2);
+    assert.equal(config.hooks.postToolUseFailure.length, 2);
     assertNativeHandler(managedHandler(config, 'preToolUse', 'guard.js'));
     assertNativeHandler(managedHandler(config, 'postToolUse', 'hook.js'));
-
-    const legacy = JSON.parse(await readFile(fixture.legacyPath, 'utf-8'));
-    assert.deepEqual(legacy, {
+    assertNativeHandler(managedHandler(config, 'postToolUseFailure', 'hook.js'));
+    assert.deepEqual(await readJson(path.join(fixture.agentDir, 'config.json')), {
+      org_id: 'org-1',
+      agent_id: fixture.agentId,
+      kid: 'kid-1',
+      base_url: fixture.baseUrl,
+      token: 'token-1',
+      agent_name: 'copilot',
+    });
+    assert.equal(await readFile(path.join(fixture.agentDir, 'private.key'), 'utf-8'), VALID_PRIVATE_KEY);
+    assert.deepEqual(await readJson(fixture.legacyPath), {
       version: 1,
       hooks: {
-        notification: [{ type: 'command', command: 'user-notification-hook' }],
+        notification: [{
+          type: 'command',
+          command: 'user-notification-hook',
+          matcher: 'agent_idle|permission_prompt',
+        }],
       },
     });
+
+    const second = await fixture.install();
+    assert.equal(second.code, 0, second.stderr);
+    for (const [filePath, source] of snapshot) {
+      assert.equal(await readFile(filePath, 'utf-8'), source, filePath);
+    }
+    await assertNoTransactionFiles(fixture);
   } finally {
     await fixture.close();
   }
@@ -213,105 +134,214 @@ test('Copilot migration removes a legacy file owned entirely by Elydora', async 
     await writeJson(fixture.legacyPath, legacyManagedConfig(fixture));
     const result = await fixture.install();
     assert.equal(result.code, 0, result.stderr);
-    await assert.rejects(readFile(fixture.legacyPath), { code: 'ENOENT' });
-    const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    assertNativeHandler(managedHandler(config, 'preToolUse', 'guard.js'));
+    await assertMissing(fixture.legacyPath);
+    assertNativeHandler(managedHandler(await readJson(fixture.configPath), 'preToolUse', 'guard.js'));
   } finally {
     await fixture.close();
   }
 });
 
-test('Copilot commands block freezes and forward the native payload byte-for-byte', async () => {
-  const capturePath = path.join(os.tmpdir(), `elydora-copilot-event-${process.pid}-${Date.now()}.json`);
-  const fixture = await createFixture({
-    hookSource: `
-      const fs = require('node:fs');
-      const chunks = [];
-      process.stdin.on('data', (chunk) => chunks.push(chunk));
-      process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(capturePath)}, Buffer.concat(chunks)));
-    `,
-  });
+test('Copilot guard blocks frozen agents and audit records success and failure payloads', async () => {
+  const api = await startApiServer();
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
   try {
-    const install = await fixture.install();
-    assert.equal(install.code, 0, install.stderr);
-    const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
+    assert.equal((await fixture.install()).code, 0);
+    const config = await readJson(fixture.configPath);
     const guard = managedHandler(config, 'preToolUse', 'guard.js');
-    const audit = managedHandler(config, 'postToolUse', 'hook.js');
-    const prePayload = JSON.stringify({
+    const successAudit = managedHandler(config, 'postToolUse', 'hook.js');
+    const failureAudit = managedHandler(config, 'postToolUseFailure', 'hook.js');
+    const prePayload = {
       sessionId: 'session-1',
-      timestamp: Date.now(),
+      timestamp: 1784486400000,
       cwd: fixture.projectDir,
       toolName: 'powershell',
       toolArgs: { command: 'Get-ChildItem' },
+    };
+    await writeJson(path.join(fixture.agentDir, 'status-cache.json'), {
+      status: 'frozen',
+      cached_at: Date.now(),
     });
-    const guardResult = await runHook(guard, prePayload);
-    assert.equal(guardResult.code, 2, guardResult.stderr);
-    assert.match(guardResult.stderr, /Agent is frozen by Elydora/);
+    let result = await runHook(guard, fixture, JSON.stringify(prePayload));
+    assert.equal(result.code, 2, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /Agent "copilot" is frozen/);
 
-    const postPayload = JSON.stringify({
-      sessionId: 'session-1',
-      timestamp: Date.now(),
-      cwd: fixture.projectDir,
-      toolName: 'powershell',
-      toolArgs: { command: 'Get-ChildItem' },
-      toolResult: { output: 'ok' },
+    await writeJson(path.join(fixture.agentDir, 'status-cache.json'), {
+      status: 'active',
+      cached_at: Date.now(),
     });
-    const auditResult = await runHook(audit, postPayload);
-    assert.equal(auditResult.code, 0, auditResult.stderr);
-    assert.equal(await readFile(capturePath, 'utf-8'), postPayload);
+    result = await runHook(guard, fixture, JSON.stringify(prePayload));
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, '');
+
+    const successPayload = {
+      ...prePayload,
+      toolResult: { resultType: 'success', textResultForLlm: 'ok' },
+    };
+    result = await runHook(successAudit, fixture, JSON.stringify(successPayload));
+    assert.equal(result.code, 0, result.stderr);
+    const failurePayload = { ...prePayload, error: 'command failed' };
+    result = await runHook(failureAudit, fixture, JSON.stringify(failurePayload));
+    assert.equal(result.code, 0, result.stderr);
+
+    const operations = api.requests
+      .filter((request) => request.method === 'POST')
+      .map((request) => JSON.parse(request.raw));
+    assert.equal(operations.length, 2);
+    assert.deepEqual(operations[0].payload, successPayload);
+    assert.deepEqual(operations[1].payload, failurePayload);
+    assert.deepEqual(operations[1].subject, { session_id: 'session-1' });
+    assert.deepEqual(operations[1].action, { tool: 'powershell' });
   } finally {
+    await api.close();
     await fixture.close();
-    await rm(capturePath, { force: true });
   }
 });
 
-test('Copilot treats an empty home override as the official default', async () => {
+test('Copilot uses the official default for an empty COPILOT_HOME', async () => {
   const fixture = await createFixture();
   try {
-    fixture.copilotHome = '';
-    const result = await fixture.install();
+    const result = await fixture.install({}, '');
     assert.equal(result.code, 0, result.stderr);
     const defaultPath = path.join(fixture.homeDir, '.copilot', 'hooks', 'elydora-audit.json');
-    const config = JSON.parse(await readFile(defaultPath, 'utf-8'));
-    assertNativeHandler(managedHandler(config, 'preToolUse', 'guard.js'));
-    const status = await runPlugin(fixture, 'status', null);
+    assertNativeHandler(managedHandler(await readJson(defaultPath), 'preToolUse', 'guard.js'));
+    const status = await runPlugin(fixture, 'status', null, '');
     assert.equal(JSON.parse(status.stdout).configPath, defaultPath);
   } finally {
     await fixture.close();
   }
 });
 
-test('Copilot status requires a complete pair, matching runtime identity, and both scripts', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal((await fixture.install()).code, 0);
-    let status = await runPlugin(fixture, 'status', null);
-    assert.equal(status.code, 0, status.stderr);
-    assert.equal(JSON.parse(status.stdout).installed, true);
-
-    const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    delete config.hooks.postToolUse;
-    await writeJson(fixture.configPath, config);
-    status = await runPlugin(fixture, 'status', null);
-    assert.equal(JSON.parse(status.stdout).hookConfigured, false);
-
-    assert.equal((await fixture.install()).code, 0);
-    await writeFile(path.join(fixture.agentDir, 'config.json'), '{ malformed');
-    status = await runPlugin(fixture, 'status', null);
-    assert.equal(status.code, 1);
-    assert.match(status.stderr, /parse Elydora runtime config/i);
-  } finally {
-    await fixture.close();
+test('Copilot status requires the complete active contract and exact runtime sources', async (t) => {
+  const cases = [
+    ['missing failure event', 'config', /"hookConfigured":false/],
+    ['tampered guard', 'guard', /"installed":false/],
+    ['malformed runtime config', 'runtime', /parse Elydora runtime config/i],
+    ['invalid private key', 'key', /private key is invalid/i],
+  ];
+  for (const [label, target, expected] of cases) {
+    await t.test(label, async () => {
+      const fixture = await createFixture();
+      try {
+        assert.equal((await fixture.install()).code, 0);
+        const healthy = await runPlugin(fixture, 'status', null);
+        assert.deepEqual(JSON.parse(healthy.stdout), {
+          installed: true,
+          agentName: 'copilot',
+          displayName: 'GitHub Copilot CLI',
+          hookConfigured: true,
+          hookScriptExists: true,
+          configPath: fixture.configPath,
+        });
+        if (target === 'config') {
+          const config = await readJson(fixture.configPath);
+          delete config.hooks.postToolUseFailure;
+          await writeJson(fixture.configPath, config);
+        } else if (target === 'guard') {
+          await writeFile(fixture.guardScriptPath, 'tampered\n');
+        } else if (target === 'runtime') {
+          await writeFile(path.join(fixture.agentDir, 'config.json'), '{ malformed');
+        } else {
+          await writeFile(path.join(fixture.agentDir, 'private.key'), 'invalid');
+        }
+        const status = await runPlugin(fixture, 'status', null);
+        assert.match(`${status.stdout}\n${status.stderr}`, expected);
+      } finally {
+        await fixture.close();
+      }
+    });
   }
 });
 
-test('Copilot uninstall removes exact ownership and preserves user entries', async () => {
+test('Copilot resolves disableAllHooks through the official settings precedence', async (t) => {
+  await t.test('managed file flag blocks installation', async () => {
+    const fixture = await createFixture({
+      userConfig: { version: 1, disableAllHooks: true, hooks: {} },
+      localSettings: { disableAllHooks: false },
+    });
+    try {
+      const result = await fixture.install();
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /hooks are disabled/i);
+      await assertMissing(fixture.agentDir);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('local repository settings re-enable user-disabled hooks', async () => {
+    const fixture = await createFixture({
+      userSettings: '{\n  // user pause\n  "disableAllHooks": true,\n}\n',
+      localSettings: { disableAllHooks: false },
+    });
+    try {
+      const result = await fixture.install();
+      assert.equal(result.code, 0, result.stderr);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('repository settings disable every non-policy source', async () => {
+    const fixture = await createFixture({
+      userSettings: { disableAllHooks: false },
+      repositorySettings: { disableAllHooks: true },
+    });
+    try {
+      const result = await fixture.install();
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /Copilot repository settings/);
+      await assertMissing(fixture.agentDir);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test('GitHub repository settings override Claude local settings', async () => {
+    const fixture = await createFixture({
+      claudeLocalSettings: { disableAllHooks: true },
+      repositorySettings: { disableAllHooks: false },
+    });
+    try {
+      const result = await fixture.install();
+      assert.equal(result.code, 0, result.stderr);
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
+test('Copilot rejects malformed current schemas and preserves every source', async () => {
+  const cases = [
+    '{ malformed',
+    '{"version":1,"version":1,"hooks":{}}',
+    { version: 2, hooks: {} },
+    { version: 1, hooks: { futureEvent: [] } },
+    { version: 1, hooks: { preToolUse: [{ type: 'unknown' }] } },
+    { version: 1, hooks: { postToolUse: [{ type: 'http', url: 'http://example.com' }] } },
+    { version: 1, hooks: { sessionEnd: [{ type: 'prompt', prompt: 'continue' }] } },
+  ];
+  for (const userConfig of cases) {
+    const fixture = await createFixture({ userConfig });
+    try {
+      const before = await readFile(fixture.configPath, 'utf-8');
+      const result = await fixture.install();
+      assert.equal(result.code, 1, `${JSON.stringify(userConfig)}\n${result.stderr}`);
+      assert.equal(await readFile(fixture.configPath, 'utf-8'), before);
+      await assertMissing(fixture.agentDir);
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test('Copilot uninstall removes exact ownership and preserves adjacent handlers', async () => {
   const fixture = await createFixture({
-    userConfig: { version: 1, hooks: { notification: [{ type: 'command', command: 'keep' }] } },
+    userConfig: { version: 1, hooks: { notification: [{ command: 'keep' }] } },
   });
   try {
     assert.equal((await fixture.install()).code, 0);
-    const config = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
+    const config = await readJson(fixture.configPath);
     config.hooks.preToolUse.push({
       type: 'command',
       bash: `'${process.execPath}' '${path.join(fixture.homeDir, '.elydora', 'agent-10', 'guard.js')}'`,
@@ -319,12 +349,15 @@ test('Copilot uninstall removes exact ownership and preserves user entries', asy
       timeoutSec: 10,
     });
     await writeJson(fixture.configPath, config);
+    assert.equal((await runPlugin(fixture, 'uninstall', 'agent-10')).code, 0);
+    assert.equal((await readJson(fixture.configPath)).hooks.postToolUseFailure.length, 1);
 
-    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
+    const result = await runPlugin(fixture, 'uninstall', fixture.agentId);
     assert.equal(result.code, 0, result.stderr);
-    const remaining = JSON.parse(await readFile(fixture.configPath, 'utf-8'));
-    assert.deepEqual(remaining.hooks.notification, [{ type: 'command', command: 'keep' }]);
+    const remaining = await readJson(fixture.configPath);
+    assert.deepEqual(remaining.hooks.notification, [{ command: 'keep' }]);
     assert.equal(remaining.hooks.postToolUse, undefined);
+    assert.equal(remaining.hooks.postToolUseFailure, undefined);
     assert.equal(remaining.hooks.preToolUse.length, 1);
     assert.match(remaining.hooks.preToolUse[0].bash, /agent-10/);
   } finally {
@@ -332,57 +365,61 @@ test('Copilot uninstall removes exact ownership and preserves user entries', asy
   }
 });
 
-test('Copilot uninstall leaves absent hook sources absent', async () => {
-  const fixture = await createFixture();
-  try {
-    const result = await runPlugin(fixture, 'uninstall', 'agent-1');
-    assert.equal(result.code, 0, result.stderr);
-    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
-    await assert.rejects(readFile(fixture.legacyPath), { code: 'ENOENT' });
-  } finally {
-    await fixture.close();
+test('Copilot rejects linked hook and runtime paths before writes', async (t) => {
+  for (const kind of ['home', 'hook', 'runtime']) {
+    await t.test(kind, async () => {
+      const fixture = await createFixture();
+      try {
+        const target = path.join(fixture.rootDir, `${kind}-target`);
+        await mkdir(target, { recursive: true });
+        if (kind === 'home') {
+          await rm(fixture.copilotHome, { recursive: true, force: true });
+          await symlink(target, fixture.copilotHome, 'junction');
+        } else if (kind === 'hook') {
+          await mkdir(fixture.hooksDir, { recursive: true });
+          const targetFile = path.join(target, 'config.json');
+          await writeJson(targetFile, { version: 1, hooks: {} });
+          await symlink(targetFile, fixture.configPath, 'file');
+        } else {
+          await mkdir(fixture.homeDir, { recursive: true });
+          await symlink(target, path.join(fixture.homeDir, '.elydora'), 'junction');
+        }
+        const result = await fixture.install();
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /physical (directory|file)/i);
+      } catch (error) {
+        if (error?.code === 'EPERM') {
+          t.skip(`symbolic links unavailable: ${error.message}`);
+          return;
+        }
+        throw error;
+      } finally {
+        await fixture.close();
+      }
+    });
   }
 });
 
-test('Copilot preserves malformed and invalid configs for recovery', async () => {
-  for (const existing of [
-    '{ malformed',
-    { hooks: {} },
-    { version: 2, hooks: {} },
-    { version: 1, hooks: null },
-    { version: 1, hooks: { preToolUse: null } },
-    { version: 1, hooks: { preToolUse: [null] } },
-  ]) {
-    const fixture = await createFixture({ userConfig: existing });
-    try {
-      const before = await readFile(fixture.configPath, 'utf-8');
-      const result = await fixture.install();
-      assert.equal(result.code, 1);
-      assert.equal(await readFile(fixture.configPath, 'utf-8'), before);
-    } finally {
-      await fixture.close();
-    }
-  }
-});
-
-test('Copilot rejects missing runtimes before creating hook config', async () => {
-  const fixture = await createFixture({ createRuntimes: false });
+test('Copilot CLI preflight blocks disabled hooks before runtime creation', async () => {
+  const fixture = await createFixture({ repositorySettings: { disableAllHooks: true } });
+  const privateKeyFile = path.join(fixture.rootDir, 'private-key');
   try {
-    const result = await fixture.install();
+    await writeFile(privateKeyFile, VALID_PRIVATE_KEY, { mode: 0o600 });
+    const result = await runNode([
+      '--no-warnings',
+      cliPath,
+      'install',
+      '--agent', 'copilot',
+      '--org_id', 'org-1',
+      '--agent_id', fixture.agentId,
+      '--kid', 'kid-1',
+      '--private_key_file', privateKeyFile,
+      '--base_url', fixture.baseUrl,
+    ], environment(fixture), fixture.projectDir);
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /runtime is missing/i);
-    await assert.rejects(readFile(fixture.configPath), { code: 'ENOENT' });
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('Copilot atomic writes leave no transaction files', async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal((await fixture.install()).code, 0);
-    const files = await readdir(path.dirname(fixture.configPath));
-    assert.equal(files.some((name) => name.endsWith('.tmp') || name.endsWith('.rollback')), false);
+    assert.match(result.stderr, /hooks are disabled/i);
+    await assertMissing(path.join(fixture.homeDir, '.elydora'));
+    await assertMissing(fixture.configPath);
   } finally {
     await fixture.close();
   }

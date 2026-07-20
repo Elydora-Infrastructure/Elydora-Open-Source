@@ -1,5 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
+import type { FileSnapshot } from './managed-files.js';
+import { validateHooks, type CopilotHooks } from './copilot-schema.js';
+import { parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'copilot';
 export const GUARD_SCRIPT = 'guard.js';
@@ -7,20 +10,33 @@ export const AUDIT_SCRIPT = 'hook.js';
 export const HOOK_TIMEOUT_SECONDS = 10;
 export const CONFIG_FILE = 'elydora-audit.json';
 
-export type JsonObject = Record<string, unknown>;
-export type CopilotHooks = Record<string, JsonObject[]>;
+const MANAGED_EVENTS = [
+  ['preToolUse', GUARD_SCRIPT],
+  ['postToolUse', AUDIT_SCRIPT],
+  ['postToolUseFailure', AUDIT_SCRIPT],
+] as const;
 
 export interface CopilotDocument {
   readonly exists: boolean;
   readonly filePath: string;
   readonly root: JsonObject;
   readonly hooks: CopilotHooks;
+  readonly hooksDisabled: boolean;
   readonly raw?: string;
+  readonly snapshot?: FileSnapshot;
 }
 
 export interface CopilotSources {
   readonly user: CopilotDocument;
   readonly legacy?: CopilotDocument;
+  readonly disabledBy?: string;
+  readonly settingsPreconditions: readonly CopilotSourcePrecondition[];
+}
+
+export interface CopilotSourcePrecondition {
+  readonly filePath: string;
+  readonly label: string;
+  readonly snapshot?: FileSnapshot;
 }
 
 export interface RenderedDocument {
@@ -40,11 +56,12 @@ interface ParsedArgument {
   readonly next: number;
 }
 
-export function isObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+interface ManagedEntry {
+  readonly agentId: string;
+  readonly scriptPath: string;
 }
 
-function samePath(left: string, right: string): boolean {
+export function samePath(left: string, right: string): boolean {
   const normalizedLeft = path.resolve(left);
   const normalizedRight = path.resolve(right);
   return process.platform === 'win32'
@@ -52,8 +69,14 @@ function samePath(left: string, right: string): boolean {
     : normalizedLeft === normalizedRight;
 }
 
-function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+export function sameAgentId(left: string, right: string): boolean {
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+function agentKey(agentId: string): string {
+  return process.platform === 'win32' ? agentId.toLowerCase() : agentId;
 }
 
 function quotePosix(value: string): string {
@@ -126,82 +149,88 @@ function parseGeneratedPowerShell(command: unknown): readonly [string, string] |
   return [executable.value, script.value];
 }
 
+function exactHandlerKeys(handler: JsonObject): boolean {
+  return Object.keys(handler).sort().join(',') === 'bash,powershell,timeoutSec,type';
+}
+
+function nodeExecutable(filePath: string): boolean {
+  if (!path.isAbsolute(filePath)) return false;
+  const name = path.basename(filePath).toLowerCase();
+  return name === 'node' || name === 'node.exe';
+}
+
+function currentManagedScriptPath(handler: JsonObject): string | undefined {
+  if (!exactHandlerKeys(handler)
+    || handler.type !== 'command'
+    || handler.timeoutSec !== HOOK_TIMEOUT_SECONDS) return undefined;
+  const bash = parseGeneratedBash(handler.bash);
+  const powershell = parseGeneratedPowerShell(handler.powershell);
+  if (!bash || !powershell
+    || !nodeExecutable(bash[0])
+    || !samePath(bash[0], powershell[0])
+    || !samePath(bash[1], powershell[1])) return undefined;
+  return bash[1];
+}
+
 function parseLegacyCommand(command: unknown): string | undefined {
   if (typeof command !== 'string') return undefined;
   return /^node(?:\.exe)?\s+"([^"]+)"$/i.exec(command)?.[1];
 }
 
-function managedScriptPath(handler: JsonObject): string | undefined {
-  if (handler.type !== 'command') return undefined;
-  const bash = parseGeneratedBash(handler.bash);
-  const powershell = parseGeneratedPowerShell(handler.powershell);
-  if (handler.timeoutSec === HOOK_TIMEOUT_SECONDS && bash && powershell) {
-    if (samePath(bash[0], process.execPath)
-      && samePath(powershell[0], process.execPath)
-      && samePath(bash[1], powershell[1])) return bash[1];
-  }
-  const legacyBash = parseLegacyCommand(handler.bash);
-  const legacyPowerShell = parseLegacyCommand(handler.powershell);
-  return legacyBash && legacyPowerShell && samePath(legacyBash, legacyPowerShell)
-    ? legacyBash
-    : undefined;
+function legacyManagedScriptPath(handler: JsonObject): string | undefined {
+  if (!exactHandlerKeys(handler)
+    || handler.type !== 'command'
+    || handler.timeoutSec !== 5) return undefined;
+  const bash = parseLegacyCommand(handler.bash);
+  const powershell = parseLegacyCommand(handler.powershell);
+  return bash && powershell && samePath(bash, powershell) ? bash : undefined;
 }
 
-function managedAgentId(handler: JsonObject, scriptName: string): string | undefined {
-  const scriptPath = managedScriptPath(handler);
-  if (!scriptPath || path.basename(scriptPath) !== scriptName) return undefined;
+function managedEntry(handler: JsonObject, scriptName: string): ManagedEntry | undefined {
+  const scriptPath = currentManagedScriptPath(handler) ?? legacyManagedScriptPath(handler);
+  if (!scriptPath || path.basename(scriptPath).toLowerCase() !== scriptName.toLowerCase()) {
+    return undefined;
+  }
   const agentDirectory = path.dirname(scriptPath);
-  if (!samePath(path.dirname(agentDirectory), path.join(os.homedir(), '.elydora'))) return undefined;
+  if (!samePath(path.dirname(agentDirectory), path.join(os.homedir(), '.elydora'))) {
+    return undefined;
+  }
   const agentId = path.basename(agentDirectory);
-  return agentId && agentId !== '.' && agentId !== '..' ? agentId : undefined;
+  if (!agentId || agentId === '.' || agentId === '..') return undefined;
+  return { agentId, scriptPath };
 }
 
-function validateHooks(value: unknown, label: string): CopilotHooks {
-  if (value === undefined) return {};
-  if (!isObject(value)) throw new Error(`${label} field "hooks" must be an object`);
-  const hooks: CopilotHooks = {};
-  for (const [event, handlers] of Object.entries(value)) {
-    if (!Array.isArray(handlers)) throw new Error(`${label} field "hooks.${event}" must be an array`);
-    hooks[event] = handlers.map((handler, index) => {
-      if (!isObject(handler)) throw new Error(`${label} handler hooks.${event}[${index}] must be an object`);
-      return handler;
-    });
+export function parseDocument(
+  filePath: string,
+  snapshot: FileSnapshot,
+  label: string,
+): CopilotDocument {
+  const root = parseStrictJsonObject(snapshot.contents, `${label} at ${filePath}`);
+  if (root.version !== 1) throw new Error(`${label} at ${filePath} must declare version 1`);
+  if (root.disableAllHooks !== undefined && typeof root.disableAllHooks !== 'boolean') {
+    throw new Error(`${label} at ${filePath} field "disableAllHooks" must be a boolean`);
   }
-  return hooks;
-}
-
-export function parseDocument(filePath: string, raw: string, label: string): CopilotDocument {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse ${label} at ${filePath}: ${message}`, { cause: error });
-  }
-  if (!isObject(value)) throw new Error(`${label} at ${filePath} must contain a JSON object`);
-  if (value.version !== 1) throw new Error(`${label} at ${filePath} must declare version 1`);
   return {
     exists: true,
     filePath,
-    root: value,
-    hooks: validateHooks(value.hooks, label),
-    raw,
+    root,
+    hooks: validateHooks(root.hooks, `${label} at ${filePath}`),
+    hooksDisabled: root.disableAllHooks === true,
+    raw: snapshot.contents,
+    snapshot,
   };
 }
 
 export function createDocument(filePath: string): CopilotDocument {
-  return { exists: false, filePath, root: {}, hooks: {} };
+  return { exists: false, filePath, root: {}, hooks: {}, hooksDisabled: false };
 }
 
 export function removeManagedHooks(hooks: CopilotHooks, agentId?: string): CopilotHooks {
   const next: CopilotHooks = { ...hooks };
-  for (const [event, scriptName] of [
-    ['preToolUse', GUARD_SCRIPT],
-    ['postToolUse', AUDIT_SCRIPT],
-  ] as const) {
+  for (const [event, scriptName] of MANAGED_EVENTS) {
     const handlers = (next[event] ?? []).filter((handler) => {
-      const managedId = managedAgentId(handler, scriptName);
-      return !managedId || (agentId !== undefined && !sameAgentId(managedId, agentId));
+      const owned = managedEntry(handler, scriptName);
+      return !owned || (agentId !== undefined && !sameAgentId(owned.agentId, agentId));
     });
     if (handlers.length > 0) next[event] = handlers;
     else delete next[event];
@@ -227,26 +256,33 @@ export function renderDocument(
   const root: JsonObject = { ...document.root, version: 1 };
   if (Object.keys(hooks).length > 0) root.hooks = hooks;
   else delete root.hooks;
-  const next = JSON.stringify(root, null, 2) + '\n';
+  const next = `${JSON.stringify(root, null, 2)}\n`;
   return { document, changed: next !== document.raw, next };
 }
 
-function managedIds(handlers: JsonObject[], scriptName: string): Set<string> {
-  return new Set(handlers.flatMap((handler) => {
-    const agentId = managedAgentId(handler, scriptName);
-    return agentId ? [agentId] : [];
-  }));
+function managedEntries(handlers: JsonObject[], scriptName: string): Map<string, ManagedEntry> {
+  const entries = new Map<string, ManagedEntry>();
+  for (const handler of handlers) {
+    const entry = managedEntry(handler, scriptName);
+    if (entry) entries.set(agentKey(entry.agentId), entry);
+  }
+  return entries;
 }
 
 export function runtimeContracts(hooks: CopilotHooks): RuntimeContract[] {
-  const guards = managedIds(hooks.preToolUse ?? [], GUARD_SCRIPT);
-  const audits = managedIds(hooks.postToolUse ?? [], AUDIT_SCRIPT);
-  const root = path.join(os.homedir(), '.elydora');
-  return [...guards]
-    .filter((agentId) => [...audits].some((auditId) => sameAgentId(agentId, auditId)))
-    .map((agentId) => ({
-      agentId,
-      guardPath: path.join(root, agentId, GUARD_SCRIPT),
-      auditPath: path.join(root, agentId, AUDIT_SCRIPT),
-    }));
+  const guards = managedEntries(hooks.preToolUse ?? [], GUARD_SCRIPT);
+  const successes = managedEntries(hooks.postToolUse ?? [], AUDIT_SCRIPT);
+  const failures = managedEntries(hooks.postToolUseFailure ?? [], AUDIT_SCRIPT);
+  const contracts: RuntimeContract[] = [];
+  for (const [key, guard] of guards) {
+    const success = successes.get(key);
+    const failure = failures.get(key);
+    if (!success || !failure || !samePath(success.scriptPath, failure.scriptPath)) continue;
+    contracts.push({
+      agentId: guard.agentId,
+      guardPath: guard.scriptPath,
+      auditPath: success.scriptPath,
+    });
+  }
+  return contracts;
 }

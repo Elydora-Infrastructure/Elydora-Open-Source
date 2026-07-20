@@ -17,6 +17,7 @@ export interface ManagedChangeSpec {
   readonly mode: number;
   readonly maximumBytes?: number;
   readonly expectedSource?: string;
+  readonly expectedSnapshot?: FileSnapshot;
   readonly verifyExpectedSource?: boolean;
 }
 
@@ -34,11 +35,19 @@ export interface ManagedDirectory {
   readonly label: string;
 }
 
+export interface ManagedFilePrecondition {
+  readonly filePath: string;
+  readonly label: string;
+  readonly maximumBytes: number;
+  readonly original?: FileSnapshot;
+}
+
 export interface PreparedManagedTransaction {
   readonly displayName: string;
   readonly operation?: 'install' | 'uninstall';
   readonly directories: readonly ManagedDirectory[];
   readonly changes: readonly ManagedFileChange[];
+  readonly preconditions?: readonly ManagedFilePrecondition[];
 }
 
 interface StagedChange {
@@ -88,6 +97,11 @@ export async function prepareManagedFileChange(
   if (spec.verifyExpectedSource && original?.contents !== spec.expectedSource) {
     throw new Error(`${spec.label} changed before installation: ${spec.filePath}`);
   }
+  if (spec.expectedSnapshot && (!original
+    || original.device !== spec.expectedSnapshot.device
+    || original.inode !== spec.expectedSnapshot.inode)) {
+    throw new Error(`${spec.label} changed before installation: ${spec.filePath}`);
+  }
   if (!original && spec.next === undefined) return undefined;
   return {
     filePath: spec.filePath,
@@ -109,6 +123,28 @@ async function assertUnchanged(change: ManagedFileChange, operationName: string)
       || current.inode !== change.original.inode
     ))) {
     throw new Error(`${change.label} changed during ${operationName}: ${change.filePath}`);
+  }
+}
+
+async function assertPreconditions(
+  transaction: PreparedManagedTransaction,
+  operationName: string,
+): Promise<void> {
+  for (const condition of transaction.preconditions ?? []) {
+    const current = await readPhysicalFile(
+      condition.filePath,
+      condition.label,
+      condition.maximumBytes,
+    );
+    if ((!current && condition.original)
+      || (current && !condition.original)
+      || (current && condition.original && (
+        current.contents !== condition.original.contents
+        || current.device !== condition.original.device
+        || current.inode !== condition.original.inode
+      ))) {
+      throw new Error(`${condition.label} changed during ${operationName}: ${condition.filePath}`);
+    }
   }
 }
 
@@ -336,13 +372,20 @@ export async function commitManagedTransaction(
     }
     targets.add(key);
   }
+  await assertPreconditions(transaction, operationName);
   for (const directory of transactionDirectories(transaction)) {
     await ensureManagedDirectory(directory.path, directory.label);
   }
+  await assertPreconditions(transaction, operationName);
   const staged: StagedChange[] = [];
   try {
     for (const change of transaction.changes) staged.push(await stage(change, operationName));
-    for (const item of staged) await commit(item, operationName, renameFile);
+    await assertPreconditions(transaction, operationName);
+    for (const item of staged) {
+      await assertPreconditions(transaction, operationName);
+      await commit(item, operationName, renameFile);
+    }
+    await assertPreconditions(transaction, operationName);
   } catch (error) {
     const failures = [asError(error)];
     for (const item of [...staged].reverse()) {

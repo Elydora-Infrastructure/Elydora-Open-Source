@@ -120,11 +120,14 @@ test('high-drift providers retain their verified hook contracts', async () => {
   assert.deepEqual(providers.get('copilot').events, {
     before_tool: 'preToolUse',
     after_tool: 'postToolUse',
+    after_tool_failure: 'postToolUseFailure',
   });
   assert.deepEqual(providers.get('copilot').event_fields, {
     name: 'toolName',
     input: 'toolArgs',
     session: 'sessionId',
+    output: 'toolResult',
+    error: 'error',
   });
   assert.deepEqual(providers.get('copilot').blocking, {
     mechanism: 'any_nonzero_exit',

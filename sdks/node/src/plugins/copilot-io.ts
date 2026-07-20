@@ -1,281 +1,252 @@
-import { randomUUID } from 'node:crypto';
-import fsp from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
   AGENT_KEY,
+  AUDIT_SCRIPT,
   CONFIG_FILE,
+  GUARD_SCRIPT,
   type CopilotDocument,
   type CopilotSources,
-  type JsonObject,
-  type RenderedDocument,
   type RuntimeContract,
   createDocument,
-  isObject,
   parseDocument,
+  sameAgentId,
+  samePath,
 } from './copilot-contract.js';
+import { generateGuardScript } from './guard-template.js';
+import { generateHookScript } from './hook-template.js';
+import {
+  inspectPhysicalDirectory,
+  readPhysicalFile,
+  type FileSnapshot,
+} from './managed-files.js';
+import {
+  parseStrictJsonObject,
+  parseStrictJsoncObject,
+  type JsonObject,
+} from './strict-json.js';
 
-interface FileChange {
+const MAX_SECRET_BYTES = 64 * 1024;
+const MAX_CONFIG_BYTES = 512 * 1024;
+const MAX_SETTINGS_BYTES = 2 * 1024 * 1024;
+
+export interface CopilotPaths {
+  readonly copilotHome: string;
+  readonly userHooksDirectory: string;
+  readonly userHookPath: string;
+  readonly legacyHookPath: string;
+  readonly settingsLayers: readonly SettingsLayer[];
+  readonly inspectedDirectories: readonly DirectoryLocation[];
+}
+
+interface DirectoryLocation {
+  readonly path: string;
+  readonly label: string;
+}
+
+interface SettingsLayer {
   readonly filePath: string;
   readonly label: string;
-  readonly original?: string;
-  readonly next?: string;
+  readonly jsonc: boolean;
 }
 
-interface StagedChange {
-  readonly change: FileChange;
-  readonly tempPath?: string;
-  readonly rollbackPath?: string;
-  committed: boolean;
+interface ParsedSettingsLayer extends SettingsLayer {
+  readonly disableAllHooks?: boolean;
+  readonly snapshot?: FileSnapshot;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  return isObject(error) && error.code === code;
-}
-
-function paths(): { readonly user: string; readonly legacy: string } {
-  const override = process.env.COPILOT_HOME?.trim();
-  const copilotHome = override || path.join(os.homedir(), '.copilot');
+export function resolveCopilotPaths(): CopilotPaths {
+  const override = process.env.COPILOT_HOME;
+  const copilotHome = override ? override : path.join(os.homedir(), '.copilot');
+  const project = process.cwd();
+  const github = path.join(project, '.github');
+  const githubCopilot = path.join(github, 'copilot');
+  const githubHooks = path.join(github, 'hooks');
+  const claude = path.join(project, '.claude');
   return {
-    user: path.join(copilotHome, 'hooks', CONFIG_FILE),
-    legacy: path.join(process.cwd(), '.github', 'hooks', 'hooks.json'),
+    copilotHome,
+    userHooksDirectory: path.join(copilotHome, 'hooks'),
+    userHookPath: path.join(copilotHome, 'hooks', CONFIG_FILE),
+    legacyHookPath: path.join(githubHooks, 'hooks.json'),
+    settingsLayers: [
+      { filePath: path.join(copilotHome, 'config.json'), label: 'legacy Copilot user config', jsonc: false },
+      { filePath: path.join(copilotHome, 'settings.json'), label: 'Copilot user settings', jsonc: true },
+      { filePath: path.join(claude, 'settings.json'), label: 'Claude repository settings', jsonc: true },
+      { filePath: path.join(claude, 'settings.local.json'), label: 'Claude local settings', jsonc: true },
+      { filePath: path.join(githubCopilot, 'settings.json'), label: 'Copilot repository settings', jsonc: true },
+      { filePath: path.join(githubCopilot, 'settings.local.json'), label: 'Copilot local settings', jsonc: true },
+    ],
+    inspectedDirectories: [
+      { path: project, label: 'Copilot working directory' },
+      { path: copilotHome, label: 'COPILOT_HOME' },
+      { path: path.join(copilotHome, 'hooks'), label: 'Copilot user hooks directory' },
+      { path: github, label: 'GitHub configuration directory' },
+      { path: githubHooks, label: 'GitHub repository hooks directory' },
+      { path: githubCopilot, label: 'Copilot repository settings directory' },
+      { path: claude, label: 'Claude repository settings directory' },
+    ],
   };
 }
 
-async function readOptional(filePath: string, label: string): Promise<string | undefined> {
-  try {
-    return await fsp.readFile(filePath, 'utf-8');
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) return undefined;
-    throw new Error(`Read ${label} at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
+async function inspectDirectories(locations: readonly DirectoryLocation[]): Promise<void> {
+  for (const location of locations) {
+    await inspectPhysicalDirectory(location.path, location.label);
   }
 }
 
-async function readDocument(filePath: string, label: string): Promise<CopilotDocument | undefined> {
-  const raw = await readOptional(filePath, label);
-  return raw === undefined ? undefined : parseDocument(filePath, raw, label);
+async function readHookDocument(
+  filePath: string,
+  label: string,
+): Promise<CopilotDocument | undefined> {
+  const snapshot = await readPhysicalFile(filePath, label, MAX_SETTINGS_BYTES);
+  return snapshot ? parseDocument(filePath, snapshot, label) : undefined;
+}
+
+function parseSettings(raw: string, layer: SettingsLayer): JsonObject {
+  if (raw.trim().length === 0) return {};
+  const label = `${layer.label} at ${layer.filePath}`;
+  return layer.jsonc
+    ? parseStrictJsoncObject(raw, label)
+    : parseStrictJsonObject(raw, label);
+}
+
+async function readSettingsLayer(layer: SettingsLayer): Promise<ParsedSettingsLayer> {
+  const snapshot = await readPhysicalFile(layer.filePath, layer.label, MAX_SETTINGS_BYTES);
+  if (!snapshot) return layer;
+  const root = parseSettings(snapshot.contents, layer);
+  if (root.disableAllHooks !== undefined && typeof root.disableAllHooks !== 'boolean') {
+    throw new Error(
+      `${layer.label} at ${layer.filePath} field "disableAllHooks" must be a boolean`,
+    );
+  }
+  return {
+    ...layer,
+    disableAllHooks: root.disableAllHooks as boolean | undefined,
+    snapshot,
+  };
+}
+
+function effectiveDisabledSource(layers: readonly ParsedSettingsLayer[]): string | undefined {
+  let disabledBy: string | undefined;
+  for (const layer of layers) {
+    if (layer.disableAllHooks === true) disabledBy = `${layer.label} at ${layer.filePath}`;
+    else if (layer.disableAllHooks === false) disabledBy = undefined;
+  }
+  return disabledBy;
 }
 
 export async function readSources(): Promise<CopilotSources> {
-  const configPaths = paths();
+  const paths = resolveCopilotPaths();
+  await inspectDirectories(paths.inspectedDirectories);
   const [user, legacy] = await Promise.all([
-    readDocument(configPaths.user, 'GitHub Copilot user hooks'),
-    readDocument(configPaths.legacy, 'GitHub Copilot legacy project hooks'),
+    readHookDocument(paths.userHookPath, 'GitHub Copilot user hooks'),
+    readHookDocument(paths.legacyHookPath, 'GitHub Copilot legacy project hooks'),
   ]);
+  const layers = await Promise.all(paths.settingsLayers.map(readSettingsLayer));
+  const userDocument = user ?? createDocument(paths.userHookPath);
+  const disabledBy = userDocument.hooksDisabled
+    ? `GitHub Copilot user hooks at ${paths.userHookPath}`
+    : effectiveDisabledSource(layers);
   return {
-    user: user ?? createDocument(configPaths.user),
+    user: userDocument,
     legacy,
+    disabledBy,
+    settingsPreconditions: layers.map((layer) => ({
+      filePath: layer.filePath,
+      label: layer.label,
+      snapshot: layer.snapshot,
+    })),
   };
 }
 
-function changeFor(rendered: RenderedDocument): FileChange | undefined {
-  if (!rendered.changed) return undefined;
-  return {
-    filePath: rendered.document.filePath,
-    label: 'GitHub Copilot hook source',
-    original: rendered.document.raw,
-    next: rendered.next,
-  };
-}
-
-async function unlinkOptional(filePath: string): Promise<void> {
-  try {
-    await fsp.unlink(filePath);
-  } catch (error) {
-    if (!hasErrorCode(error, 'ENOENT')) throw error;
+export function requireHooksEnabled(sources: CopilotSources): void {
+  if (sources.disabledBy) {
+    throw new Error(
+      `GitHub Copilot hooks are disabled by ${sources.disabledBy}; set disableAllHooks to false before installation`,
+    );
   }
 }
 
-async function writeExclusive(filePath: string, contents: string, label: string): Promise<void> {
-  let handle: FileHandle | undefined;
-  try {
-    handle = await fsp.open(filePath, 'wx', 0o600);
-    await handle.writeFile(contents, 'utf-8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-  } catch (error) {
-    const failures = [asError(error)];
-    if (handle) {
-      try {
-        await handle.close();
-      } catch (closeError) {
-        failures.push(asError(closeError));
-      }
-    }
-    try {
-      await unlinkOptional(filePath);
-    } catch (cleanupError) {
-      failures.push(asError(cleanupError));
-    }
-    if (failures.length > 1) throw new AggregateError(failures, `Stage ${label}`);
-    throw new Error(`Stage ${label}: ${errorMessage(error)}`, { cause: failures[0] });
+function requireString(value: unknown, field: string, configPath: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Elydora runtime config ${field} is invalid: ${configPath}`);
   }
-}
-
-async function assertUnchanged(change: FileChange): Promise<void> {
-  const current = await readOptional(change.filePath, change.label);
-  if (current !== change.original) {
-    throw new Error(`${change.label} changed during Copilot hook update: ${change.filePath}`);
-  }
-}
-
-async function stage(change: FileChange): Promise<StagedChange> {
-  await assertUnchanged(change);
-  const directory = path.dirname(change.filePath);
-  await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
-  const token = randomUUID();
-  const tempPath = change.next === undefined
-    ? undefined
-    : path.join(directory, `.${path.basename(change.filePath)}.${token}.tmp`);
-  const rollbackPath = change.original === undefined
-    ? undefined
-    : path.join(directory, `.${path.basename(change.filePath)}.${token}.rollback`);
-  try {
-    if (tempPath) await writeExclusive(tempPath, change.next!, change.label);
-    if (rollbackPath && change.next !== undefined) {
-      await writeExclusive(rollbackPath, change.original!, `${change.label} rollback`);
-    }
-  } catch (error) {
-    const failures = [asError(error)];
-    for (const stagedPath of [tempPath, rollbackPath]) {
-      if (!stagedPath) continue;
-      try {
-        await unlinkOptional(stagedPath);
-      } catch (cleanupError) {
-        failures.push(asError(cleanupError));
-      }
-    }
-    if (failures.length > 1) throw new AggregateError(failures, `Stage ${change.label}`);
-    throw error;
-  }
-  return { change, tempPath, rollbackPath, committed: false };
-}
-
-async function commit(staged: StagedChange): Promise<void> {
-  await assertUnchanged(staged.change);
-  if (staged.change.next === undefined) {
-    if (!staged.rollbackPath) throw new Error(`Missing rollback path for ${staged.change.label}`);
-    await fsp.rename(staged.change.filePath, staged.rollbackPath);
-  } else {
-    if (!staged.tempPath) throw new Error(`Missing staged file for ${staged.change.label}`);
-    await fsp.rename(staged.tempPath, staged.change.filePath);
-  }
-  staged.committed = true;
-}
-
-async function rollback(staged: StagedChange): Promise<void> {
-  if (!staged.committed) return;
-  if (staged.change.original === undefined) {
-    await unlinkOptional(staged.change.filePath);
-    return;
-  }
-  if (!staged.rollbackPath) throw new Error(`Missing rollback data for ${staged.change.label}`);
-  await fsp.rename(staged.rollbackPath, staged.change.filePath);
-}
-
-async function cleanup(staged: StagedChange): Promise<void> {
-  const files = [staged.tempPath, staged.rollbackPath].filter(
-    (filePath): filePath is string => filePath !== undefined,
-  );
-  await Promise.all(files.map(unlinkOptional));
-}
-
-export async function writeDocuments(rendered: RenderedDocument[]): Promise<void> {
-  const changes = rendered.flatMap((document) => {
-    const change = changeFor(document);
-    return change ? [change] : [];
-  });
-  const staged: StagedChange[] = [];
-  try {
-    for (const change of changes) staged.push(await stage(change));
-    for (const item of staged) await commit(item);
-  } catch (error) {
-    const failures = [asError(error)];
-    for (const item of [...staged].reverse()) {
-      try {
-        await rollback(item);
-      } catch (rollbackError) {
-        failures.push(asError(rollbackError));
-      }
-    }
-    for (const item of staged) {
-      try {
-        await cleanup(item);
-      } catch (cleanupError) {
-        failures.push(asError(cleanupError));
-      }
-    }
-    throw new AggregateError(failures, `Write GitHub Copilot hook sources: ${errorMessage(error)}`);
-  }
-  const cleanupErrors: Error[] = [];
-  for (const item of staged) {
-    try {
-      await cleanup(item);
-    } catch (error) {
-      cleanupErrors.push(asError(error));
-    }
-  }
-  if (cleanupErrors.length > 0) {
-    throw new AggregateError(cleanupErrors, 'Clean GitHub Copilot hook transaction files');
-  }
-}
-
-export async function regularFileExists(filePath: string, label: string): Promise<boolean> {
-  try {
-    return (await fsp.stat(filePath)).isFile();
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT') || hasErrorCode(error, 'ENOTDIR')) return false;
-    throw new Error(`Read ${label} at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-}
-
-export async function requireRuntime(filePath: string, label: string): Promise<void> {
-  if (!filePath) throw new Error(`${label} path is required`);
-  if (!await regularFileExists(filePath, label)) throw new Error(`${label} is missing: ${filePath}`);
-}
-
-async function readRuntimeConfig(filePath: string): Promise<JsonObject | undefined> {
-  const raw = await readOptional(filePath, 'Elydora runtime config');
-  if (raw === undefined) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Failed to parse Elydora runtime config at ${filePath}: ${errorMessage(error)}`, {
-      cause: asError(error),
-    });
-  }
-  if (!isObject(value)) throw new Error(`Elydora runtime config at ${filePath} must contain a JSON object`);
   return value;
+}
+
+function validateRuntimeConfig(
+  config: JsonObject,
+  contract: RuntimeContract,
+  configPath: string,
+): void {
+  const supported = new Set(['org_id', 'agent_id', 'kid', 'base_url', 'token', 'agent_name']);
+  const extra = Object.keys(config).find((key) => !supported.has(key));
+  if (extra) throw new Error(`Elydora runtime config has unsupported field "${extra}": ${configPath}`);
+  requireString(config.org_id, 'org_id', configPath);
+  requireString(config.kid, 'kid', configPath);
+  const agentId = requireString(config.agent_id, 'agent_id', configPath);
+  if (!sameAgentId(agentId, contract.agentId) || config.agent_name !== AGENT_KEY) {
+    throw new Error(`Elydora runtime identity does not match Copilot hooks: ${configPath}`);
+  }
+  if (config.token !== undefined) requireString(config.token, 'token', configPath);
+  const rawBaseUrl = requireString(config.base_url, 'base_url', configPath);
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(rawBaseUrl);
+  } catch (error) {
+    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`, {
+      cause: error instanceof Error ? error : new Error(String(error)),
+    });
+  }
+  if (!['http:', 'https:'].includes(baseUrl.protocol)
+    || !baseUrl.hostname
+    || baseUrl.username
+    || baseUrl.password
+    || baseUrl.search
+    || baseUrl.hash) {
+    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`);
+  }
+}
+
+function validatePrivateKey(contents: string, keyPath: string): void {
+  const bytes = Buffer.from(contents, 'base64url');
+  if (bytes.length !== 32 || bytes.toString('base64url') !== contents) {
+    throw new Error(`Elydora private key is invalid: ${keyPath}`);
+  }
+}
+
+function validContractPaths(contract: RuntimeContract): boolean {
+  const agentDirectory = path.dirname(contract.guardPath);
+  return samePath(path.dirname(agentDirectory), path.join(os.homedir(), '.elydora'))
+    && samePath(contract.guardPath, path.join(agentDirectory, GUARD_SCRIPT))
+    && samePath(contract.auditPath, path.join(agentDirectory, AUDIT_SCRIPT));
 }
 
 export async function runtimeFilesExist(contracts: RuntimeContract[]): Promise<boolean> {
   for (const contract of contracts) {
-    const runtimeConfig = await readRuntimeConfig(
-      path.join(path.dirname(contract.guardPath), 'config.json'),
-    );
-    if (!runtimeConfig
-      || runtimeConfig.agent_name !== AGENT_KEY
-      || runtimeConfig.agent_id !== contract.agentId) continue;
-    const files = await Promise.all([
-      regularFileExists(contract.guardPath, 'Elydora guard runtime'),
-      regularFileExists(contract.auditPath, 'Elydora audit runtime'),
+    if (!validContractPaths(contract)) continue;
+    const runtimeRoot = path.join(os.homedir(), '.elydora');
+    const agentDirectory = path.dirname(contract.guardPath);
+    if (!await inspectPhysicalDirectory(runtimeRoot, 'Elydora runtime directory')) continue;
+    if (!await inspectPhysicalDirectory(agentDirectory, 'Elydora agent runtime directory')) continue;
+    const configPath = path.join(agentDirectory, 'config.json');
+    const keyPath = path.join(agentDirectory, 'private.key');
+    const [config, key, guard, audit] = await Promise.all([
+      readPhysicalFile(configPath, 'Elydora runtime config', MAX_CONFIG_BYTES),
+      readPhysicalFile(keyPath, 'Elydora private key', MAX_SECRET_BYTES),
+      readPhysicalFile(contract.guardPath, 'Elydora guard runtime'),
+      readPhysicalFile(contract.auditPath, 'Elydora audit runtime'),
     ]);
-    if (files.every(Boolean)) return true;
+    if (!config || !key || !guard || !audit) continue;
+    const parsed = parseStrictJsonObject(config.contents, `Elydora runtime config at ${configPath}`);
+    validateRuntimeConfig(parsed, contract, configPath);
+    validatePrivateKey(key.contents, keyPath);
+    if (guard.contents === generateGuardScript(AGENT_KEY, contract.agentId)
+      && audit.contents === generateHookScript(
+        AGENT_KEY,
+        contract.agentId,
+        { nativePayload: true },
+      )) return true;
   }
   return false;
 }

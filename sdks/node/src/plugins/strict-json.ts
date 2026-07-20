@@ -8,6 +8,11 @@ import {
 
 export type JsonObject = Record<string, unknown>;
 
+interface JsonObjectParseOptions {
+  readonly allowTrailingComma: boolean;
+  readonly disallowComments: boolean;
+}
+
 export function isObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -36,12 +41,13 @@ function rejectDuplicateKeys(
   }
 }
 
-export function parseStrictJsonObject(raw: string, label: string): JsonObject {
+function parseJsonObject(
+  raw: string,
+  label: string,
+  options: JsonObjectParseOptions,
+): JsonObject {
   const errors: ParseError[] = [];
-  const value: unknown = parse(raw, errors, {
-    allowTrailingComma: false,
-    disallowComments: true,
-  });
+  const value: unknown = parse(raw, errors, options);
   if (errors.length > 0) {
     const details = errors
       .map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`)
@@ -49,9 +55,20 @@ export function parseStrictJsonObject(raw: string, label: string): JsonObject {
     throw new Error(`Failed to parse ${label}: ${details}`);
   }
   if (!isObject(value)) throw new Error(`${label} must contain a JSON object`);
-  rejectDuplicateKeys(parseTree(raw, [], {
+  rejectDuplicateKeys(parseTree(raw, [], options), label);
+  return value;
+}
+
+export function parseStrictJsonObject(raw: string, label: string): JsonObject {
+  return parseJsonObject(raw, label, {
     allowTrailingComma: false,
     disallowComments: true,
-  }), label);
-  return value;
+  });
+}
+
+export function parseStrictJsoncObject(raw: string, label: string): JsonObject {
+  return parseJsonObject(raw, label, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
 }

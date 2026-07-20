@@ -4,7 +4,11 @@ import { ensurePrivateDirectory, resolvePrivateChildDirectory } from '../runtime
 import type { InstallConfig } from './base.js';
 import { generateGuardScript, type GuardScriptOptions } from './guard-template.js';
 import { generateHookScript, type HookScriptOptions } from './hook-template.js';
-import { inspectPhysicalDirectory, readPhysicalFile } from './managed-files.js';
+import {
+  inspectPhysicalDirectory,
+  readPhysicalFile,
+  type FileSnapshot,
+} from './managed-files.js';
 import {
   commitManagedTransaction,
   prepareManagedFileChange,
@@ -35,7 +39,8 @@ export interface ManagedHookLocation {
 export interface ManagedHookSource extends ManagedHookLocation {
   readonly label: string;
   readonly expectedSource?: string;
-  readonly source: string;
+  readonly expectedSnapshot?: FileSnapshot;
+  readonly source?: string;
 }
 
 export interface ManagedRuntimeFile {
@@ -292,6 +297,7 @@ export async function prepareManagedInstallation(
       next: source.source,
       mode: 0o600,
       expectedSource: source.expectedSource,
+      expectedSnapshot: source.expectedSnapshot,
       verifyExpectedSource: true,
     })),
   ]);

@@ -163,8 +163,18 @@
         "~/.copilot/hooks/*.json",
         ".github/hooks/*.json"
       ],
-      "events": { "before_tool": "preToolUse", "after_tool": "postToolUse" },
-      "event_fields": { "name": "toolName", "input": "toolArgs", "session": "sessionId" },
+      "events": {
+        "before_tool": "preToolUse",
+        "after_tool": "postToolUse",
+        "after_tool_failure": "postToolUseFailure"
+      },
+      "event_fields": {
+        "name": "toolName",
+        "input": "toolArgs",
+        "session": "sessionId",
+        "output": "toolResult",
+        "error": "error"
+      },
       "blocking": {
         "mechanism": "any_nonzero_exit",
         "failure_mode": "fail_closed",
