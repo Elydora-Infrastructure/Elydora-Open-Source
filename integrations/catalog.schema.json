@@ -148,6 +148,12 @@
                   "fail_closed",
                   "fail_open"
                 ]
+              },
+              "timeout_failure_mode": {
+                "enum": [
+                  "fail_closed",
+                  "fail_open"
+                ]
               }
             }
           },
@@ -329,6 +335,12 @@
               "enum": [
                 "adapter_controlled",
                 "configurable",
+                "fail_closed",
+                "fail_open"
+              ]
+            },
+            "timeout_failure_mode": {
+              "enum": [
                 "fail_closed",
                 "fail_open"
               ]

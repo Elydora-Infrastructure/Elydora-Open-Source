@@ -219,6 +219,10 @@ test('schema freezes the provider contract and supported enums', async () => {
       'json_stdout_cancel',
     ),
   );
+  assert.deepEqual(
+    providerSchema.properties.blocking.properties.timeout_failure_mode.enum,
+    ['fail_closed', 'fail_open'],
+  );
   assert.deepEqual(providerSchema.properties.delivery_state.enum, ['available', 'partial', 'planned']);
   assert.equal(providerSchema.properties.contract_variants.items.$ref, '#/$defs/contractVariant');
   assert.deepEqual(schema.$defs.contractVariant.properties.release_channel.enum, [
@@ -273,6 +277,25 @@ test('high-drift providers retain their verified hook contracts', async () => {
     '~/.codex/hooks.json',
     '.codex/hooks.json',
   ]);
+  assert.deepEqual(providers.get('copilot').config_paths, [
+    '$COPILOT_HOME/hooks/*.json',
+    '~/.copilot/hooks/*.json',
+    '.github/hooks/*.json',
+  ]);
+  assert.deepEqual(providers.get('copilot').events, {
+    before_tool: 'preToolUse',
+    after_tool: 'postToolUse',
+  });
+  assert.deepEqual(providers.get('copilot').event_fields, {
+    name: 'toolName',
+    input: 'toolArgs',
+    session: 'sessionId',
+  });
+  assert.deepEqual(providers.get('copilot').blocking, {
+    mechanism: 'any_nonzero_exit',
+    failure_mode: 'fail_closed',
+    timeout_failure_mode: 'fail_open',
+  });
   assert.deepEqual(providers.get('droid').config_paths, [
     '~/.factory/hooks.json',
     '~/.factory/settings.json',

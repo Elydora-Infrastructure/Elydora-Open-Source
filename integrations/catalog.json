@@ -122,6 +122,7 @@
       "integration_mode": "command_hooks",
       "config_format": "json",
       "config_paths": [
+        "$COPILOT_HOME/hooks/*.json",
         "~/.copilot/hooks/*.json",
         ".github/hooks/*.json"
       ],
@@ -129,9 +130,15 @@
         "before_tool": "preToolUse",
         "after_tool": "postToolUse"
       },
+      "event_fields": {
+        "name": "toolName",
+        "input": "toolArgs",
+        "session": "sessionId"
+      },
       "blocking": {
-        "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
+        "mechanism": "any_nonzero_exit",
+        "failure_mode": "fail_closed",
+        "timeout_failure_mode": "fail_open"
       },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",

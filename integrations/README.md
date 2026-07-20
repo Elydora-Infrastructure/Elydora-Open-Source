@@ -6,6 +6,8 @@ The provider-level contract represents the default stable runtime. `contract_var
 
 Grok Build adapters write native user hook files under `$GROK_HOME/hooks` or `~/.grok/hooks`. Project `.grok/hooks` files require `/hooks-trust` or `--trust`; Claude Code and Cursor hook files are read-only compatibility sources for Elydora.
 
+GitHub Copilot command `preToolUse` hooks deny on crashes and every non-zero exit. Command timeouts continue through the normal permission flow, so `timeout_failure_mode` records that explicit exception when it differs from `failure_mode`.
+
 `delivery_state` is computed from the `node`, `python`, and `go` adapter flags:
 
 | State | Meaning |
