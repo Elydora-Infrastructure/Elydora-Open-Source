@@ -33,49 +33,91 @@ func augmentAuditWrapperName() string {
 	return "augment-hook.sh"
 }
 
-func augmentHomeDirectory() (string, error) {
+func augmentConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return home, nil
-}
-
-func augmentRuntimeRoot() (string, error) {
-	home, err := augmentHomeDirectory()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".elydora"), nil
-}
-
-func augmentConfigPath() (string, error) {
-	home, err := augmentHomeDirectory()
-	if err != nil {
-		return "", err
-	}
 	return filepath.Join(home, ".augment", "settings.json"), nil
 }
 
-func readAugmentConfig() (augmentDocument, error) {
+func readAugmentDocument() (*augmentDocument, error) {
 	configPath, err := augmentConfigPath()
 	if err != nil {
-		return augmentDocument{}, err
+		return nil, err
 	}
-	root, exists, err := readHookJSONObject(configPath, "Auggie settings")
+	if _, err := managedPhysicalDirectoryExists(
+		filepath.Dir(configPath),
+		"Auggie configuration directory",
+	); err != nil {
+		return nil, err
+	}
+	snapshot, err := readManagedFile(
+		configPath,
+		"Auggie user settings",
+		maxManagedSourceBytes,
+	)
 	if err != nil {
-		return augmentDocument{}, err
+		return nil, err
 	}
-	hooks, err := readAugmentHooks(root)
-	if err != nil {
-		return augmentDocument{}, err
+	if snapshot == nil {
+		return createAugmentDocument(configPath), nil
 	}
-	return augmentDocument{
-		exists:     exists,
-		configPath: configPath,
-		root:       root,
-		hooks:      hooks,
-	}, nil
+	return parseAugmentDocument(configPath, snapshot.contents)
+}
+
+func prepareRenderedAugmentChange(
+	rendered *augmentRenderedDocument,
+) (*fileChange, error) {
+	if rendered == nil || !rendered.changed {
+		return nil, nil
+	}
+	return prepareSourceChange(
+		rendered.document.configPath,
+		"Auggie user settings",
+		rendered.document.raw,
+		rendered.document.exists,
+		rendered.next,
+		0600,
+		rendered.remove,
+	)
+}
+
+func writeAugmentChanges(
+	changes []*fileChange,
+	label string,
+	rename renameFunc,
+	runtimeRoot string,
+	agentDirectory string,
+	settingsDirectory string,
+) error {
+	hasChanges := false
+	for _, change := range changes {
+		if change != nil {
+			hasChanges = true
+			break
+		}
+	}
+	if !hasChanges {
+		return nil
+	}
+	if agentDirectory != "" {
+		if err := EnsurePrivateDirectory(runtimeRoot); err != nil {
+			return err
+		}
+		if err := EnsurePrivateDirectory(agentDirectory); err != nil {
+			return err
+		}
+	}
+	if settingsDirectory != "" {
+		if err := ensureManagedDirectory(
+			settingsDirectory,
+			"Auggie configuration directory",
+		); err != nil {
+			return err
+		}
+	}
+	return writeChanges(changes, label, rename)
 }
 
 func validateAugmentMatchers(hooks augmentHooks, nodePath string) error {
@@ -106,7 +148,9 @@ func validateAugmentMatchers(hooks augmentHooks, nodePath string) error {
 			return fmt.Errorf(
 				"Auggie settings group hooks.%s[%d] matcher "+
 					"must be a valid JavaScript regular expression: %s",
-				event, groupIndex, message,
+				event,
+				groupIndex,
+				message,
 			)
 		}
 	}
@@ -159,134 +203,16 @@ func buildAugmentGroup(handler map[string]any) augmentGroup {
 	}
 }
 
-func resolveAugmentWrapperPaths(runtimeRoot, agentID string) augmentWrapperPaths {
-	agentDirectory := filepath.Join(runtimeRoot, agentID)
+func resolveAugmentWrapperPaths(agentDirectory string) augmentWrapperPaths {
 	return augmentWrapperPaths{
 		guard: filepath.Join(agentDirectory, augmentGuardWrapperName()),
 		audit: filepath.Join(agentDirectory, augmentAuditWrapperName()),
 	}
 }
 
-func managedAugmentIDs(
-	groups []augmentGroup,
-	wrapperName, runtimeRoot string,
-) map[string]string {
-	result := map[string]string{}
-	for _, group := range groups {
-		for _, handler := range group.handlers {
-			agentID, managed := managedAugmentAgentID(handler, wrapperName, runtimeRoot)
-			if managed {
-				key := agentID
-				if runtime.GOOS == "windows" {
-					key = strings.ToLower(key)
-				}
-				result[key] = agentID
-			}
-		}
+func requireAugmentAbsoluteNode(nodePath string) error {
+	if !filepath.IsAbs(nodePath) || !isClaudeNodeExecutable(nodePath) {
+		return fmt.Errorf("Auggie hooks require an absolute Node.js executable path")
 	}
-	return result
-}
-
-func augmentRuntimeContracts(
-	hooks augmentHooks,
-	runtimeRoot string,
-) []augmentRuntimeContract {
-	guards := managedAugmentIDs(
-		hooks["PreToolUse"], augmentGuardWrapperName(), runtimeRoot,
-	)
-	audits := managedAugmentIDs(
-		hooks["PostToolUse"], augmentAuditWrapperName(), runtimeRoot,
-	)
-	keys := make([]string, 0, len(guards))
-	for key := range guards {
-		if _, exists := audits[key]; exists {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	contracts := make([]augmentRuntimeContract, 0, len(keys))
-	for _, key := range keys {
-		agentID := guards[key]
-		agentDirectory := filepath.Join(runtimeRoot, agentID)
-		contracts = append(contracts, augmentRuntimeContract{
-			agentID:      agentID,
-			guardPath:    filepath.Join(agentDirectory, augmentGuardScript),
-			auditPath:    filepath.Join(agentDirectory, augmentAuditScript),
-			guardWrapper: filepath.Join(agentDirectory, augmentGuardWrapperName()),
-			auditWrapper: filepath.Join(agentDirectory, augmentAuditWrapperName()),
-		})
-	}
-	return contracts
-}
-
-func augmentRuntimeFilesExist(
-	contracts []augmentRuntimeContract,
-	runtimeRoot string,
-) (bool, error) {
-	entries, err := os.ReadDir(runtimeRoot)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf(
-			"read Elydora runtime directory at %s: %w", runtimeRoot, err,
-		)
-	}
-	for _, contract := range contracts {
-		var entryName string
-		for _, entry := range entries {
-			if entry.IsDir() && sameAugmentAgentID(entry.Name(), contract.agentID) {
-				entryName = entry.Name()
-				break
-			}
-		}
-		if entryName == "" {
-			continue
-		}
-		agentDirectory := filepath.Join(runtimeRoot, entryName)
-		configPath := filepath.Join(agentDirectory, "config.json")
-		config, exists, err := readHookJSONObject(
-			configPath, "Elydora runtime config",
-		)
-		if err != nil {
-			return false, err
-		}
-		if !exists {
-			continue
-		}
-		agentName, ok := config["agent_name"].(string)
-		if !ok {
-			return false, fmt.Errorf(
-				`Elydora runtime config at %s field "agent_name" must be a string`,
-				configPath,
-			)
-		}
-		if agentName != augmentAgentKey {
-			continue
-		}
-		files := []struct {
-			path  string
-			label string
-		}{
-			{contract.guardPath, "Elydora guard runtime"},
-			{contract.auditPath, "Elydora audit runtime"},
-			{contract.guardWrapper, "Auggie guard wrapper"},
-			{contract.auditWrapper, "Auggie audit wrapper"},
-		}
-		complete := true
-		for _, file := range files {
-			exists, err := regularFileExists(file.path, file.label)
-			if err != nil {
-				return false, err
-			}
-			if !exists {
-				complete = false
-				break
-			}
-		}
-		if complete {
-			return true, nil
-		}
-	}
-	return false, nil
+	return nil
 }

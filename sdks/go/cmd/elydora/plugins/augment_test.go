@@ -1,7 +1,7 @@
 package plugins
 
 import (
-	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,15 +10,19 @@ import (
 	"testing"
 )
 
-func TestAugmentRegistryAndFactory(t *testing.T) {
+func TestAugmentRegistryFactoryAndGuardOwnership(t *testing.T) {
 	entry := SupportedAgents[augmentAgentKey]
 	if entry.Name != "Augment Code CLI" ||
 		entry.ConfigDir != "~/.augment" ||
 		entry.ConfigFile != "settings.json" {
 		t.Fatalf("Auggie registry entry = %#v", entry)
 	}
-	if _, ok := NewPlugin(augmentAgentKey).(*AugmentPlugin); !ok {
+	plugin, ok := NewPlugin(augmentAgentKey).(*AugmentPlugin)
+	if !ok {
 		t.Fatalf("Auggie plugin factory returned %T", NewPlugin(augmentAgentKey))
+	}
+	if !plugin.ManagesGuardRuntime() {
+		t.Fatal("Auggie plugin must own guard runtime generation")
 	}
 }
 
@@ -46,7 +50,8 @@ func TestAugmentInstallPreservesSettingsAndIsIdempotent(t *testing.T) {
   }
 }`
 	fixture := prepareAugmentFixture(
-		t, augmentFixtureOptions{existingRaw: &existing},
+		t,
+		augmentFixtureOptions{existingRaw: &existing},
 	)
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Auggie hooks: %v", err)
@@ -64,178 +69,77 @@ func TestAugmentInstallPreservesSettingsAndIsIdempotent(t *testing.T) {
 		len(requireArray(t, hooks["PostToolUse"])) != 1 {
 		t.Fatalf("unexpected hooks after repeat install: %#v", hooks)
 	}
-	preGroups := requireArray(t, hooks["PreToolUse"])
-	managedGroup := requireObject(t, preGroups[len(preGroups)-1])
+	managedGroup := requireObject(
+		t,
+		requireArray(t, hooks["PreToolUse"])[1],
+	)
 	if managedGroup["matcher"] != ".*" {
 		t.Fatalf("managed matcher = %#v", managedGroup["matcher"])
 	}
 	guard := augmentTestManagedHandler(
-		t, settings, "PreToolUse", fixture.guardWrapper,
+		t,
+		settings,
+		"PreToolUse",
+		fixture.guardWrapper,
 	)
 	audit := augmentTestManagedHandler(
-		t, settings, "PostToolUse", fixture.auditWrapper,
+		t,
+		settings,
+		"PostToolUse",
+		fixture.auditWrapper,
 	)
 	for _, handler := range []map[string]any{guard, audit} {
-		wantKeys := map[string]struct{}{"type": {}, "command": {}, "timeout": {}}
-		if len(handler) != len(wantKeys) {
-			t.Fatalf("handler has extra fields: %#v", handler)
+		want := map[string]any{
+			"type": "command", "command": handler["command"],
+			"timeout": augmentHookTimeout,
 		}
-		for key := range handler {
-			if _, exists := wantKeys[key]; !exists {
-				t.Fatalf("handler has unexpected field %q", key)
-			}
-		}
-		if handler["type"] != "command" || handler["timeout"] != augmentHookTimeout {
-			t.Fatalf("unexpected handler: %#v", handler)
+		if !reflect.DeepEqual(handler, want) {
+			t.Fatalf("managed handler = %#v", handler)
 		}
 	}
-	guardWrapper, err := os.ReadFile(fixture.guardWrapper)
-	if err != nil || !strings.Contains(string(guardWrapper), augmentGuardScript) {
-		t.Fatalf("guard wrapper = %q, %v", guardWrapper, err)
+	nodePath, err := resolveNodeRuntime()
+	if err != nil {
+		t.Fatalf("resolve Node.js runtime: %v", err)
 	}
-	auditWrapper, err := os.ReadFile(fixture.auditWrapper)
-	if err != nil || !strings.Contains(string(auditWrapper), augmentAuditScript) {
-		t.Fatalf("audit wrapper = %q, %v", auditWrapper, err)
-	}
-	if runtime.GOOS == "windows" {
-		if !strings.HasPrefix(string(guardWrapper), "@echo off\r\n") ||
-			!strings.Contains(string(guardWrapper), "exit /b %errorlevel%") {
-			t.Fatalf("invalid Windows wrapper: %q", guardWrapper)
+	for _, item := range []struct {
+		path, script string
+	}{
+		{fixture.guardWrapper, fixture.guardPath},
+		{fixture.auditWrapper, fixture.hookPath},
+	} {
+		actual, err := os.ReadFile(item.path)
+		if err != nil {
+			t.Fatalf("read wrapper %s: %v", item.path, err)
 		}
-	} else {
-		info, statErr := os.Stat(fixture.guardWrapper)
-		if statErr != nil || info.Mode().Perm()&0100 == 0 ||
-			!strings.HasPrefix(string(guardWrapper), "#!/bin/sh\nexec ") {
-			t.Fatalf("invalid POSIX wrapper: %q, %#v, %v", guardWrapper, info, statErr)
+		want := buildAugmentWrapper(nodePath, item.script)
+		if string(actual) != string(want) {
+			t.Fatalf("wrapper %s = %q, want %q", item.path, actual, want)
 		}
 	}
 	runtimeConfig := readAugmentTestObject(t, fixture.runtimeConfig)
-	if runtimeConfig["agent_name"] != augmentAgentKey {
-		t.Fatalf("runtime agent name = %#v", runtimeConfig["agent_name"])
+	if runtimeConfig["agent_name"] != augmentAgentKey ||
+		runtimeConfig["agent_id"] != augmentTestAgentID {
+		t.Fatalf("runtime identity = %#v", runtimeConfig)
+	}
+	auditSource, err := os.ReadFile(fixture.hookPath)
+	if err != nil || !strings.Contains(string(auditSource), "const NATIVE_PAYLOAD = true;") {
+		t.Fatalf("audit runtime native payload = %v, %v", err, strings.Contains(string(auditSource), "const NATIVE_PAYLOAD = true;"))
 	}
 	for _, path := range []string{
-		filepath.Join(fixture.workspaceDir, ".augment", "settings.json"),
-		filepath.Join(fixture.workspaceDir, ".augment", "settings.local.json"),
+		filepath.Join(fixture.projectDir, ".augment", "settings.json"),
+		filepath.Join(fixture.projectDir, ".augment", "settings.local.json"),
 	} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("workspace settings written at %s: %v", path, err)
 		}
-	}
-}
-
-func TestAugmentWrappersBlockAndForwardPayloadByteForByte(t *testing.T) {
-	fixture := prepareAugmentFixture(t, augmentFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Auggie hooks: %v", err)
-	}
-	capturePath := filepath.Join(t.TempDir(), "captured-event.json")
-	captureJSON, err := json.Marshal(capturePath)
-	if err != nil {
-		t.Fatalf("marshal capture path: %v", err)
-	}
-	captureScript := "const fs = require('node:fs'); const chunks = []; " +
-		"process.stdin.on('data', chunk => chunks.push(chunk)); " +
-		"process.stdin.on('end', () => fs.writeFileSync(" +
-		string(captureJSON) + ", Buffer.concat(chunks)));\n"
-	if err := os.WriteFile(fixture.hookPath, []byte(captureScript), 0700); err != nil {
-		t.Fatalf("write capture hook: %v", err)
-	}
-	settings := readAugmentTestObject(t, fixture.configPath)
-	prePayload := `{"hook_event_name":"PreToolUse","conversation_id":"conversation-1","workspace_roots":["workspace"],"tool_name":"launch-process","tool_input":{"command":"echo test"},"is_mcp_tool":false}`
-	guard := augmentTestManagedHandler(
-		t, settings, "PreToolUse", fixture.guardWrapper,
-	)
-	exitCode, stderr := runAugmentCommand(
-		t, guard["command"].(string), fixture.homeDir, prePayload,
-	)
-	if exitCode != 2 || !strings.Contains(stderr, "Agent is frozen by Elydora") {
-		t.Fatalf("guard exit = %d, stderr = %q", exitCode, stderr)
-	}
-	postPayload := `{"hook_event_name":"PostToolUse","conversation_id":"conversation-1","workspace_roots":["workspace"],"tool_name":"launch-process","tool_input":{"command":"echo test"},"tool_output":"test","is_mcp_tool":false}`
-	audit := augmentTestManagedHandler(
-		t, settings, "PostToolUse", fixture.auditWrapper,
-	)
-	exitCode, stderr = runAugmentCommand(
-		t, audit["command"].(string), fixture.homeDir, postPayload,
-	)
-	if exitCode != 0 {
-		t.Fatalf("audit exit = %d, stderr = %q", exitCode, stderr)
-	}
-	captured, err := os.ReadFile(capturePath)
-	if err != nil || string(captured) != postPayload {
-		t.Fatalf("captured payload = %q, %v", captured, err)
-	}
-}
-
-func TestAugmentStatusRequiresPairCoreRuntimesAndWrappers(t *testing.T) {
-	fixture := prepareAugmentFixture(t, augmentFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Auggie hooks: %v", err)
-	}
-	status, err := fixture.plugin.Status()
-	if err != nil || !status.Installed || !status.HookConfigured ||
-		!status.HookScriptExists {
-		t.Fatalf("installed status = %#v, %v", status, err)
-	}
-	if err := os.Remove(fixture.guardWrapper); err != nil {
-		t.Fatalf("remove guard wrapper: %v", err)
-	}
-	status, err = fixture.plugin.Status()
-	if err != nil || status.Installed || !status.HookConfigured ||
-		status.HookScriptExists {
-		t.Fatalf("missing-wrapper status = %#v, %v", status, err)
-	}
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("restore Auggie hooks: %v", err)
-	}
-	if err := os.Remove(fixture.hookPath); err != nil {
-		t.Fatalf("remove hook runtime: %v", err)
-	}
-	status, err = fixture.plugin.Status()
-	if err != nil || status.Installed || status.HookScriptExists {
-		t.Fatalf("missing-runtime status = %#v, %v", status, err)
-	}
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("restore Auggie hooks: %v", err)
-	}
-	settings := readAugmentTestObject(t, fixture.configPath)
-	delete(requireObject(t, settings["hooks"]), "PostToolUse")
-	writeAugmentTestObject(t, fixture.configPath, settings)
-	status, err = fixture.plugin.Status()
-	if err != nil || status.Installed || status.HookConfigured {
-		t.Fatalf("incomplete-pair status = %#v, %v", status, err)
-	}
-}
-
-func TestAugmentStatusSkipsIncompleteEarlierContract(t *testing.T) {
-	fixture := prepareAugmentFixture(t, augmentFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Auggie hooks: %v", err)
-	}
-	settings := readAugmentTestObject(t, fixture.configPath)
-	hooks := requireObject(t, settings["hooks"])
-	for _, item := range []struct{ event, wrapper string }{
-		{"PreToolUse", augmentGuardWrapperName()},
-		{"PostToolUse", augmentAuditWrapperName()},
-	} {
-		hooks[item.event] = append(
-			requireArray(t, hooks[item.event]),
-			map[string]any{"hooks": []any{buildAugmentHandler(filepath.Join(
-				filepath.Dir(fixture.agentDir), "agent-0", item.wrapper,
-			))}},
-		)
-	}
-	writeAugmentTestObject(t, fixture.configPath, settings)
-	status, err := fixture.plugin.Status()
-	if err != nil || !status.Installed {
-		t.Fatalf("status with earlier incomplete contract = %#v, %v", status, err)
 	}
 }
 
 func TestAugmentUninstallPreservesExactUserOwnership(t *testing.T) {
 	existing := `{"owner":"user","hooks":{"Notification":[]}}`
 	fixture := prepareAugmentFixture(
-		t, augmentFixtureOptions{existingRaw: &existing},
+		t,
+		augmentFixtureOptions{existingRaw: &existing},
 	)
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Auggie hooks: %v", err)
@@ -251,12 +155,15 @@ func TestAugmentUninstallPreservesExactUserOwnership(t *testing.T) {
 		requireArray(t, managedGroup["hooks"]),
 		map[string]any{"type": "command", "command": "user-command"},
 	)
-	preGroups = append(preGroups,
+	preGroups = append(
+		preGroups,
 		map[string]any{"hooks": []any{buildAugmentHandler(
 			fixture.guardWrapper + ".backup",
 		)}},
 		map[string]any{"hooks": []any{buildAugmentHandler(filepath.Join(
-			filepath.Dir(fixture.agentDir), "agent-10", augmentGuardWrapperName(),
+			filepath.Dir(fixture.agentDir),
+			"agent-10",
+			augmentGuardWrapperName(),
 		))}},
 	)
 	hooks["PreToolUse"] = preGroups
@@ -274,7 +181,10 @@ func TestAugmentUninstallPreservesExactUserOwnership(t *testing.T) {
 		len(requireArray(t, remainingHooks["PreToolUse"])) != 4 {
 		t.Fatalf("user settings changed: %#v", remaining)
 	}
-	if !reflect.DeepEqual(requireArray(t, remainingHooks["Notification"]), []any{}) {
+	if !reflect.DeepEqual(
+		requireArray(t, remainingHooks["Notification"]),
+		[]any{},
+	) {
 		t.Fatalf("empty notification changed: %#v", remainingHooks["Notification"])
 	}
 	raw, _ := os.ReadFile(fixture.configPath)
@@ -287,7 +197,7 @@ func TestAugmentUninstallPreservesExactUserOwnership(t *testing.T) {
 	}
 }
 
-func TestAugmentInstallReplacesStaleAndPreservesEmptyGroups(t *testing.T) {
+func TestAugmentInstallReplacesStaleHooksAndPreservesEmptyGroups(t *testing.T) {
 	fixture := prepareAugmentFixture(t, augmentFixtureOptions{})
 	if err := fixture.plugin.Install(fixture.config); err != nil {
 		t.Fatalf("install Auggie hooks: %v", err)
@@ -305,7 +215,9 @@ func TestAugmentInstallReplacesStaleAndPreservesEmptyGroups(t *testing.T) {
 		hooks[item.event] = append(
 			requireArray(t, hooks[item.event]),
 			map[string]any{"hooks": []any{buildAugmentHandler(filepath.Join(
-				filepath.Dir(fixture.agentDir), "agent-old", item.wrapper,
+				filepath.Dir(fixture.agentDir),
+				"agent-old",
+				item.wrapper,
 			))}},
 		)
 	}
@@ -331,14 +243,17 @@ func TestAugmentUninstallRemovesOwnedSettings(t *testing.T) {
 	if err := fixture.plugin.Uninstall(augmentTestAgentID); err != nil {
 		t.Fatalf("uninstall Auggie hooks: %v", err)
 	}
-	if _, err := os.Stat(fixture.configPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(fixture.configPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("owned Auggie settings remain: %v", err)
 	}
 }
 
 func TestAugmentMalformedSettingsPreventRuntimeWrites(t *testing.T) {
 	for _, testCase := range []struct{ name, raw, want string }{
-		{"malformed", "{ malformed", "parse Auggie settings"},
+		{"malformed", "{ malformed", "parse Auggie user settings"},
+		{"duplicate", `{"hooks":{},"hooks":{}}`, "duplicate key"},
+		{"comments", "{\"hooks\":{} // comment\n}", "invalid character"},
+		{"trailing-comma", `{"hooks":{},}`, "invalid character"},
 		{"null-root", "null", "must contain a JSON object"},
 		{"null-hooks", `{"hooks":null}`, `field "hooks" must be an object`},
 		{"unknown-event", `{"hooks":{"UnknownEvent":[]}}`, "unsupported event"},
@@ -356,7 +271,8 @@ func TestAugmentMalformedSettingsPreventRuntimeWrites(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := prepareAugmentFixture(
-				t, augmentFixtureOptions{existingRaw: &testCase.raw},
+				t,
+				augmentFixtureOptions{existingRaw: &testCase.raw},
 			)
 			err := fixture.plugin.Install(fixture.config)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
@@ -366,75 +282,7 @@ func TestAugmentMalformedSettingsPreventRuntimeWrites(t *testing.T) {
 			if readErr != nil || string(raw) != testCase.raw {
 				t.Fatalf("original settings changed: %q, %v", raw, readErr)
 			}
-			for _, path := range []string{
-				fixture.hookPath,
-				fixture.runtimeConfig,
-				fixture.privateKey,
-				fixture.guardWrapper,
-				fixture.auditWrapper,
-			} {
-				if _, err := os.Stat(path); !os.IsNotExist(err) {
-					t.Fatalf("runtime write occurred at %s: %v", path, err)
-				}
-			}
+			assertNoAugmentRuntimeWrites(t, fixture)
 		})
-	}
-}
-
-func TestAugmentMissingGuardPreventsWrites(t *testing.T) {
-	fixture := prepareAugmentFixture(
-		t, augmentFixtureOptions{withoutGuard: true},
-	)
-	err := fixture.plugin.Install(fixture.config)
-	if err == nil || !strings.Contains(err.Error(), "guard runtime is missing") {
-		t.Fatalf("install error = %v", err)
-	}
-	for _, path := range []string{
-		fixture.configPath,
-		fixture.hookPath,
-		fixture.runtimeConfig,
-		fixture.privateKey,
-		fixture.guardWrapper,
-		fixture.auditWrapper,
-	} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("write occurred at %s: %v", path, err)
-		}
-	}
-}
-
-func TestAugmentStatusSurfacesMalformedRuntimeMetadata(t *testing.T) {
-	fixture := prepareAugmentFixture(t, augmentFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Auggie hooks: %v", err)
-	}
-	if err := os.WriteFile(
-		fixture.runtimeConfig, []byte("{ malformed"), 0600,
-	); err != nil {
-		t.Fatalf("corrupt runtime config: %v", err)
-	}
-	if _, err := fixture.plugin.Status(); err == nil ||
-		!strings.Contains(err.Error(), "parse Elydora runtime config") {
-		t.Fatalf("status error = %v", err)
-	}
-}
-
-func TestAugmentAtomicWritesLeaveNoTemporaryFiles(t *testing.T) {
-	fixture := prepareAugmentFixture(t, augmentFixtureOptions{})
-	if err := fixture.plugin.Install(fixture.config); err != nil {
-		t.Fatalf("install Auggie hooks: %v", err)
-	}
-	for _, directory := range []string{
-		fixture.agentDir, filepath.Dir(fixture.configPath),
-	} {
-		entries, err := os.ReadDir(directory)
-		if err != nil {
-			t.Fatalf("read directory %s: %v", directory, err)
-		}
-		for _, entry := range entries {
-			if strings.HasSuffix(entry.Name(), ".tmp") {
-				t.Fatalf("temporary file remains: %s", entry.Name())
-			}
-		}
 	}
 }

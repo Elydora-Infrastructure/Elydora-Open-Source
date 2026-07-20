@@ -1,137 +1,139 @@
 package plugins
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // AugmentPlugin manages Auggie native global user hooks.
-type AugmentPlugin struct{}
+type AugmentPlugin struct {
+	rename renameFunc
+}
+
+// ManagesGuardRuntime reports that Auggie commits its provider guard together
+// with both wrappers, the audit runtime, and user settings.
+func (p *AugmentPlugin) ManagesGuardRuntime() bool {
+	return true
+}
+
+// PreflightInstall validates settings and runtime identity before any write.
+func (p *AugmentPlugin) PreflightInstall(config InstallConfig) error {
+	document, err := readAugmentDocument()
+	if err != nil {
+		return err
+	}
+	_, _, err = preflightAugmentInstallation(config, document)
+	return err
+}
 
 func (p *AugmentPlugin) Install(config InstallConfig) error {
-	if config.AgentID == "" {
-		return fmt.Errorf("agent ID is required")
-	}
-	document, err := readAugmentConfig()
+	document, err := readAugmentDocument()
 	if err != nil {
 		return err
 	}
-	if config.GuardScriptPath == "" {
-		return fmt.Errorf("guard script path is required")
-	}
-	guardExists, err := regularFileExists(
-		config.GuardScriptPath, "Elydora guard runtime",
-	)
+	paths, nodePath, err := preflightAugmentInstallation(config, document)
 	if err != nil {
 		return err
 	}
-	if !guardExists {
-		return fmt.Errorf(
-			"Elydora guard runtime is missing: %s", config.GuardScriptPath,
-		)
-	}
-	hookPath, err := hookScriptPath(config.AgentID)
-	if err != nil {
-		return err
-	}
-	if config.HookScript != "" {
-		hookPath = config.HookScript
-	}
-	nodePath, err := resolveNodeRuntime()
-	if err != nil {
-		return err
-	}
-	if err := validateAugmentMatchers(document.hooks, nodePath); err != nil {
-		return err
-	}
-	runtimeRoot, err := augmentRuntimeRoot()
-	if err != nil {
-		return err
-	}
-	wrappers := resolveAugmentWrapperPaths(runtimeRoot, config.AgentID)
-	hooks, _ := removeManagedAugmentHooks(document.hooks, "", runtimeRoot)
+	hooks, _ := removeManagedAugmentHooks(document.hooks, "", paths.runtimeRoot)
 	hooks["PreToolUse"] = append(
 		hooks["PreToolUse"],
-		buildAugmentGroup(buildAugmentHandler(wrappers.guard)),
+		buildAugmentGroup(buildAugmentHandler(paths.guardWrapperPath)),
 	)
 	hooks["PostToolUse"] = append(
 		hooks["PostToolUse"],
-		buildAugmentGroup(buildAugmentHandler(wrappers.audit)),
+		buildAugmentGroup(buildAugmentHandler(paths.auditWrapperPath)),
 	)
-	next := cloneAugmentObject(document.root)
-	next["hooks"] = renderAugmentHooks(hooks)
-
-	runtimeConfig := config
-	runtimeConfig.AgentName = augmentAgentKey
-	if err := GenerateHookScript(hookPath, runtimeConfig); err != nil {
-		return fmt.Errorf("generate hook script: %w", err)
+	rendered, err := renderAugmentDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Auggie user settings: %w", err)
 	}
-	if err := writeHookFileAtomic(
-		wrappers.guard,
-		buildAugmentWrapper(nodePath, config.GuardScriptPath),
-		0700,
+	changes, err := prepareAugmentInstallationChanges(
+		config,
+		paths,
+		nodePath,
+		rendered,
+	)
+	if err != nil {
+		return err
+	}
+	if err := writeAugmentChanges(
+		changes,
+		"Install Augment Code CLI hooks",
+		p.rename,
+		paths.runtimeRoot,
+		paths.agentDirectory,
+		filepath.Dir(document.configPath),
 	); err != nil {
-		return fmt.Errorf("write Auggie guard wrapper: %w", err)
-	}
-	if err := writeHookFileAtomic(
-		wrappers.audit,
-		buildAugmentWrapper(nodePath, hookPath),
-		0700,
-	); err != nil {
-		return fmt.Errorf("write Auggie audit wrapper: %w", err)
-	}
-	if err := writeHookJSONObjectAtomic(document.configPath, next); err != nil {
-		return fmt.Errorf("write Auggie settings: %w", err)
+		return err
 	}
 	fmt.Println("Auggie: user-level PreToolUse and PostToolUse hooks installed.")
 	return nil
 }
 
 func (p *AugmentPlugin) Uninstall(agentID string) error {
-	document, err := readAugmentConfig()
-	if err != nil || !document.exists {
+	document, err := readAugmentDocument()
+	if err != nil {
 		return err
 	}
-	runtimeRoot, err := augmentRuntimeRoot()
+	if !document.exists {
+		return nil
+	}
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return err
 	}
 	hooks, changed := removeManagedAugmentHooks(
-		document.hooks, agentID, runtimeRoot,
+		document.hooks,
+		agentID,
+		runtimeRoot,
 	)
 	if !changed {
 		return nil
 	}
-	next := cloneAugmentObject(document.root)
-	if len(hooks) == 0 {
-		delete(next, "hooks")
-	} else {
-		next["hooks"] = renderAugmentHooks(hooks)
+	rendered, err := renderAugmentDocument(document, hooks)
+	if err != nil {
+		return fmt.Errorf("render Auggie user settings: %w", err)
 	}
-	if len(next) == 0 {
-		return removeHookFile(document.configPath, "Auggie settings")
+	change, err := prepareRenderedAugmentChange(rendered)
+	if err != nil {
+		return err
 	}
-	return writeHookJSONObjectAtomic(document.configPath, next)
+	return writeAugmentChanges(
+		[]*fileChange{change},
+		"Uninstall Augment Code CLI hooks",
+		p.rename,
+		"",
+		"",
+		filepath.Dir(document.configPath),
+	)
 }
 
 func (p *AugmentPlugin) Status() (PluginStatus, error) {
-	document, err := readAugmentConfig()
+	configPath, pathErr := augmentConfigPath()
+	entry := SupportedAgents[augmentAgentKey]
 	status := PluginStatus{
-		AgentName:   augmentAgentKey,
-		DisplayName: "Augment Code CLI",
-		ConfigPath:  document.configPath,
+		AgentName: augmentAgentKey, DisplayName: entry.Name, ConfigPath: configPath,
 	}
+	if pathErr != nil {
+		return status, pathErr
+	}
+	document, err := readAugmentDocument()
 	if err != nil {
 		return status, err
 	}
-	runtimeRoot, err := augmentRuntimeRoot()
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return status, err
 	}
 	contracts := augmentRuntimeContracts(document.hooks, runtimeRoot)
-	if len(contracts) == 0 {
+	status.HookConfigured = len(contracts) > 0
+	if !status.HookConfigured {
 		return status, nil
 	}
-	status.HookConfigured = true
 	status.HookScriptExists, err = augmentRuntimeFilesExist(
-		contracts, runtimeRoot,
+		contracts,
+		runtimeRoot,
 	)
 	if err != nil {
 		return status, err

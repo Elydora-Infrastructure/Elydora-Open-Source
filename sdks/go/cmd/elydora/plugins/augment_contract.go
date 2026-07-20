@@ -1,9 +1,12 @@
 package plugins
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 )
@@ -42,6 +45,14 @@ type augmentDocument struct {
 	configPath string
 	root       map[string]any
 	hooks      augmentHooks
+	raw        []byte
+}
+
+type augmentRenderedDocument struct {
+	document *augmentDocument
+	changed  bool
+	next     []byte
+	remove   bool
 }
 
 type augmentWrapperPaths struct {
@@ -198,6 +209,71 @@ func readAugmentHooks(root map[string]any) (augmentHooks, error) {
 		hooks[event] = groups
 	}
 	return hooks, nil
+}
+
+func parseAugmentDocument(configPath string, raw []byte) (*augmentDocument, error) {
+	label := fmt.Sprintf("Auggie user settings at %s", configPath)
+	root, err := decodeStrictJSONObject(raw, label)
+	if err != nil {
+		return nil, err
+	}
+	hooks, err := readAugmentHooks(root)
+	if err != nil {
+		return nil, err
+	}
+	return &augmentDocument{
+		exists: true, configPath: configPath, root: root, hooks: hooks,
+		raw: append([]byte(nil), raw...),
+	}, nil
+}
+
+func createAugmentDocument(configPath string) *augmentDocument {
+	return &augmentDocument{
+		configPath: configPath,
+		root:       map[string]any{},
+		hooks:      augmentHooks{},
+	}
+}
+
+func renderAugmentDocument(
+	document *augmentDocument,
+	hooks augmentHooks,
+) (*augmentRenderedDocument, error) {
+	if document == nil {
+		return nil, fmt.Errorf("Auggie settings document is required")
+	}
+	if reflect.DeepEqual(hooks, document.hooks) {
+		return &augmentRenderedDocument{document: document}, nil
+	}
+	if !document.exists && len(hooks) == 0 {
+		return &augmentRenderedDocument{document: document}, nil
+	}
+	root := cloneAugmentObject(document.root)
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	} else {
+		root["hooks"] = renderAugmentHooks(hooks)
+	}
+	if len(root) == 0 {
+		return &augmentRenderedDocument{
+			document: document,
+			changed:  true,
+			remove:   true,
+		}, nil
+	}
+	next, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode Auggie user settings: %w", err)
+	}
+	next = append(next, '\n')
+	if _, err := parseAugmentDocument(document.configPath, next); err != nil {
+		return nil, fmt.Errorf("validate rendered Auggie user settings: %w", err)
+	}
+	return &augmentRenderedDocument{
+		document: document,
+		changed:  !document.exists || !bytes.Equal(next, document.raw),
+		next:     next,
+	}, nil
 }
 
 func renderAugmentHooks(hooks augmentHooks) map[string]any {
