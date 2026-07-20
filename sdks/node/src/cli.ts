@@ -188,41 +188,10 @@ async function cmdInstall(args: string[]): Promise<void> {
 
   console.log(`Verifying private key... Public key: ${publicKey.slice(0, 12)}...`);
 
-  // Create ~/.elydora/{agentId}/ directory
-  await ensurePrivateDirectory(ELYDORA_DIR);
-  await ensurePrivateDirectory(agentDir);
-
-  // Write agent config
   const agentConfigPath = path.join(agentDir, 'config.json');
-  const agentConfig = {
-    org_id: orgId,
-    agent_id: agentId,
-    kid,
-    base_url: baseUrl,
-    ...(token ? { token } : {}),
-    agent_name: agentName,
-  };
-  await writePrivateFile(agentConfigPath, JSON.stringify(agentConfig, null, 2) + '\n');
-  console.log(`  Agent config: ${agentConfigPath}`);
-
-  // Write private key with owner-restricted access
   const keyPath = path.join(agentDir, 'private.key');
-  await writePrivateFile(keyPath, privateKey);
-  console.log(`  Private key:  ${keyPath}`);
-
-  // Generate and write hook script (PostToolUse — audit logging)
   const hookScriptPath = path.join(agentDir, 'hook.js');
-  const hookScript = generateHookScript(agentName, agentId);
-  await fsp.writeFile(hookScriptPath, hookScript, { encoding: 'utf-8', mode: 0o755 });
-  console.log(`  Hook script:  ${hookScriptPath}`);
-
-  // Generate and write guard script (PreToolUse — freeze enforcement)
   const guardScriptPath = path.join(agentDir, 'guard.js');
-  const guardScript = generateGuardScript(agentName, agentId);
-  await fsp.writeFile(guardScriptPath, guardScript, { encoding: 'utf-8', mode: 0o755 });
-  console.log(`  Guard script: ${guardScriptPath}`);
-
-  // Install agent-specific config hook
   const plugin = PLUGINS.get(agentName)!;
   const installConfig: InstallConfig = {
     agentName,
@@ -235,8 +204,32 @@ async function cmdInstall(args: string[]): Promise<void> {
     hookScriptPath,
     guardScriptPath,
   };
+  await plugin.preflightInstall?.(installConfig);
+
+  if (!plugin.managesRuntime) {
+    await ensurePrivateDirectory(ELYDORA_DIR);
+    await ensurePrivateDirectory(agentDir);
+    const agentConfig = {
+      org_id: orgId,
+      agent_id: agentId,
+      kid,
+      base_url: baseUrl,
+      ...(token ? { token } : {}),
+      agent_name: agentName,
+    };
+    await writePrivateFile(agentConfigPath, JSON.stringify(agentConfig, null, 2) + '\n');
+    await writePrivateFile(keyPath, privateKey);
+    const hookScript = generateHookScript(agentName, agentId);
+    await fsp.writeFile(hookScriptPath, hookScript, { encoding: 'utf-8', mode: 0o755 });
+    const guardScript = generateGuardScript(agentName, agentId);
+    await fsp.writeFile(guardScriptPath, guardScript, { encoding: 'utf-8', mode: 0o755 });
+  }
 
   await plugin.install(installConfig);
+  console.log(`  Agent config: ${agentConfigPath}`);
+  console.log(`  Private key:  ${keyPath}`);
+  console.log(`  Hook script:  ${hookScriptPath}`);
+  console.log(`  Guard script: ${guardScriptPath}`);
 
   const entry = SUPPORTED_AGENTS.get(agentName)!;
   console.log(`\nElydora audit hook installed for ${entry.name}.`);

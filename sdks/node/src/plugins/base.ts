@@ -20,6 +20,8 @@ export interface PluginStatus {
 }
 
 export interface AgentPlugin {
+  readonly managesRuntime?: boolean;
+  preflightInstall?(config: InstallConfig): Promise<void>;
   install(config: InstallConfig): Promise<void>;
   uninstall(agentId?: string): Promise<void>;
   status(): Promise<PluginStatus>;

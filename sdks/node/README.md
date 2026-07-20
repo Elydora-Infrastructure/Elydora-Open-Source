@@ -55,6 +55,8 @@ The CLI reads the private key and optional API token through hidden terminal pro
 
 Codex performs a one-time trust review for user hooks. Run `/hooks` in Codex after installation and trust the Elydora `PreToolUse` and `PostToolUse` definitions.
 
+Cursor installation writes native `preToolUse`, `postToolUse`, and `postToolUseFailure` handlers to `~/.cursor/hooks.json` for both the CLI and IDE. Project and enterprise hook sources remain unchanged. The installation commits Cursor's hook file, generated runtimes, runtime config, and private key as one rollback-capable update. Managed commands use the current Node.js executable, preserve the complete Cursor JSON payload, return valid JSON, propagate freeze and revocation exit code `2`, and enable `failClosed` with a ten-second timeout.
+
 Cline installation writes `PreToolUse.mjs` and `PostToolUse.mjs` to `$CLINE_DIR/hooks` (default `~/.cline/hooks`). Elydora leaves the Documents and workspace hook roots unchanged. The guard translates a frozen agent into Cline's JSON stdout cancellation control.
 
 Factory Droid installation preserves the active user source across `~/.factory/hooks.json`, the `hooks` field in `~/.factory/settings.json`, and the legacy `~/.factory/hooks/hooks.json` path. Hook files store events at the document root; settings stores the same event map under `hooks`. Project and organization sources remain unchanged. Droid snapshots hooks for each session, so run `/hooks` after installation to review and apply the external change.
