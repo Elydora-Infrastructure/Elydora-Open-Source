@@ -296,6 +296,27 @@ test('high-drift providers retain their verified hook contracts', async () => {
     failure_mode: 'fail_closed',
     timeout_failure_mode: 'fail_open',
   });
+  assert.equal(providers.get('cursor').surface, 'cli_and_ide');
+  assert.deepEqual(providers.get('cursor').config_paths, [
+    '/Library/Application Support/Cursor/hooks.json',
+    '/etc/cursor/hooks.json',
+    'C:\\ProgramData\\Cursor\\hooks.json',
+    '.cursor/hooks.json',
+    '~/.cursor/hooks.json',
+  ]);
+  assert.deepEqual(providers.get('cursor').events, {
+    before_tool: 'preToolUse',
+    after_tool: 'postToolUse',
+  });
+  assert.deepEqual(providers.get('cursor').event_fields, {
+    name: 'tool_name',
+    input: 'tool_input',
+    session: 'conversation_id',
+  });
+  assert.deepEqual(providers.get('cursor').blocking, {
+    mechanism: 'exit_code_2',
+    failure_mode: 'configurable',
+  });
   assert.deepEqual(providers.get('droid').config_paths, [
     '~/.factory/hooks.json',
     '~/.factory/settings.json',

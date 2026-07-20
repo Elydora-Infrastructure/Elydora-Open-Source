@@ -148,20 +148,28 @@
       "id": "cursor",
       "name": "Cursor",
       "vendor": "Anysphere",
-      "surface": "ide",
+      "surface": "cli_and_ide",
       "integration_mode": "command_hooks",
       "config_format": "json",
       "config_paths": [
-        "~/.cursor/hooks.json",
-        ".cursor/hooks.json"
+        "/Library/Application Support/Cursor/hooks.json",
+        "/etc/cursor/hooks.json",
+        "C:\\ProgramData\\Cursor\\hooks.json",
+        ".cursor/hooks.json",
+        "~/.cursor/hooks.json"
       ],
       "events": {
         "before_tool": "preToolUse",
         "after_tool": "postToolUse"
       },
+      "event_fields": {
+        "name": "tool_name",
+        "input": "tool_input",
+        "session": "conversation_id"
+      },
       "blocking": {
         "mechanism": "exit_code_2",
-        "failure_mode": "fail_open"
+        "failure_mode": "configurable"
       },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",

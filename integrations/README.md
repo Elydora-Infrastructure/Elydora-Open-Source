@@ -8,6 +8,8 @@ Grok Build adapters write native user hook files under `$GROK_HOME/hooks` or `~/
 
 GitHub Copilot command `preToolUse` hooks deny on crashes and every non-zero exit. Command timeouts continue through the normal permission flow, so `timeout_failure_mode` records that explicit exception when it differs from `failure_mode`.
 
+Cursor uses the same `preToolUse` and `postToolUse` contract across its CLI and IDE. User, project, and enterprise hook sources merge by documented priority; command exit code `2` denies an action, while per-script `failClosed` controls crash, timeout, and invalid-output behavior.
+
 `delivery_state` is computed from the `node`, `python`, and `go` adapter flags:
 
 | State | Meaning |
