@@ -1,36 +1,69 @@
-import assert from "node:assert/strict";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import test from "node:test";
+import assert from 'node:assert/strict';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import test from 'node:test';
 import {
-  childEnv,
+  VALID_PRIVATE_KEY,
+  assertManagedHandler,
   cliPath,
+  configModuleUrl,
+  contractModuleUrl,
   createFixture,
-  expectedShell,
-  generatedCommand,
+  installConfig,
+  installationModuleUrl,
+  legacyGroup,
   managedHandler,
   parseSettings,
+  readSettings,
   registryModuleUrl,
-  runHook,
   runNode,
   runPlugin,
-} from "../test-support/qwen.mjs";
+  sourcesModuleUrl,
+  writeSettings,
+} from '../test-support/qwen.mjs';
 
-test("Qwen Code is registered in the SDK and CLI", async () => {
+const GUARD_NAME = 'elydora-guard';
+const AUDIT_NAME = 'elydora-audit';
+
+async function assertMissing(filePath) {
+  await assert.rejects(lstat(filePath), { code: 'ENOENT' });
+}
+
+function assertManagedTriple(settings) {
+  const guard = managedHandler(settings, 'PreToolUse', GUARD_NAME);
+  const audit = managedHandler(settings, 'PostToolUse', AUDIT_NAME);
+  const failure = managedHandler(settings, 'PostToolUseFailure', AUDIT_NAME);
+  assertManagedHandler(guard, GUARD_NAME);
+  assertManagedHandler(audit, AUDIT_NAME);
+  assertManagedHandler(failure, AUDIT_NAME);
+  assert.equal(audit.command, failure.command);
+  return { guard, audit, failure };
+}
+
+function isolatedEnvironment(fixture) {
+  return {
+    HOME: fixture.homeDir,
+    USERPROFILE: fixture.homeDir,
+    QWEN_HOME: '',
+    QWEN_CODE_SYSTEM_DEFAULTS_PATH: path.join(fixture.rootDir, 'system-defaults.json'),
+    QWEN_CODE_SYSTEM_SETTINGS_PATH: path.join(fixture.rootDir, 'system-settings.json'),
+    QWEN_CODE_TRUSTED_FOLDERS_PATH: path.join(fixture.rootDir, 'trusted-folders.json'),
+  };
+}
+
+test('Qwen Code is registered in the SDK and CLI', async () => {
   const { SUPPORTED_AGENTS } = await import(registryModuleUrl);
-  assert.deepEqual(SUPPORTED_AGENTS.get("qwen"), {
-    name: "Qwen Code",
-    configDir: "~/.qwen",
-    configFile: "settings.json",
+  assert.deepEqual(SUPPORTED_AGENTS.get('qwen'), {
+    name: 'Qwen Code',
+    configDir: '~/.qwen',
+    configFile: 'settings.json',
   });
   const fixture = await createFixture();
   try {
     const result = await runNode(
-      ["--no-warnings", cliPath, "status"],
-      childEnv(fixture),
-      "",
-      fixture.workspaceDir,
+      ['--no-warnings', cliPath, 'status'],
+      isolatedEnvironment(fixture),
+      fixture.projectDir,
     );
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /Qwen Code \(qwen\)/);
@@ -39,359 +72,420 @@ test("Qwen Code is registered in the SDK and CLI", async () => {
   }
 });
 
-test("Qwen install preserves JSONC settings and is idempotent", async () => {
+test('Qwen installs an exact three-event contract and preserves every source', async () => {
   const existing = [
-    "{",
-    "  // Keep this user preference.",
+    '{',
+    '  // Keep this user preference.',
     '  "theme": "GitHub",',
     '  "hooks": {',
-    '    "SessionStart": [{ "hooks": [{ "type": "command", "command": "session-hook" }] }],',
+    '    "FutureEvent": [null],',
     '    "PreToolUse": [{ "matcher": "read_file", "hooks": [{ "type": "command", "command": "user-hook" }] }]',
-    "  }",
-    "}",
-    "",
-  ].join("\r\n");
-  const fixture = await createFixture({ existingSettings: existing });
-  const workspaceSettings = path.join(
-    fixture.workspaceDir,
-    ".qwen",
-    "settings.json",
-  );
-  await mkdir(path.dirname(workspaceSettings), { recursive: true });
-  await writeFile(workspaceSettings, '{ "owner": "workspace" }\n');
+    '  }',
+    '}',
+    '',
+  ].join('\r\n');
+  const fixture = await createFixture({ settings: existing });
+  const workspacePath = path.join(fixture.projectDir, '.qwen', 'settings.json');
+  const defaultsPath = path.join(fixture.rootDir, 'system-defaults.json');
+  const systemPath = path.join(fixture.rootDir, 'system-settings.json');
+  await writeSettings(workspacePath, { owner: 'workspace' });
+  await writeSettings(defaultsPath, { owner: 'defaults' });
+  await writeSettings(systemPath, { owner: 'system' });
+  const environment = {
+    QWEN_CODE_SYSTEM_DEFAULTS_PATH: defaultsPath,
+    QWEN_CODE_SYSTEM_SETTINGS_PATH: systemPath,
+  };
   try {
-    const first = await fixture.install();
+    const first = await fixture.install({}, environment);
     assert.equal(first.code, 0, first.stderr);
     assert.match(first.stdout, /run \/hooks/i);
-    const second = await fixture.install();
+    const installed = await readSettings(fixture.settingsPath);
+    assert.match(installed.raw, /Keep this user preference/);
+    assert.match(installed.raw, /\r\n/);
+    assert.equal(installed.settings.theme, 'GitHub');
+    assert.deepEqual(installed.settings.hooks.FutureEvent, [null]);
+    assert.equal(installed.settings.hooks.PreToolUse[0].hooks[0].command, 'user-hook');
+    assertManagedTriple(installed.settings);
+    for (const filePath of [
+      path.join(fixture.agentDir, 'config.json'),
+      path.join(fixture.agentDir, 'private.key'),
+      fixture.guardScriptPath,
+      fixture.hookScriptPath,
+    ]) assert.equal((await lstat(filePath)).isFile(), true);
+
+    const second = await fixture.install({}, environment);
     assert.equal(second.code, 0, second.stderr);
-    const raw = await readFile(fixture.configPath, "utf-8");
-    const settings = parseSettings(raw);
-    assert.match(raw, /Keep this user preference/);
-    assert.match(raw, /\r\n/);
-    assert.equal(settings.theme, "GitHub");
-    assert.equal(
-      settings.hooks.SessionStart[0].hooks[0].command,
-      "session-hook",
-    );
-    assert.equal(settings.hooks.PreToolUse.length, 2);
-    assert.equal(settings.hooks.PostToolUse.length, 1);
-    for (const [event, scriptPath] of [
-      ["PreToolUse", fixture.guardScriptPath],
-      ["PostToolUse", fixture.hookScriptPath],
-    ]) {
-      const handler = managedHandler(settings, event, scriptPath);
-      assert.deepEqual(Object.keys(handler).sort(), [
-        "command",
-        "shell",
-        "timeout",
-        "type",
-      ]);
-      assert.equal(handler.type, "command");
-      assert.equal(handler.shell, expectedShell);
-      assert.equal(handler.timeout, 10_000);
-    }
-    assert.equal(
-      await readFile(workspaceSettings, "utf-8"),
-      '{ "owner": "workspace" }\n',
-    );
+    assert.equal(await readFile(fixture.settingsPath, 'utf-8'), installed.raw);
+    assert.deepEqual(parseSettings(await readFile(workspacePath, 'utf-8')), { owner: 'workspace' });
+    assert.deepEqual(parseSettings(await readFile(defaultsPath, 'utf-8')), { owner: 'defaults' });
+    assert.deepEqual(parseSettings(await readFile(systemPath, 'utf-8')), { owner: 'system' });
   } finally {
     await fixture.close();
   }
 });
 
-test("Qwen resolves QWEN_HOME with official user env precedence", async () => {
+test('Qwen resolves QWEN_HOME with official bootstrap precedence', async () => {
   const fixture = await createFixture();
-  const firstHome = path.join(fixture.rootDir, "first qwen home");
-  const secondHome = path.join(fixture.rootDir, "second qwen home");
-  await mkdir(path.join(fixture.homeDir, ".qwen"), { recursive: true });
-  await writeFile(
-    path.join(fixture.homeDir, ".qwen", ".env"),
+  const firstHome = path.join(fixture.rootDir, 'first qwen home');
+  const secondHome = path.join(fixture.rootDir, 'second qwen home');
+  await writeSettings(
+    path.join(fixture.homeDir, '.qwen', '.env'),
     `QWEN_HOME=${firstHome}\n`,
   );
-  await writeFile(
-    path.join(fixture.homeDir, ".env"),
-    `QWEN_HOME=${secondHome}\n`,
-  );
+  await writeSettings(path.join(fixture.homeDir, '.env'), `QWEN_HOME=${secondHome}\n`);
+  await writeSettings(path.join(firstHome, '.env'), 'QWEN_RUNTIME_DIR=runtime\n');
   try {
     const result = await fixture.install();
     assert.equal(result.code, 0, result.stderr);
-    const selected = path.join(firstHome, "settings.json");
-    assert.ok(
-      managedHandler(
-        parseSettings(await readFile(selected, "utf-8")),
-        "PreToolUse",
-        fixture.guardScriptPath,
-      ),
-    );
-    await assert.rejects(readFile(path.join(secondHome, "settings.json")), {
-      code: "ENOENT",
-    });
-    await assert.rejects(readFile(fixture.configPath), { code: "ENOENT" });
-    const status = await runPlugin(fixture, "status", null);
-    assert.equal(JSON.parse(status.stdout).configPath, selected);
+    const selected = path.join(firstHome, 'settings.json');
+    assertManagedTriple((await readSettings(selected)).settings);
+    await assertMissing(path.join(secondHome, 'settings.json'));
+    await assertMissing(fixture.settingsPath);
+    const status = JSON.parse((await runPlugin(fixture, 'status', null)).stdout);
+    assert.equal(status.configPath, selected);
   } finally {
     await fixture.close();
   }
 });
 
-test("Qwen resolves explicit relative, tilde, and empty QWEN_HOME values", async () => {
+test('Qwen resolves explicit relative, tilde, and empty QWEN_HOME values', async () => {
   for (const [value, expectedPath] of [
-    [
-      "relative-qwen",
-      (fixture) =>
-        path.join(fixture.workspaceDir, "relative-qwen", "settings.json"),
-    ],
-    [
-      "~/custom-qwen",
-      (fixture) => path.join(fixture.homeDir, "custom-qwen", "settings.json"),
-    ],
-    ["", (fixture) => fixture.configPath],
+    ['relative-qwen', (fixture) => path.join(fixture.projectDir, 'relative-qwen', 'settings.json')],
+    ['~/custom-qwen', (fixture) => path.join(fixture.homeDir, 'custom-qwen', 'settings.json')],
+    ['', (fixture) => fixture.settingsPath],
   ]) {
     const fixture = await createFixture();
-    await mkdir(path.join(fixture.homeDir, ".qwen"), { recursive: true });
-    await writeFile(
-      path.join(fixture.homeDir, ".qwen", ".env"),
-      `QWEN_HOME=${path.join(fixture.rootDir, "ignored-qwen-home")}\n`,
+    await writeSettings(
+      path.join(fixture.homeDir, '.qwen', '.env'),
+      `QWEN_HOME=${path.join(fixture.rootDir, 'ignored-home')}\n`,
     );
     try {
-      const result = await fixture.install({ QWEN_HOME: value });
+      const result = await fixture.install({}, { QWEN_HOME: value });
       assert.equal(result.code, 0, result.stderr);
-      assert.ok(
-        parseSettings(await readFile(expectedPath(fixture), "utf-8")).hooks,
-      );
+      assertManagedTriple((await readSettings(expectedPath(fixture))).settings);
     } finally {
       await fixture.close();
     }
   }
 });
 
-test("Qwen hooks block freezes and forward official input", async () => {
-  const capturePath = path.join(
-    os.tmpdir(),
-    `elydora-qwen-event-${process.pid}-${Date.now()}.json`,
-  );
-  const hookSource = `
-    const fs = require('node:fs');
-    const chunks = [];
-    process.stdin.on('data', (chunk) => chunks.push(chunk));
-    process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(capturePath)}, Buffer.concat(chunks)));
-  `;
-  const fixture = await createFixture({ hookSource });
+test('Qwen validates current hook schemas and preserves future events', async () => {
+  const fixture = await createFixture({ settings: {
+    hooks: {
+      FutureEvent: [null],
+      MessageDisplay: [{ matcher: '[', hooks: [{
+        type: 'http',
+        url: 'http://127.0.0.1:8080/hook',
+        headers: { Authorization: 'Bearer ${TOKEN}' },
+        allowedEnvVars: ['TOKEN'],
+        timeout: 10,
+        once: true,
+      }] }],
+      Stop: [{ hooks: [{
+        type: 'prompt',
+        prompt: 'Evaluate $ARGUMENTS',
+        model: 'fast',
+        timeout: 30,
+      }] }],
+    },
+  } });
   try {
-    const installed = await fixture.install();
-    assert.equal(installed.code, 0, installed.stderr);
-    const settings = parseSettings(await readFile(fixture.configPath, "utf-8"));
-    const guard = managedHandler(
-      settings,
-      "PreToolUse",
-      fixture.guardScriptPath,
-    );
-    const audit = managedHandler(
-      settings,
-      "PostToolUse",
-      fixture.hookScriptPath,
-    );
-    const preInput = JSON.stringify({
-      session_id: "session-1",
-      transcript_path: "transcript.jsonl",
-      cwd: fixture.workspaceDir,
-      hook_event_name: "PreToolUse",
-      timestamp: "2026-07-19T00:00:00.000Z",
-      tool_name: "run_shell_command",
-      tool_input: { command: "echo test" },
-    });
-    const guardResult = await runHook(guard, preInput);
-    assert.equal(guardResult.code, 2, guardResult.stderr);
-    assert.match(guardResult.stderr, /Agent is frozen by Elydora/);
-    const postInput = preInput.replace("PreToolUse", "PostToolUse");
-    const auditResult = await runHook(audit, postInput);
-    assert.equal(auditResult.code, 0, auditResult.stderr);
-    assert.equal(await readFile(capturePath, "utf-8"), postInput);
-  } finally {
-    await fixture.close();
-    await rm(capturePath, { force: true });
-  }
-});
-
-test("Qwen status requires enabled hooks and complete runtimes", async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal((await fixture.install()).code, 0);
-    let status = JSON.parse((await runPlugin(fixture, "status", null)).stdout);
-    assert.equal(status.installed, true);
-    const settings = parseSettings(await readFile(fixture.configPath, "utf-8"));
-    await writeFile(
-      fixture.configPath,
-      `${JSON.stringify({ ...settings, disableAllHooks: true }, null, 2)}\n`,
-    );
-    status = JSON.parse((await runPlugin(fixture, "status", null)).stdout);
-    assert.equal(status.installed, false);
-    assert.equal(status.hookConfigured, false);
-    await writeFile(
-      fixture.configPath,
-      `${JSON.stringify({ ...settings, disableAllHooks: false }, null, 2)}\n`,
-    );
-    await rm(fixture.guardScriptPath);
-    status = JSON.parse((await runPlugin(fixture, "status", null)).stdout);
-    assert.equal(status.installed, false);
-    assert.equal(status.hookConfigured, true);
-    assert.equal(status.hookScriptExists, false);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test("Qwen uninstall removes exact ownership and preserves user hooks", async () => {
-  const fixture = await createFixture({
-    existingSettings: { $version: 4, owner: "user" },
-  });
-  try {
-    assert.equal((await fixture.install()).code, 0);
-    const settings = parseSettings(await readFile(fixture.configPath, "utf-8"));
-    const managed = settings.hooks.PreToolUse.at(-1);
-    managed.hooks.push({ type: "command", command: "user-command" });
-    settings.hooks.PreToolUse.push({
-      matcher: "*",
-      hooks: [
-        {
-          type: "command",
-          command: generatedCommand(
-            path.join(fixture.homeDir, ".elydora", "agent-10", "guard.js"),
-          ),
-          shell: expectedShell,
-          timeout: 10_000,
-        },
-      ],
-    });
-    await writeFile(
-      fixture.configPath,
-      `${JSON.stringify(settings, null, 2)}\n`,
-    );
-    const before = await readFile(fixture.configPath, "utf-8");
-    assert.equal(
-      (await runPlugin(fixture, "uninstall", "other-agent")).code,
-      0,
-    );
-    assert.equal(await readFile(fixture.configPath, "utf-8"), before);
-    const uninstallId = process.platform === "win32" ? "AGENT-1" : "agent-1";
-    const result = await runPlugin(fixture, "uninstall", uninstallId);
+    const result = await fixture.install();
     assert.equal(result.code, 0, result.stderr);
-    const remaining = parseSettings(
-      await readFile(fixture.configPath, "utf-8"),
-    );
-    assert.equal(remaining.$version, 4);
-    assert.equal(remaining.owner, "user");
-    assert.equal(remaining.hooks.PreToolUse.length, 2);
-    assert.equal(
-      remaining.hooks.PreToolUse[0].hooks[0].command,
-      "user-command",
-    );
-    assert.match(JSON.stringify(remaining), /agent-10/);
-    assert.equal(remaining.hooks.PostToolUse, undefined);
+    const settings = (await readSettings(fixture.settingsPath)).settings;
+    assert.deepEqual(settings.hooks.FutureEvent, [null]);
+    assert.equal(settings.hooks.MessageDisplay[0].matcher, '[');
+    assert.equal(settings.hooks.Stop[0].hooks[0].type, 'prompt');
   } finally {
     await fixture.close();
   }
 });
 
-test("Qwen removes an Elydora-owned settings file on uninstall", async () => {
-  const fixture = await createFixture();
-  try {
-    assert.equal((await fixture.install()).code, 0);
-    assert.match(
-      await readFile(fixture.configPath, "utf-8"),
-      /^\/\/ Managed by Elydora/,
-    );
-    const result = await runPlugin(fixture, "uninstall", "agent-1");
-    assert.equal(result.code, 0, result.stderr);
-    await assert.rejects(readFile(fixture.configPath), { code: "ENOENT" });
-  } finally {
-    await fixture.close();
-  }
-});
-
-test("Qwen rejects malformed settings before writes", async () => {
+test('Qwen rejects malformed affected settings before runtime writes', async (t) => {
   const cases = [
-    "{ malformed",
-    "[]",
-    '{ "owner": true, }',
-    '{ "hooks": {}, "hooks": {} }',
-    '{ "disableAllHooks": "yes" }',
-    '{ "hooks": [] }',
-    '{ "hooks": { "UnknownEvent": [] } }',
-    '{ "hooks": { "PreToolUse": null } }',
-    '{ "hooks": { "PreToolUse": [null] } }',
-    '{ "hooks": { "PreToolUse": [{ "matcher": "[", "hooks": [] }] } }',
-    '{ "hooks": { "PreToolUse": [{ "sequential": "yes", "hooks": [] }] } }',
-    '{ "hooks": { "PreToolUse": [{ "hooks": null }] } }',
-    '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "command" }] }] } }',
-    '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "http" }] }] } }',
-    '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "function", "command": "x" }] }] } }',
-    '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "command", "command": "x", "timeout": "ten" }] }] } }',
+    ['syntax', '{ malformed', /parse Qwen Code user settings/i],
+    ['root', '[]', /must contain a JSON object/i],
+    ['trailing comma', '{ "theme": true, }', /parse Qwen Code user settings/i],
+    ['duplicate', '{ "hooks": {}, "hooks": {} }', /duplicate field "hooks"/i],
+    ['disable', '{ "disableAllHooks": "yes" }', /disableAllHooks.*boolean/i],
+    ['hooks shape', '{ "hooks": [] }', /field "hooks" must be an object/i],
+    ['event shape', '{ "hooks": { "PreToolUse": null } }', /must be an array/i],
+    ['group shape', '{ "hooks": { "PreToolUse": [null] } }', /group.*must be an object/i],
+    ['matcher shape', '{ "hooks": { "PreToolUse": [{ "matcher": 1, "hooks": [] }] } }', /matcher must be a string/i],
+    ['matcher regex', '{ "hooks": { "PreToolUse": [{ "matcher": "[", "hooks": [] }] } }', /valid regular expression/i],
+    ['notification matcher', '{ "hooks": { "Notification": [{ "matcher": "[", "hooks": [] }] } }', /valid regular expression/i],
+    ['sequential', '{ "hooks": { "PreToolUse": [{ "sequential": 1, "hooks": [] }] } }', /sequential must be a boolean/i],
+    ['hooks missing', '{ "hooks": { "PreToolUse": [{}] } }', /must contain a hooks array/i],
+    ['handler shape', '{ "hooks": { "PreToolUse": [{ "hooks": [null] }] } }', /hooks\[0\].*object/i],
+    ['handler type', '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "function" }] }] } }', /unsupported type/i],
+    ['command', '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "command" }] }] } }', /non-empty command/i],
+    ['http', '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "http" }] }] } }', /non-empty url/i],
+    ['prompt', '{ "hooks": { "Stop": [{ "hooks": [{ "type": "prompt" }] }] } }', /non-empty prompt/i],
+    ['timeout', '{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "command", "command": "x", "timeout": -1 }] }] } }', /non-negative finite number/i],
+    ['trust', '{ "security": { "folderTrust": { "enabled": "yes" } } }', /folderTrust.enabled.*boolean/i],
   ];
-  for (const existingSettings of cases) {
-    const fixture = await createFixture({ existingSettings });
-    try {
-      const result = await fixture.install();
-      assert.equal(result.code, 1, `${existingSettings}\n${result.stderr}`);
-      assert.match(result.stderr, /Qwen (Code settings|hooks)/i);
-      assert.equal(
-        await readFile(fixture.configPath, "utf-8"),
-        existingSettings,
-      );
-      const names = await readdir(path.dirname(fixture.configPath));
-      assert.equal(
-        names.some((name) => name.endsWith(".tmp")),
-        false,
-      );
-    } finally {
-      await fixture.close();
-    }
+  for (const [name, settings, pattern] of cases) {
+    await t.test(name, async () => {
+      const fixture = await createFixture({ settings });
+      try {
+        const result = await fixture.install();
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, pattern);
+        assert.equal(await readFile(fixture.settingsPath, 'utf-8'), settings);
+        await assertMissing(fixture.agentDir);
+      } finally {
+        await fixture.close();
+      }
+    });
   }
 });
 
-test("Qwen fails on unreadable home env routing and missing runtimes", async () => {
-  const envFixture = await createFixture();
-  await mkdir(path.join(envFixture.homeDir, ".qwen", ".env"), {
-    recursive: true,
+test('Qwen surfaces malformed read-only sources and home routing', async () => {
+  const system = await createFixture();
+  const systemPath = path.join(system.rootDir, 'system.json');
+  await writeSettings(systemPath, '{ malformed');
+  try {
+    const result = await system.install({}, { QWEN_CODE_SYSTEM_SETTINGS_PATH: systemPath });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /parse Qwen Code system override settings/i);
+    assert.equal(await readFile(systemPath, 'utf-8'), '{ malformed');
+    await assertMissing(system.settingsPath);
+    await assertMissing(system.agentDir);
+  } finally {
+    await system.close();
+  }
+
+  const routing = await createFixture();
+  await mkdir(path.join(routing.homeDir, '.qwen', '.env'), { recursive: true });
+  try {
+    const result = await routing.install();
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /home environment.*physical file/i);
+    await assertMissing(routing.settingsPath);
+    await assertMissing(routing.agentDir);
+  } finally {
+    await routing.close();
+  }
+});
+
+test('Qwen transaction aborts when a read-only source changes after prepare', async () => {
+  const fixture = await createFixture();
+  const systemPath = path.join(fixture.rootDir, 'system.json');
+  const defaultsPath = path.join(fixture.rootDir, 'defaults.json');
+  await writeSettings(systemPath, { owner: 'before' });
+  const source = `
+    import { writeFile } from 'node:fs/promises';
+    import { readQwenSources } from ${JSON.stringify(sourcesModuleUrl)};
+    import { renderQwenDocument } from ${JSON.stringify(configModuleUrl)};
+    import {
+      AUDIT_HOOK_NAME,
+      GUARD_HOOK_NAME,
+      buildQwenGroup,
+    } from ${JSON.stringify(contractModuleUrl)};
+    import {
+      commitQwenInstallation,
+      preflightQwenInstallation,
+      prepareQwenInstallation,
+    } from ${JSON.stringify(installationModuleUrl)};
+    const config = JSON.parse(process.env.ELYDORA_TEST_CONFIG);
+    const sources = await readQwenSources();
+    const paths = await preflightQwenInstallation(config, sources);
+    const rendered = renderQwenDocument(sources.user, undefined, new Map([
+      ['PreToolUse', buildQwenGroup(paths.guardPath, GUARD_HOOK_NAME)],
+      ['PostToolUse', buildQwenGroup(paths.auditPath, AUDIT_HOOK_NAME)],
+      ['PostToolUseFailure', buildQwenGroup(paths.auditPath, AUDIT_HOOK_NAME)],
+    ]));
+    const prepared = await prepareQwenInstallation(config, sources, rendered);
+    await writeFile(process.env.ELYDORA_SYSTEM_PATH, '{"owner":"after"}\\n');
+    await commitQwenInstallation(prepared);
+  `;
+  try {
+    const result = await runNode(
+      ['--input-type=module', '--eval', source],
+      {
+        HOME: fixture.homeDir,
+        USERPROFILE: fixture.homeDir,
+        QWEN_HOME: '',
+        QWEN_RUNTIME_DIR: '',
+        QWEN_CODE_SYSTEM_SETTINGS_PATH: systemPath,
+        QWEN_CODE_SYSTEM_DEFAULTS_PATH: defaultsPath,
+        QWEN_CODE_TRUSTED_FOLDERS_PATH: path.join(fixture.rootDir, 'trusted.json'),
+        ELYDORA_SYSTEM_PATH: systemPath,
+        ELYDORA_TEST_CONFIG: JSON.stringify(installConfig(fixture)),
+      },
+      fixture.projectDir,
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /system override settings changed during Qwen Code installation/i);
+    assert.deepEqual(parseSettings(await readFile(systemPath, 'utf-8')), { owner: 'after' });
+    await assertMissing(fixture.settingsPath);
+    await assertMissing(fixture.guardScriptPath);
+    await assertMissing(fixture.hookScriptPath);
+    await assertMissing(path.join(fixture.agentDir, 'config.json'));
+    await assertMissing(path.join(fixture.agentDir, 'private.key'));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Qwen applies disableAllHooks precedence and workspace trust', async () => {
+  const defaults = await createFixture({ settings: { disableAllHooks: false } });
+  const defaultsPath = path.join(defaults.rootDir, 'defaults.json');
+  await writeSettings(defaultsPath, { disableAllHooks: true });
+  try {
+    assert.equal((await defaults.install({}, {
+      QWEN_CODE_SYSTEM_DEFAULTS_PATH: defaultsPath,
+    })).code, 0);
+  } finally {
+    await defaults.close();
+  }
+
+  const system = await createFixture();
+  const systemPath = path.join(system.rootDir, 'system.json');
+  await writeSettings(systemPath, { disableAllHooks: true });
+  try {
+    const result = await system.install({}, { QWEN_CODE_SYSTEM_SETTINGS_PATH: systemPath });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /disableAllHooks.*system override/i);
+    await assertMissing(system.agentDir);
+  } finally {
+    await system.close();
+  }
+
+  const untrusted = await createFixture({ settings: {
+    security: { folderTrust: { enabled: true } },
+  } });
+  await writeSettings(path.join(untrusted.projectDir, '.qwen', 'settings.json'), {
+    disableAllHooks: true,
+  });
+  await writeSettings(path.join(untrusted.homeDir, '.qwen', 'trustedFolders.json'), {
+    [untrusted.projectDir]: 'DO_NOT_TRUST',
   });
   try {
-    const result = await envFixture.install();
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /Qwen home environment/i);
-    await assert.rejects(readFile(envFixture.configPath), { code: "ENOENT" });
+    const result = await untrusted.install();
+    assert.equal(result.code, 0, result.stderr);
+    assertManagedTriple((await readSettings(untrusted.settingsPath)).settings);
   } finally {
-    await envFixture.close();
-  }
-
-  const runtimeFixture = await createFixture();
-  await rm(runtimeFixture.guardScriptPath);
-  try {
-    const result = await runtimeFixture.install();
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /runtime is missing/i);
-    await assert.rejects(readFile(runtimeFixture.configPath), {
-      code: "ENOENT",
-    });
-  } finally {
-    await runtimeFixture.close();
+    await untrusted.close();
   }
 });
 
-test("Qwen status surfaces malformed runtime metadata and leaves no staging files", async () => {
+test('Qwen migrates exact legacy handlers and preserves ownership lookalikes', async () => {
+  const fixture = await createFixture();
+  const lookalike = legacyGroup(fixture.guardScriptPath);
+  lookalike.hooks[0].timeout = 9_000;
+  await writeSettings(fixture.settingsPath, {
+    hooks: {
+      PreToolUse: [legacyGroup(fixture.guardScriptPath), lookalike],
+      PostToolUse: [legacyGroup(fixture.hookScriptPath)],
+    },
+  });
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    let settings = (await readSettings(fixture.settingsPath)).settings;
+    assertManagedTriple(settings);
+    assert(settings.hooks.PreToolUse.some((group) => group.hooks[0].timeout === 9_000));
+    settings.hooks.PreToolUse.at(-1).userField = 'preserve-group';
+    settings.hooks.PreToolUse.at(-1).hooks.push({ type: 'command', command: 'user-command' });
+    await writeSettings(fixture.settingsPath, settings);
+    const uninstall = await runPlugin(fixture, 'uninstall', 'agent-1');
+    assert.equal(uninstall.code, 0, uninstall.stderr);
+    settings = (await readSettings(fixture.settingsPath)).settings;
+    assert(settings.hooks.PreToolUse.some((group) => group.hooks[0].timeout === 9_000));
+    assert(settings.hooks.PreToolUse.some((group) => (
+      group.hooks.some((handler) => handler.command === 'user-command')
+    )));
+    assert.equal(settings.hooks.PostToolUse, undefined);
+    assert.equal(settings.hooks.PostToolUseFailure, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Qwen uninstall removes an owned file and preserves user settings', async () => {
+  const user = await createFixture({ settings: { theme: 'GitHub', hooks: { Notification: [] } } });
+  try {
+    assert.equal((await user.install()).code, 0);
+    assert.equal((await runPlugin(user, 'uninstall', 'agent-1')).code, 0);
+    assert.deepEqual((await readSettings(user.settingsPath)).settings, {
+      theme: 'GitHub',
+      hooks: { Notification: [] },
+    });
+  } finally {
+    await user.close();
+  }
+
+  const owned = await createFixture();
+  try {
+    assert.equal((await owned.install()).code, 0);
+    assert.match(await readFile(owned.settingsPath, 'utf-8'), /^\/\/ Managed by Elydora/);
+    assert.equal((await runPlugin(owned, 'uninstall', 'agent-1')).code, 0);
+    await assertMissing(owned.settingsPath);
+  } finally {
+    await owned.close();
+  }
+});
+
+test('Qwen status requires exact hooks and strict runtime identity', async () => {
   const fixture = await createFixture();
   try {
     assert.equal((await fixture.install()).code, 0);
-    assert.equal(
-      (await readdir(path.dirname(fixture.configPath))).some((name) =>
-        name.endsWith(".tmp"),
-      ),
-      false,
+    let status = JSON.parse((await runPlugin(fixture, 'status', null)).stdout);
+    assert.equal(status.installed, true);
+    const settings = (await readSettings(fixture.settingsPath)).settings;
+    settings.hooks.PostToolUseFailure.push(settings.hooks.PostToolUseFailure.at(-1));
+    await writeSettings(fixture.settingsPath, settings);
+    status = JSON.parse((await runPlugin(fixture, 'status', null)).stdout);
+    assert.equal(status.installed, false);
+    assert.equal((await fixture.install()).code, 0);
+    await writeFile(path.join(fixture.agentDir, 'private.key'), 'invalid');
+    const invalid = await runPlugin(fixture, 'status', null);
+    assert.equal(invalid.code, 1);
+    assert.match(invalid.stderr, /private key is invalid/i);
+    assert.equal((await fixture.install()).code, 0);
+    await writeFile(fixture.guardScriptPath, 'tampered');
+    status = JSON.parse((await runPlugin(fixture, 'status', null)).stdout);
+    assert.equal(status.installed, false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Qwen CLI completes install, status, and uninstall end to end', async () => {
+  const fixture = await createFixture();
+  const privateKeyFile = path.join(fixture.rootDir, 'install-private.key');
+  const tokenFile = path.join(fixture.rootDir, 'install-token.txt');
+  const environment = isolatedEnvironment(fixture);
+  try {
+    await writeFile(privateKeyFile, `${VALID_PRIVATE_KEY}\n`, { mode: 0o600 });
+    await writeFile(tokenFile, 'token-1\n', { mode: 0o600 });
+    const install = await runNode([
+      '--no-warnings', cliPath, 'install',
+      '--agent', 'qwen',
+      '--org_id', 'org-1',
+      '--agent_id', 'agent-1',
+      '--kid', 'kid-1',
+      '--private_key_file', privateKeyFile,
+      '--token_file', tokenFile,
+      '--base_url', fixture.baseUrl,
+    ], environment, fixture.projectDir);
+    assert.equal(install.code, 0, install.stderr);
+    assertManagedTriple((await readSettings(fixture.settingsPath)).settings);
+    const status = await runNode(
+      ['--no-warnings', cliPath, 'status'],
+      environment,
+      fixture.projectDir,
     );
-    await writeFile(path.join(fixture.agentDir, "config.json"), "{ malformed");
-    const status = await runPlugin(fixture, "status", null);
-    assert.equal(status.code, 1);
-    assert.match(status.stderr, /parse Elydora runtime config/i);
+    assert.equal(status.code, 0, status.stderr);
+    assert.match(status.stdout, /Qwen Code \(qwen\) \[installed\]/);
+    const uninstall = await runNode([
+      '--no-warnings', cliPath, 'uninstall',
+      '--agent', 'qwen',
+      '--agent_id', 'agent-1',
+    ], environment, fixture.projectDir);
+    assert.equal(uninstall.code, 0, uninstall.stderr);
+    await assertMissing(fixture.settingsPath);
+    await assertMissing(fixture.agentDir);
   } finally {
     await fixture.close();
   }

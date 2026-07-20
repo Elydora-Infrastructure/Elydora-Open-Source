@@ -1,49 +1,74 @@
-import type { AgentPlugin, InstallConfig, PluginStatus } from "./base.js";
+import type { AgentPlugin, InstallConfig, PluginStatus } from './base.js';
 import {
   AGENT_KEY,
-  buildGroup,
-  runtimeContracts,
+  AUDIT_HOOK_NAME,
+  GUARD_HOOK_NAME,
+  buildQwenGroup,
+  qwenRuntimeContracts,
+  type ManagedQwenEvent,
   type QwenGroup,
-  type ToolEvent,
-} from "./qwen-contract.js";
-import { renderDocument } from "./qwen-config.js";
+} from './qwen-contract.js';
+import { renderQwenDocument } from './qwen-config.js';
 import {
-  readDocument,
-  requireRuntime,
-  runtimeFilesExist,
-  writeDocument,
-} from "./qwen-io.js";
-import { SUPPORTED_AGENTS } from "./registry.js";
+  commitQwenInstallation,
+  commitQwenUninstall,
+  preflightQwenInstallation,
+  prepareQwenInstallation,
+  prepareQwenUninstall,
+} from './qwen-installation.js';
+import { qwenRuntimeFilesExist } from './qwen-io.js';
+import { readQwenSources } from './qwen-sources.js';
+import { SUPPORTED_AGENTS } from './registry.js';
 
 const entry = SUPPORTED_AGENTS.get(AGENT_KEY)!;
 
+function installedGroups(guardPath: string, auditPath: string): ReadonlyMap<
+  ManagedQwenEvent,
+  QwenGroup
+> {
+  return new Map([
+    ['PreToolUse', buildQwenGroup(guardPath, GUARD_HOOK_NAME)],
+    ['PostToolUse', buildQwenGroup(auditPath, AUDIT_HOOK_NAME)],
+    ['PostToolUseFailure', buildQwenGroup(auditPath, AUDIT_HOOK_NAME)],
+  ]);
+}
+
 export const qwenPlugin: AgentPlugin = {
+  managesRuntime: true,
+
+  async preflightInstall(config: InstallConfig): Promise<void> {
+    const sources = await readQwenSources();
+    await preflightQwenInstallation(config, sources);
+  },
+
   async install(config: InstallConfig): Promise<void> {
-    if (!config.agentId) throw new Error("agentId is required");
-    const document = await readDocument();
-    await requireRuntime(config.guardScriptPath, "Elydora guard runtime");
-    await requireRuntime(config.hookScriptPath, "Elydora audit runtime");
-    const additions = new Map<ToolEvent, QwenGroup>([
-      ["PreToolUse", buildGroup(config.guardScriptPath)],
-      ["PostToolUse", buildGroup(config.hookScriptPath)],
-    ]);
-    await writeDocument(renderDocument(document, undefined, additions));
-    console.log(`  Qwen Code: user hooks installed at ${document.filePath}`);
-    console.log("  Qwen Code: run /hooks to review the Elydora hook changes.");
+    const sources = await readQwenSources();
+    const paths = await preflightQwenInstallation(config, sources);
+    const rendered = renderQwenDocument(
+      sources.user,
+      undefined,
+      installedGroups(paths.guardPath, paths.auditPath),
+    );
+    await commitQwenInstallation(
+      await prepareQwenInstallation(config, sources, rendered),
+    );
+    console.log(`  Qwen Code hooks: ${sources.user.filePath}`);
+    console.log('  Qwen Code verification: run /hooks.');
   },
 
   async uninstall(agentId?: string): Promise<void> {
-    const document = await readDocument();
-    if (!document.exists) return;
-    await writeDocument(renderDocument(document, agentId, new Map()));
+    const sources = await readQwenSources();
+    const rendered = renderQwenDocument(sources.user, agentId, new Map());
+    if (!rendered.changed) return;
+    await commitQwenUninstall(await prepareQwenUninstall(sources, rendered));
   },
 
   async status(): Promise<PluginStatus> {
-    const document = await readDocument();
-    const contracts = runtimeContracts(document.hooks);
-    const hookConfigured = !document.hooksDisabled && contracts.length > 0;
+    const sources = await readQwenSources();
+    const contracts = qwenRuntimeContracts(sources.user.hooks);
+    const hookConfigured = !sources.disableControl.disabled && contracts.length > 0;
     const hookScriptExists = hookConfigured
-      ? await runtimeFilesExist(contracts)
+      ? await qwenRuntimeFilesExist(contracts)
       : false;
     return {
       installed: hookConfigured && hookScriptExists,
@@ -51,7 +76,7 @@ export const qwenPlugin: AgentPlugin = {
       displayName: entry.name,
       hookConfigured,
       hookScriptExists,
-      configPath: document.filePath,
+      configPath: sources.user.filePath,
     };
   },
 };
