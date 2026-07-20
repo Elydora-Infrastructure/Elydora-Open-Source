@@ -33,8 +33,7 @@ export async function preflightCodexInstallation(
 ): Promise<CodexRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
-    hooksDirectoryLabel: HOOKS_DIRECTORY_LABEL,
-    hooksPath,
+    hookLocations: [{ directoryLabel: HOOKS_DIRECTORY_LABEL, filePath: hooksPath }],
     config,
   }, GUARD_SCRIPT, AUDIT_SCRIPT);
 }
@@ -51,11 +50,13 @@ export async function prepareCodexInstallation(
   return prepareManagedInstallation({
     agentKey: AGENT_KEY,
     displayName: DISPLAY_NAME,
-    hooksDirectoryLabel: HOOKS_DIRECTORY_LABEL,
-    hooksLabel: HOOKS_LABEL,
-    hooksPath: rendered.document.filePath,
-    expectedHooksSource: rendered.document.raw,
-    hooksSource,
+    hookSources: [{
+      directoryLabel: HOOKS_DIRECTORY_LABEL,
+      label: HOOKS_LABEL,
+      filePath: rendered.document.filePath,
+      expectedSource: rendered.document.raw,
+      source: hooksSource,
+    }],
     config,
     auditOptions: { nativePayload: true },
   }, GUARD_SCRIPT, AUDIT_SCRIPT);
