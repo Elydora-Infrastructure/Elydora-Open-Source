@@ -57,6 +57,19 @@ test('Grok installs an exact managed triple and preserves valid user hooks', asy
         hooks: [{ type: 'http', url: 'https://example.test/hook', timeout: 0 }],
         label: 'keep group metadata',
       }],
+      SessionEnd: [{
+        hooks: [{ type: 'command', command: 'session-end-command' }],
+      }],
+      Stop: [{
+        hooks: [{ type: 'command', command: 'stop-command' }],
+      }],
+      UserPromptSubmit: [{
+        hooks: [{ type: 'command', command: 'prompt-command' }],
+      }],
+      Notification: [{
+        matcher: 'permission_prompt|idle_prompt',
+        hooks: [{ type: 'command', command: 'notification-command' }],
+      }],
       PreToolUse: [{
         matcher: 'Bash|run_terminal_command',
         hooks: [{ type: 'command', command: 'existing-command', timeout: 5 }],
@@ -72,6 +85,13 @@ test('Grok installs an exact managed triple and preserves valid user hooks', asy
     const firstDocument = await readGrokConfig(fixture.configPath);
     assert.equal(firstDocument.config.schemaVersion, 1);
     assert.deepEqual(firstDocument.config.hooks.SessionStart, existing.hooks.SessionStart);
+    assert.deepEqual(firstDocument.config.hooks.SessionEnd, existing.hooks.SessionEnd);
+    assert.deepEqual(firstDocument.config.hooks.Stop, existing.hooks.Stop);
+    assert.deepEqual(
+      firstDocument.config.hooks.UserPromptSubmit,
+      existing.hooks.UserPromptSubmit,
+    );
+    assert.deepEqual(firstDocument.config.hooks.Notification, existing.hooks.Notification);
     assert.deepEqual(firstDocument.config.hooks.PreToolUse[0], existing.hooks.PreToolUse[0]);
     assert.equal(firstDocument.config.hooks.PreToolUse.length, 2);
     assertManagedTriple(firstDocument.config);
@@ -87,14 +107,18 @@ test('Grok installs an exact managed triple and preserves valid user hooks', asy
   }
 });
 
-test('empty GROK_HOME resolves to the documented default', async () => {
+test('missing GROK_HOME uses the default and an empty override fails safely', async () => {
   const fixture = await createFixture({ explicitGrokHome: false });
   try {
     assert.equal((await fixture.install()).code, 0);
     fixture.grokHomeOverride = '';
     const status = await runPlugin(fixture, 'status', null);
-    assert.equal(status.code, 0, status.stderr);
-    assert.equal(JSON.parse(status.stdout).installed, true);
+    assert.equal(status.code, 1);
+    assert.match(status.stderr, /GROK_HOME is empty.*unset.*absolute home/i);
+    const install = await fixture.install();
+    assert.equal(install.code, 1);
+    assert.match(install.stderr, /GROK_HOME is empty.*unset.*absolute home/i);
+    await assertMissing(path.join(fixture.projectDir, 'hooks', 'elydora-audit.json'));
   } finally {
     await fixture.close();
   }
@@ -113,6 +137,25 @@ test('Grok parses the hook file before creating runtime files', async () => {
   }
 });
 
+test('Grok preserves an official null handler environment', async () => {
+  const existing = {
+    hooks: {
+      PreToolUse: [{
+        hooks: [{ type: 'command', command: 'existing-command', env: null }],
+      }],
+    },
+  };
+  const fixture = await createFixture({ config: JSON.stringify(existing) });
+  try {
+    const result = await fixture.install();
+    assert.equal(result.code, 0, result.stderr);
+    const { config } = await readGrokConfig(fixture.configPath);
+    assert.deepEqual(config.hooks.PreToolUse[0], existing.hooks.PreToolUse[0]);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('Grok rejects inactive native hook shapes before writes', async (t) => {
   const cases = [
     ['duplicate field', '{"hooks":{},"hooks":{}}', /duplicate field "hooks"/i],
@@ -120,7 +163,10 @@ test('Grok rejects inactive native hook shapes before writes', async (t) => {
     ['event shape', JSON.stringify({ hooks: { PreToolUse: null } }), /must be an array/i],
     ['group shape', JSON.stringify({ hooks: { PreToolUse: [null] } }), /group.*must be an object/i],
     ['matcher shape', JSON.stringify({ hooks: { PreToolUse: [{ matcher: 1, hooks: [] }] } }), /matcher must be a string/i],
-    ['lifecycle matcher', JSON.stringify({ hooks: { SessionStart: [{ matcher: 'x', hooks: [] }] } }), /cannot declare a matcher/i],
+    ['SessionStart matcher', JSON.stringify({ hooks: { SessionStart: [{ matcher: 'startup', hooks: [] }] } }), /cannot declare a matcher/i],
+    ['SessionEnd matcher', JSON.stringify({ hooks: { SessionEnd: [{ matcher: 'logout', hooks: [] }] } }), /cannot declare a matcher/i],
+    ['Stop matcher', JSON.stringify({ hooks: { Stop: [{ matcher: 'ignored', hooks: [] }] } }), /cannot declare a matcher/i],
+    ['UserPromptSubmit matcher', JSON.stringify({ hooks: { UserPromptSubmit: [{ matcher: 'ignored', hooks: [] }] } }), /cannot declare a matcher/i],
     ['handler shape', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [null] }] } }), /handler.*must be an object/i],
     ['handler type', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'file' }] }] } }), /unsupported type/i],
     ['command value', JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: '' }] }] } }), /non-empty command/i],

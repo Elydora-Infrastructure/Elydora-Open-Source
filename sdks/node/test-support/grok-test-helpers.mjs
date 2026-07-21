@@ -16,14 +16,15 @@ export const installationModuleUrl = pathToFileURL(
 ).href;
 export const cliPath = path.resolve('dist/cli.js');
 
-export function runNode(args, env, cwd, input = '', unset = []) {
+export function runProcess(command, args, env, cwd, input = '', unset = []) {
   return new Promise((resolve, reject) => {
     const childEnv = { ...process.env, ...env };
     for (const key of unset) delete childEnv[key];
-    const child = spawn(process.execPath, args, {
+    const child = spawn(command, args, {
       cwd,
       env: childEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     let stdout = '';
     let stderr = '';
@@ -33,6 +34,10 @@ export function runNode(args, env, cwd, input = '', unset = []) {
     child.once('close', (code) => resolve({ code, stdout, stderr }));
     child.stdin.end(input);
   });
+}
+
+export function runNode(args, env, cwd, input = '', unset = []) {
+  return runProcess(process.execPath, args, env, cwd, input, unset);
 }
 
 export function runGrokHook(command, input, fixture, environment = {}) {

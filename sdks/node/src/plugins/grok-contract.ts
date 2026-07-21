@@ -25,6 +25,7 @@ export interface GrokHandler extends JsonObject {
   readonly command?: string;
   readonly url?: string;
   readonly timeout?: number;
+  readonly env?: Record<string, string> | null;
 }
 
 export interface GrokGroup extends JsonObject {
@@ -79,7 +80,7 @@ function validateHandler(
     throw new Error(`${label} requires a non-empty url`);
   }
   validateTimeout(value.timeout, label);
-  if (value.env !== undefined) {
+  if (value.env !== undefined && value.env !== null) {
     if (!isObject(value.env)
       || Object.values(value.env).some((item) => typeof item !== 'string')) {
       throw new Error(`${label} env must map names to strings`);

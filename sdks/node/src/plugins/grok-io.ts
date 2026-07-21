@@ -15,7 +15,12 @@ const CONFIG_FILE = 'elydora-audit.json';
 
 export function grokConfigPath(): string {
   const configured = process.env.GROK_HOME;
-  const grokHome = configured === undefined || configured === ''
+  if (configured === '') {
+    throw new Error(
+      'GROK_HOME is empty; unset GROK_HOME or set it to an absolute home directory',
+    );
+  }
+  const grokHome = configured === undefined
     ? path.join(os.homedir(), '.grok')
     : path.resolve(configured);
   return path.join(grokHome, 'hooks', CONFIG_FILE);
