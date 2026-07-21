@@ -1,7 +1,7 @@
 {
   "$schema": "./catalog.schema.json",
   "schema_version": 1,
-  "verified_on": "2026-07-19",
+  "verified_on": "2026-07-21",
   "providers": [
     {
       "id": "augment",
@@ -297,10 +297,7 @@
       "event_fields": {
         "name": "toolName",
         "input": "toolInput",
-        "session": "sessionId",
-        "call_id": "toolUseId",
-        "output": "toolResult",
-        "error": "toolResult"
+        "session": "sessionId"
       },
       "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
@@ -424,11 +421,15 @@
         ".letta/settings.json",
         ".letta/settings.local.json"
       ],
-      "events": { "before_tool": "PreToolUse", "after_tool": "PostToolUse" },
+      "events": {
+        "before_tool": "PreToolUse",
+        "after_tool": "PostToolUse",
+        "after_tool_failure": "PostToolUseFailure"
+      },
       "blocking": { "mechanism": "exit_code_2", "failure_mode": "fail_open" },
       "adapters": { "node": true, "python": true, "go": true },
       "delivery_state": "available",
-      "source_url": "https://docs.letta.com/letta-agent/hooks"
+      "source_url": "https://docs.letta.com/reference/deprecated/hooks"
     },
     {
       "id": "opencode",

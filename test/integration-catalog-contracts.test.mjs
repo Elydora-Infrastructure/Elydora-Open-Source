@@ -335,13 +335,13 @@ test('high-drift providers retain their verified hook contracts', async () => {
       source_url: 'https://moonshotai.github.io/kimi-cli/en/customization/hooks.html',
     },
   ]);
+  // xAI documents the stdin payload non-exhaustively: only hookEventName,
+  // sessionId, cwd, workspaceRoot, toolName, and toolInput are published.
+  // Undocumented field names must not be asserted as provider facts.
   assert.deepEqual(providers.get('grok').event_fields, {
     name: 'toolName',
     input: 'toolInput',
     session: 'sessionId',
-    call_id: 'toolUseId',
-    output: 'toolResult',
-    error: 'toolResult',
   });
   assert.deepEqual(providers.get('grok').config_paths, [
     '$GROK_HOME/hooks/*.json',
