@@ -201,20 +201,10 @@ export async function submitOperation(
   });
 
   // ------------------------------------------------------------------
-  // Step 10: Enqueue for async processing
+  // Step 10: Reserve the queue message ID; the send follows the commit
   // ------------------------------------------------------------------
-  const queueMessageResult = await queue.send({
-    type: 'operation',
-    operation_id: eor.operation_id,
-    org_id: eor.org_id,
-    agent_id: eor.agent_id,
-  });
-
-  // D1 batch insert: operation + receipt
+  const queueMessageId = generateUUIDv7();
   const receiptId = generateUUIDv7();
-  const queueMessageId = typeof queueMessageResult === 'object' && queueMessageResult !== null
-    ? String((queueMessageResult as Record<string, unknown>).messageId ?? receiptId)
-    : receiptId;
 
   // ------------------------------------------------------------------
   // Step 11: Generate EAR receipt
@@ -291,9 +281,43 @@ export async function submitOperation(
       .bind(receiptId, eor.operation_id, r2ReceiptKey, receivedAt),
   );
 
-  await db.batch(statements);
+  try {
+    await db.batch(statements);
+  } catch (error) {
+    if (!isSeqNoConflict(error)) throw error;
+    const winner = await db
+      .prepare('SELECT chain_hash FROM operations WHERE agent_id = ? ORDER BY seq_no DESC LIMIT 1')
+      .bind(eor.agent_id)
+      .first<{ chain_hash: string }>();
+    if (!winner) throw new Error('seq_no conflict without a stored operation.');
+    throw new AppError(400, 'PREV_HASH_MISMATCH', {
+      key: 'operation.prevHashMismatch',
+      params: { expected: winner.chain_hash, actual: eor.prev_chain_hash },
+    });
+  }
+
+  try {
+    await queue.send(queueMessageId, {
+      type: 'operation',
+      operation_id: eor.operation_id,
+      org_id: eor.org_id,
+      agent_id: eor.agent_id,
+    });
+  } catch (error) {
+    console.error('operation.enqueue_failed', {
+      operation_id: eor.operation_id,
+      queue_message_id: queueMessageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   return { receipt: ear };
+}
+
+function isSeqNoConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { code, constraint } = error as { code?: unknown; constraint?: unknown };
+  return code === '23505' && constraint === 'operations_agent_id_seq_no_key';
 }
 
 // ---------------------------------------------------------------------------

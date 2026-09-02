@@ -99,7 +99,7 @@ export async function createExport(
     .run();
 
   // Enqueue the export job
-  await queue.send({
+  await queue.send(generateUUIDv7(), {
     type: 'export',
     export_id: exportId,
     org_id: orgId,

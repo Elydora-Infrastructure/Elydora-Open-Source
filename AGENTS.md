@@ -56,6 +56,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Keep production source files at or below 500 lines.
 - Keep functions focused on one ownership boundary.
 - Propagate unexpected errors to the CLI or request boundary.
+- Commit the operation and receipt before enqueueing. Log a failed enqueue as `operation.enqueue_failed` and still return the receipt; answer a `UNIQUE(agent_id, seq_no)` conflict with `PREV_HASH_MISMATCH` carrying the stored chain hash.
 - Keep technical claims executable through tests or generated validation.
 - Keep the mirrored Python package, distribution, and CLI version in `sdks/python/elydora/_version.py`; Setuptools metadata must read that literal dynamically.
 - Ship `sdks/python/elydora/py.typed` in every mirrored wheel and verify public annotations from an installed-wheel consumer.

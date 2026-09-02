@@ -9,7 +9,6 @@
 import { Queue as BullQueue } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';
 import type { MessageQueue } from './interfaces.js';
-import { generateUUIDv7 } from '../utils/uuid.js';
 
 export const QUEUE_NAME = 'elydora-queue';
 
@@ -20,14 +19,14 @@ export class BullMQAdapter implements MessageQueue {
     this.queue = new BullQueue(QUEUE_NAME, { connection });
   }
 
-  async send(body: unknown): Promise<{ messageId: string }> {
-    const job = await this.queue.add('message', body as Record<string, unknown>, {
+  async send(messageId: string, body: unknown): Promise<void> {
+    await this.queue.add('message', body as Record<string, unknown>, {
+      jobId: messageId,
       attempts: 3,
       backoff: { type: 'exponential', delay: 1000 },
       removeOnComplete: { count: 100 },
       removeOnFail: { count: 500 },
     });
-    return { messageId: job.id ?? generateUUIDv7() };
   }
 
   async close(): Promise<void> {

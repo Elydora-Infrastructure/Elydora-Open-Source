@@ -12,6 +12,7 @@ import { RedisCacheAdapter } from './adapters/redis-cache.js';
 import { BullMQAdapter } from './adapters/bullmq.js';
 import { createEpoch } from './services/epoch-service.js';
 import { DEFAULT_EPOCH_INTERVAL_MS } from './shared/index.js';
+import { generateUUIDv7 } from './utils/uuid.js';
 
 // ---------------------------------------------------------------------------
 // Initialize adapters
@@ -65,7 +66,7 @@ async function runEpochCreation(): Promise<void> {
 
       if (epoch) {
         try {
-          await queue.send({
+          await queue.send(generateUUIDv7(), {
             type: 'tsa',
             epoch_id: epoch.epoch_id,
             org_id: epoch.org_id,

@@ -117,6 +117,6 @@ export interface Cache {
  * Mirrors the subset of Cloudflare Queue methods used by Elydora services.
  */
 export interface MessageQueue {
-  /** Enqueue a message. Returns the assigned message ID. */
-  send(body: unknown): Promise<{ messageId: string }>;
+  /** Enqueue a message under the caller's durable message ID. */
+  send(messageId: string, body: unknown): Promise<void>;
 }
