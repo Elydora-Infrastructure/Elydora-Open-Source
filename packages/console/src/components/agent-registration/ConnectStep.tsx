@@ -7,7 +7,9 @@ import type { IntegrationCatalogItem } from '@/features/agent-registration/integ
 import {
   buildInstallInstructions,
   SDK_LANGUAGES,
+  SHELLS,
   type SdkLanguage,
+  type Shell,
 } from '@/features/agent-registration/install-instructions';
 import CopyControl from './CopyControl';
 
@@ -28,6 +30,7 @@ export default function ConnectStep({
 }: ConnectStepProps) {
   const { t } = useTranslation();
   const [language, setLanguage] = useState<SdkLanguage>('node');
+  const [shell, setShell] = useState<Shell>('posix');
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
   const instructions = useMemo(
     () => buildInstallInstructions(language, {
@@ -38,9 +41,12 @@ export default function ConnectStep({
         orgId: credentials.orgId,
       },
       baseUrl,
-    }),
-    [baseUrl, credentials.agentId, credentials.kid, credentials.orgId, integration, language],
+      privateKey: credentials.privateKey,
+      token,
+    }, shell),
+    [baseUrl, credentials, integration, language, shell, token],
   );
+  const PostInstallList = instructions.postInstall?.kind === 'alternatives' ? 'ul' : 'ol';
 
   return (
     <div className="space-y-5">
@@ -66,10 +72,29 @@ export default function ConnectStep({
         ))}
       </div>
 
+      {integration.mode === 'hooks' && (
+        <div className="flex border-b border-border" role="tablist" aria-label={t('agentRegistration.shell')}>
+          {SHELLS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              role="tab"
+              aria-selected={shell === item}
+              onClick={() => setShell(item)}
+              className={`px-4 py-2 font-mono text-[10px] tracking-wider border-b-2 -mb-px ${
+                shell === item ? 'border-ink text-ink' : 'border-transparent text-ink-dim hover:text-ink'
+              }`}
+            >
+              {item === 'posix' ? 'sh' : 'PowerShell'}
+            </button>
+          ))}
+        </div>
+      )}
+
       <section aria-labelledby="setup-command-label">
         <div className="flex items-center justify-between mb-2">
           <h3 id="setup-command-label" className="section-label">
-            {integration.mode === 'adapter' ? t('agentRegistration.install') : t('agentRegistration.configure')}
+            {integration.mode === 'hooks' ? t('agentRegistration.install') : t('agentRegistration.configure')}
           </h3>
           <CopyControl
             value={instructions.setup}
@@ -138,14 +163,35 @@ export default function ConnectStep({
       )}
 
       {instructions.postInstall && (
-        <ol className="border-t border-border" aria-label={t('agentRegistration.postInstall')}>
-          {instructions.postInstall.map((step, index) => (
-            <li key={step} className="grid grid-cols-[2rem_1fr] gap-2 py-2 border-b border-border font-mono text-[11px] text-ink">
-              <span className="text-ink-dim tabular-nums">{index + 1}</span>
-              <span>{step}</span>
+        <PostInstallList className="border-t border-border" aria-label={t('agentRegistration.postInstall')}>
+          {instructions.postInstall.steps.map((step, index) => (
+            <li
+              key={`${step.key}:${step.command ?? ''}`}
+              className="group grid grid-cols-[2rem_minmax(0,1fr)_auto] items-start gap-2 border-b border-border py-2 font-mono text-[11px] text-ink"
+            >
+              <span className="text-ink-dim tabular-nums">
+                {step.variant ?? String(index + 1).padStart(2, '0')}
+              </span>
+              <span className="min-w-0">
+                <span className="block">
+                  {t(`agentRegistration.postInstallSteps.${step.key}`, {
+                    integration: integration.name,
+                  })}
+                </span>
+                {step.command && (
+                  <code className="mt-1 block break-all text-ink-dim">{step.command}</code>
+                )}
+              </span>
+              {step.command && (
+                <CopyControl
+                  value={step.command}
+                  ariaLabel={t('agentRegistration.copyPostInstall', { command: step.command })}
+                  className="opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                />
+              )}
             </li>
           ))}
-        </ol>
+        </PostInstallList>
       )}
 
       <div className="flex items-center justify-between pt-2">

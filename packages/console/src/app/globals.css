@@ -353,3 +353,21 @@ body {
 .check-fail {
   color: #dc2626;
 }
+
+/* Focus-visible styles for keyboard navigation (WCAG 2.1 AA) */
+:focus-visible {
+  outline: 2px solid var(--ink-color);
+  outline-offset: 2px;
+}
+
+.btn-brutalist:focus-visible,
+.btn-ghost:focus-visible {
+  outline: 2px solid var(--bg-color);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--ink-color);
+}
+
+.sidebar-nav-item:focus-visible {
+  outline: 2px solid #EAEAE5;
+  outline-offset: -2px;
+}

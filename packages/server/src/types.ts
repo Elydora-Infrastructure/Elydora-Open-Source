@@ -62,6 +62,9 @@ export interface AppVariables {
   /** Actor identifier extracted from the verified session */
   actor: string;
 
+  /** Credential kind that authenticated the request */
+  auth_token_type: 'api' | 'session';
+
   /** Detected language from Accept-Language header (set by i18n middleware) */
   lang: import('./i18n/messages.js').Lang;
 }

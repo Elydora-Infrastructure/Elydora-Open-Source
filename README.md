@@ -259,13 +259,13 @@ Return the current session and user profile. Requires a valid session token or c
 
 #### `POST /v1/auth/token`
 
-Issue a long-lived API token.
+Issue an opaque API token for SDK and hook use. Requires a Better Auth session; the token is returned once and only its SHA-256 hash is stored.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `ttl_seconds` | integer \| null | no | Token lifetime in seconds. `null` for non-expiring. |
+| `ttl_seconds` | integer \| null | no | Token lifetime in seconds, from 1 to 31536000. `null` or omitted for non-expiring. |
 
-**Response:** `{ "token": "<api-token>", "expires_at": <ms> | null }`
+**Response:** `{ "token": "<api-token>", "expires_at": <unix seconds> | null }`
 
 ---
 

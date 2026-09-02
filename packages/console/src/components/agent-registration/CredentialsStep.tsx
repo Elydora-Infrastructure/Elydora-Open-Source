@@ -35,6 +35,7 @@ function CredentialRow({ label, value }: { readonly label: string; readonly valu
     </div>
   );
 }
+
 export default function CredentialsStep({
   credentials,
   token,
@@ -44,7 +45,7 @@ export default function CredentialsStep({
   onContinue,
 }: CredentialsStepProps) {
   const { t } = useTranslation();
-  const [expiration, setExpiration] = useState<ExpirationId>('24hours');
+  const [expiration, setExpiration] = useState<ExpirationId>('neverExpire');
   const [customDays, setCustomDays] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 

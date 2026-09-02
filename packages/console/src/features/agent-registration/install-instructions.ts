@@ -1,8 +1,10 @@
-import type { IntegrationCatalogItem } from './integrations';
+import type { IntegrationCatalogItem, PostInstallPlan } from './integrations';
 
 export const SDK_LANGUAGES = ['node', 'python', 'go'] as const;
 export type SdkLanguage = (typeof SDK_LANGUAGES)[number];
-type SecretDelivery = 'hidden-prompts' | 'environment';
+export const SHELLS = ['posix', 'powershell'] as const;
+export type Shell = (typeof SHELLS)[number];
+type SecretDelivery = 'embedded' | 'environment';
 
 interface AgentInstallIdentity {
   readonly agentId: string;
@@ -14,13 +16,15 @@ interface InstructionInput {
   readonly integration: IntegrationCatalogItem;
   readonly identity: AgentInstallIdentity;
   readonly baseUrl: string;
+  readonly privateKey: string;
+  readonly token: string;
 }
 
 export interface InstallInstructions {
   readonly setup: string;
   readonly usage?: string;
   readonly verify?: string;
-  readonly postInstall?: readonly string[];
+  readonly postInstall?: PostInstallPlan;
   readonly secretDelivery: SecretDelivery;
 }
 
@@ -31,42 +35,97 @@ function shellQuoted(value: string, label: string): string {
   return `'${value}'`;
 }
 
-function adapterCommand(
+const INSTALLER: Record<SdkLanguage, string> = {
+  node: 'npx @elydora/sdk install',
+  python: 'elydora install',
+  go: 'elydora install',
+};
+const BOOTSTRAP: Partial<Record<SdkLanguage, string>> = {
+  python: 'python -m pip install elydora',
+  go: 'go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2/cmd/elydora@latest',
+};
+
+interface CommandValues {
+  readonly agent: string;
+  readonly orgId: string;
+  readonly agentId: string;
+  readonly kid: string;
+  readonly baseUrl: string;
+}
+
+function credentialFileStem(agentId: string): string {
+  if (!/^[A-Za-z0-9._-]+$/u.test(agentId)) {
+    throw new Error('Agent ID cannot be used as a credential file name.');
+  }
+  return `.elydora-${agentId}`;
+}
+
+function installArguments(
   language: SdkLanguage,
-  { integration, identity, baseUrl }: InstructionInput,
+  values: CommandValues,
+  keyFile: string,
+  tokenFile: string,
 ): string {
-  const values = {
+  if (language === 'go') {
+    return `--agent ${values.agent} --org-id ${values.orgId} --agent-id ${values.agentId} --kid ${values.kid} --base-url ${values.baseUrl} --private-key-file ${keyFile} --token-file ${tokenFile}`;
+  }
+  return `--agent ${values.agent} --org_id ${values.orgId} --agent_id ${values.agentId} --kid ${values.kid} --base_url ${values.baseUrl} --private_key_file ${keyFile} --token_file ${tokenFile}`;
+}
+
+function posixInstall(
+  language: SdkLanguage,
+  values: CommandValues,
+  stem: string,
+  privateKey: string,
+  token: string,
+): string {
+  const template = `"$HOME/${stem}.XXXXXX"`;
+  const script = [
+    `k=$(mktemp ${template})`,
+    `trap 'rm -f "$k"' EXIT INT TERM`,
+    `t=$(mktemp ${template})`,
+    `trap 'rm -f "$k" "$t"' EXIT INT TERM`,
+    `printf '%s\\n' ${shellQuoted(privateKey, 'Private key')} > "$k"`,
+    `printf '%s\\n' ${shellQuoted(token, 'API token')} > "$t"`,
+    `${INSTALLER[language]} ${installArguments(language, values, '"$k"', '"$t"')}`,
+  ].join(' && ');
+  return `printf '%s' '${script.replace(/'/gu, "'\\''")}' | sh`;
+}
+
+function powershellInstall(
+  language: SdkLanguage,
+  values: CommandValues,
+  stem: string,
+  privateKey: string,
+  token: string,
+): string {
+  const paths = `$k = Join-Path $HOME '${stem}.key'; $t = Join-Path $HOME '${stem}.token'`;
+  const create = 'New-Item -ItemType File -Force -Path $k, $t | Out-Null';
+  const protect = 'if ($IsLinux -or $IsMacOS) { chmod 600 $k $t; if ($LASTEXITCODE -ne 0) { throw "chmod failed" } } else { $u = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; foreach ($f in $k, $t) { icacls $f /inheritance:r /grant:r "*$($u):F" | Out-Null; if ($LASTEXITCODE -ne 0) { throw "icacls failed for $f" } } }';
+  const store = `Set-Content -LiteralPath $k -Value ${shellQuoted(privateKey, 'Private key')}; Set-Content -LiteralPath $t -Value ${shellQuoted(token, 'API token')}`;
+  const install = `${INSTALLER[language]} ${installArguments(language, values, '$k', '$t')}`;
+  const status = 'if ($LASTEXITCODE -ne 0) { throw "elydora install exited with code $LASTEXITCODE" }';
+  return `${paths}; try { ${create}; ${protect}; ${store}; ${install}; ${status} } finally { Remove-Item -LiteralPath $k, $t -Force -ErrorAction SilentlyContinue }`;
+}
+
+function hookInstallerCommand(
+  language: SdkLanguage,
+  { integration, identity, baseUrl, privateKey, token }: InstructionInput,
+  shell: Shell,
+): string {
+  const values: CommandValues = {
     agent: integration.id,
     orgId: shellQuoted(identity.orgId, 'Organization ID'),
     agentId: shellQuoted(identity.agentId, 'Agent ID'),
     kid: shellQuoted(identity.kid, 'Key ID'),
     baseUrl: shellQuoted(baseUrl, 'API base URL'),
   };
-
-  if (language === 'go') {
-    return [
-      'go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest',
-      `elydora install --agent ${values.agent} --org-id ${values.orgId} --agent-id ${values.agentId} --kid ${values.kid} --base-url ${values.baseUrl}`,
-    ].join('\n');
-  }
-
-  const executable = language === 'node'
-    ? 'npx @elydora/sdk install'
-    : 'python -m pip install elydora\nelydora install';
-  return `${executable} --agent ${values.agent} --org_id ${values.orgId} --agent_id ${values.agentId} --kid ${values.kid} --base_url ${values.baseUrl}`;
-}
-
-function postInstallSteps(integration: IntegrationCatalogItem): readonly string[] | undefined {
-  if (integration.postInstall === 'review-hooks') {
-    return ['Open the agent and run /hooks to review the active Elydora hooks.'];
-  }
-  if (integration.postInstall === 'start-kiro') {
-    return [
-      'Kiro CLI v2: kiro-cli --agent elydora-audit',
-      'Kiro CLI v3: kiro-cli --v3',
-    ];
-  }
-  return undefined;
+  const stem = credentialFileStem(identity.agentId);
+  const command = shell === 'powershell'
+    ? powershellInstall(language, values, stem, privateKey, token)
+    : posixInstall(language, values, stem, privateKey, token);
+  const bootstrap = BOOTSTRAP[language];
+  return bootstrap ? `${bootstrap}\n${command}` : command;
 }
 
 function sdkSetup(language: SdkLanguage, input: InstructionInput): string {
@@ -95,7 +154,7 @@ client.set_kid(${JSON.stringify(identity.kid)})`;
   }
 
   if (language === 'go') {
-    return `go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
+    return `go get github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2
 
 requireEnv := func(name string) string {
     value, ok := os.LookupEnv(name)
@@ -176,13 +235,14 @@ await client.submitOperation(operation);`;
 export function buildInstallInstructions(
   language: SdkLanguage,
   input: InstructionInput,
+  shell: Shell = 'posix',
 ): InstallInstructions {
-  if (input.integration.mode === 'adapter') {
+  if (input.integration.mode === 'hooks') {
     return {
-      setup: adapterCommand(language, input),
+      setup: hookInstallerCommand(language, input, shell),
       verify: language === 'node' ? 'npx @elydora/sdk status' : 'elydora status',
-      postInstall: postInstallSteps(input.integration),
-      secretDelivery: 'hidden-prompts',
+      postInstall: input.integration.postInstall,
+      secretDelivery: 'embedded',
     };
   }
 

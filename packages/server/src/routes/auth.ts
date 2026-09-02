@@ -2,7 +2,7 @@
  * Auth routes — registration, login, profile retrieval, and token refresh.
  *
  * /register and /login are public (no auth required).
- * /me, /refresh, and /token require a valid Better Auth session.
+ * /me and /refresh require a valid Better Auth session or API token; /token requires a session.
  *
  * Uses Better Auth for session management while preserving the existing
  * API surface (endpoint paths and response formats).
@@ -11,6 +11,8 @@
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { AppError } from '../middleware/error-handler.js';
+import { issueApiToken, MAX_TTL_SECONDS } from '../services/api-token-service.js';
 import { getMe } from '../services/auth-service.js';
 import { createAuth } from '../lib/auth.js';
 import { getMessage } from '../i18n/messages.js';
@@ -169,46 +171,32 @@ auth.post('/refresh', authMiddleware, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /v1/auth/token — Issue an API token with custom TTL (auth required)
+// POST /v1/auth/token — Issue an opaque API token (session required)
 // ---------------------------------------------------------------------------
 auth.post('/token', authMiddleware, async (c) => {
+  if (c.get('auth_token_type') !== 'session') {
+    throw new AppError(400, 'VALIDATION_ERROR', { key: 'auth.issueRequiresSession' });
+  }
+
   const body = await c.req.json();
   const { ttl_seconds } = body;
 
   if (ttl_seconds !== null && ttl_seconds !== undefined) {
-    if (typeof ttl_seconds !== 'number' || ttl_seconds <= 0) {
-      const lang = c.get('lang') ?? 'en';
-      return c.json({ error: { code: 'VALIDATION_ERROR', message: getMessage('auth.ttlMustBeNumber', lang), request_id: '' } }, 400);
+    if (typeof ttl_seconds !== 'number') {
+      throw new AppError(400, 'VALIDATION_ERROR', { key: 'auth.ttlMustBeNumber' });
+    }
+    if (!Number.isInteger(ttl_seconds) || ttl_seconds <= 0 || ttl_seconds > MAX_TTL_SECONDS) {
+      throw new AppError(400, 'VALIDATION_ERROR', { key: 'auth.ttlMustBePositive' });
     }
   }
 
-  // Get the current session token — Better Auth sessions have a fixed
-  // lifetime configured in the auth instance (7 days by default).
-  // The ttl_seconds parameter is accepted for API compatibility but
-  // session lifetime is governed by Better Auth's session config.
-  const betterAuthInstance = createAuth(
-    process.env.DATABASE_URL!,
-    c.env.BETTER_AUTH_SECRET,
-    c.env.BETTER_AUTH_URL,
-    c.env.ALLOWED_ORIGINS,
-  );
-
-  const session = await betterAuthInstance.api.getSession({
-    headers: c.req.raw.headers,
-  });
-
-  if (!session) {
-    const lang = c.get('lang') ?? 'en';
-    return c.json({ error: { code: 'UNAUTHORIZED', message: getMessage('auth.invalidSession', lang), request_id: '' } }, 401);
+  const orgId = c.get('org_id');
+  if (!orgId) {
+    throw new AppError(409, 'VALIDATION_ERROR', { key: 'auth.organizationRequiredForApiToken' });
   }
 
-  const sessionData = session.session as { token?: string; expiresAt?: Date };
-  const token = sessionData.token ?? '';
-  const expiresAt = sessionData.expiresAt
-    ? Math.floor(new Date(sessionData.expiresAt).getTime() / 1000)
-    : Math.floor(Date.now() / 1000) + 604800;
-
-  return c.json({ token, expires_at: expiresAt }, 200);
+  const issued = await issueApiToken(c.env.ELYDORA_DB, c.get('actor'), orgId, ttl_seconds ?? null);
+  return c.json({ token: issued.token, expires_at: issued.expires_at }, 200);
 });
 
 export { auth };

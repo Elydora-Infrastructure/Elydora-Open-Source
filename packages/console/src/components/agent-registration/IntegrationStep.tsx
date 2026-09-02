@@ -32,11 +32,18 @@ function IntegrationGroup({
             key={integration.id}
             type="button"
             onClick={() => onSelect(integration)}
-            className="group flex items-center justify-between gap-3 px-3 py-3 text-left border-b border-border hover:bg-surface focus-visible:bg-surface focus-visible:outline-none"
+            className="group flex items-center justify-between gap-3 px-3 py-3 text-left border-b border-border hover:bg-surface focus-visible:bg-surface"
           >
             <span className="font-mono text-[12px] text-ink">{integration.name}</span>
-            <span className="font-mono text-[10px] text-ink-dim opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity" aria-hidden="true">
-              →
+            <span className="flex items-center gap-2" aria-hidden="true">
+              {mode === 'hooks' && (
+                <span className="font-mono text-[9px] tracking-wider text-ink-dim border border-border px-1.5 py-0.5">
+                  {t('agentRegistration.hookBadge')}
+                </span>
+              )}
+              <span className="font-mono text-[10px] text-ink-dim opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity">
+                →
+              </span>
             </span>
           </button>
         ))}
@@ -44,10 +51,11 @@ function IntegrationGroup({
     </section>
   );
 }
+
 export default function IntegrationStep({ onSelect }: IntegrationStepProps) {
   return (
     <div className="space-y-6">
-      <IntegrationGroup mode="adapter" onSelect={onSelect} />
+      <IntegrationGroup mode="hooks" onSelect={onSelect} />
       <IntegrationGroup mode="sdk" onSelect={onSelect} />
     </div>
   );

@@ -330,13 +330,15 @@
       "connect": "Connect"
     },
     "integrationGroups": {
-      "adapter": "CLI adapters",
+      "hooks": "Native hooks",
       "sdk": "Custom SDK"
     },
+    "hookBadge": "HOOKS",
     "integration": "Integration",
     "copySetup": "Copy setup command",
     "copyUsage": "Copy operation example",
     "copyVerify": "Copy verification command",
+    "copyPostInstall": "Copy activation command: {{command}}",
     "copyPrivateKey": "Copy private key",
     "copyApiToken": "Copy API token",
     "copyFailed": "Copy failed.",
@@ -346,9 +348,24 @@
     "record": "Record an operation",
     "verify": "Verify",
     "postInstall": "Post-install steps",
+    "postInstallSteps": {
+      "inspectCursorHooks": "Open Customize → Hooks and confirm Elydora in the Hooks output channel.",
+      "inspectEnvironment": "Confirm the Elydora hooks in the loaded environment.",
+      "inspectGrokConfig": "Confirm the Elydora PreToolUse, PostToolUse, and PostToolUseFailure hooks.",
+      "inspectKiroIdeHooks": "Open Agent Hooks in the Kiro panel and confirm Elydora Audit is enabled.",
+      "launchKiroV2": "Launch the Elydora audit agent in Kiro CLI v2.",
+      "launchKiroV3": "Start Kiro CLI v3 with the global Elydora hooks.",
+      "listHooks": "List the loaded Elydora hooks.",
+      "openHooks": "Open the hook manager and review the Elydora hooks.",
+      "reviewAndTrustHooks": "Review and trust both Elydora command hooks.",
+      "restartSession": "Restart the current {{integration}} session.",
+      "startSession": "Start a new {{integration}} session.",
+      "startTask": "Start a new {{integration}} task."
+    },
     "sdkLanguage": "SDK language",
+    "shell": "Shell",
     "secretDelivery": {
-      "hidden-prompts": "The CLI requests both values with terminal echo disabled.",
+      "embedded": "The command stores both credentials in owner-only files, installs the hook, then deletes them.",
       "environment": "Set ELYDORA_PRIVATE_KEY and ELYDORA_API_TOKEN in the runtime environment."
     }
   },

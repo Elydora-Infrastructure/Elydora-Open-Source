@@ -110,7 +110,7 @@ async function mockBackend(
   });
 }
 
-test('registers Grok atomically and renders verified adapter commands', async ({ page }) => {
+test('registers Grok atomically and renders verified native hook commands', async ({ page }) => {
   const observed: ObservedRequest[] = [];
   const unexpected: string[] = [];
   const runtimeErrors: string[] = [];
@@ -123,10 +123,26 @@ test('registers Grok atomically and renders verified adapter commands', async ({
   await page.goto('/agents');
   await page.getByRole('button', { name: 'Register Agent' }).click();
   await waitForRenderedDialog(page);
-  await expect(page.getByRole('button', { name: 'Augment Code' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'OpenAI Codex' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Kimi CLI' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Qwen Code' })).toBeVisible();
+  const dialog = page.getByRole('dialog');
+  await dialog.focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  const firstIntegration = page.getByRole('button', { name: 'Augment Code' });
+  await expect(firstIntegration).toBeFocused();
+  expect(await firstIntegration.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return { width: style.outlineWidth, style: style.outlineStyle };
+  })).toEqual({ width: '2px', style: 'solid' });
+  const hookGroup = page.getByRole('region', { name: 'Native hooks' });
+  await expect(hookGroup.getByRole('button')).toHaveCount(15);
+  await expect(hookGroup.getByText('HOOKS', { exact: true })).toHaveCount(15);
+  await expect(hookGroup.getByRole('button', { name: 'Codex CLI' })).toBeVisible();
+  await expect(hookGroup.getByRole('button', { name: 'Kimi Code' })).toBeVisible();
+  await expect(hookGroup.getByRole('button', { name: 'Grok Build' })).toBeVisible();
+  await expect(hookGroup.getByRole('button', { name: 'Cursor CLI' })).toBeVisible();
+  const sdkGroup = page.getByRole('region', { name: 'Custom SDK' });
+  await expect(sdkGroup.getByRole('button')).toHaveCount(4);
+  await expect(sdkGroup.getByText('HOOKS', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/agent-registration-catalog.png', fullPage: true });
   await page.getByRole('button', { name: 'Grok Build' }).click();
   await page.getByLabel('Display Name').fill('Production Grok');
@@ -151,28 +167,57 @@ test('registers Grok atomically and renders verified adapter commands', async ({
 
   const setup = page.locator('pre');
   await expect(setup).toContainText('npx @elydora/sdk install --agent grok');
-  await expect(setup).toContainText(`--org_id '${ORG_ID}'`);
-  await expect(setup).not.toContainText(TOKEN);
-  await expect(setup).not.toContainText(privateKey);
-  await expect(setup).not.toContainText('--token');
-  await expect(setup).not.toContainText('--private_key');
-  await expect(page.getByText('The CLI requests both values with terminal echo disabled.')).toBeVisible();
+  await expect(setup).toContainText(`--org_id '\\''${ORG_ID}'\\''`);
+  await expect(setup).toContainText(`'${TOKEN}'`);
+  await expect(setup).toContainText(`'${privateKey}'`);
+  await expect(setup).toContainText('mktemp "$HOME/.elydora-');
+  await expect(setup).toContainText('--private_key_file "$k" --token_file "$t"');
+  await expect(page.getByText(
+    'The command stores both credentials in owner-only files, installs the hook, then deletes them.',
+  )).toBeVisible();
+  await expect(page.getByText(
+    'Confirm the Elydora PreToolUse, PostToolUse, and PostToolUseFailure hooks.',
+  )).toBeVisible();
+  await expect(page.getByText('grok inspect --json', { exact: true })).toBeVisible();
 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.getByRole('button', { name: 'Copy setup command' }).click();
   await expect(page.getByRole('button', { name: 'Copy setup command' })).toHaveText('Copied');
   const copiedSetup = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copiedSetup).not.toContain(TOKEN);
-  expect(copiedSetup).not.toContain(privateKey);
+  expect(copiedSetup).toContain(TOKEN);
+  expect(copiedSetup).toContain(privateKey);
+  const activationCopy = page.getByRole('button', {
+    name: 'Copy activation command: grok inspect --json',
+  });
+  await activationCopy.click();
+  await expect(activationCopy).toHaveText('Copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('grok inspect --json');
 
   await page.getByRole('tab', { name: 'go' }).click();
   await expect(setup).toContainText('elydora install --agent grok');
-  await expect(setup).toContainText(`--org-id '${ORG_ID}'`);
-  await expect(setup).toContainText("--agent-id 'agent-");
-  await expect(setup).not.toContainText('--private-key');
-  await expect(setup).not.toContainText('--token');
+  await expect(setup).toContainText(`--org-id '\\''${ORG_ID}'\\''`);
+  await expect(setup).toContainText("--agent-id '\\''agent-");
+  await expect(setup).toContainText('--private-key-file "$k" --token-file "$t"');
+  await page.getByRole('tab', { name: 'PowerShell' }).click();
+  await expect(setup).toContainText("$k = Join-Path $HOME '.elydora-agent-");
+  await expect(setup).toContainText('--private-key-file $k --token-file $t;');
+  await page.getByRole('tab', { name: 'sh', exact: true }).click();
+  await expect(setup).toContainText("printf '%s' 'k=$(mktemp ");
 
   await page.screenshot({ path: 'test-results/agent-registration-grok.png', fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('dialog').locator(':scope > div').last().evaluate(
+    (content) => content.scrollTo(0, content.scrollHeight),
+  );
+  await expect(page.getByText('grok inspect --json', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', {
+    name: 'Copy activation command: grok inspect --json',
+  })).toBeVisible();
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth,
+  )).toBe(false);
+  await page.screenshot({ path: 'test-results/agent-registration-grok-mobile.png', fullPage: true });
 
   const registrationRequests = observed.filter(({ path }) => path === '/v1/agents/register');
   expect(registrationRequests).toHaveLength(1);
@@ -249,6 +294,40 @@ test('renders custom SDK setup with runtime secret references', async ({ page })
   expect(runtimeErrors).toEqual([]);
 });
 
+test('renders Kiro CLI versions as activation alternatives', async ({ page }) => {
+  const observed: ObservedRequest[] = [];
+  const unexpected: string[] = [];
+  const runtimeErrors: string[] = [];
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') runtimeErrors.push(message.text());
+  });
+  await mockBackend(page, observed, unexpected);
+
+  await page.goto('/agents');
+  await page.getByRole('button', { name: 'Register Agent' }).click();
+  await page.getByRole('button', { name: 'Kiro CLI' }).click();
+  await page.getByLabel('Display Name').fill('Production Kiro');
+  await page.locator('form').getByRole('button', { name: 'Register Agent' }).click();
+  await page.getByRole('button', { name: 'Issue API Token' }).click();
+  await expect(page.getByText(TOKEN)).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  const alternatives = page.getByRole('list', { name: 'Post-install steps' });
+  await expect(alternatives).toHaveJSProperty('tagName', 'UL');
+  await expect(alternatives.locator('li')).toHaveCount(2);
+  await expect(alternatives.getByText('V2', { exact: true })).toBeVisible();
+  await expect(alternatives.getByText('V3', { exact: true })).toBeVisible();
+  await expect(alternatives.getByText('kiro-cli --agent elydora-audit', { exact: true })).toBeVisible();
+  await expect(alternatives.getByText('kiro-cli --v3', { exact: true })).toBeVisible();
+  await page.screenshot({ path: 'test-results/agent-registration-kiro.png', fullPage: true });
+
+  expect(observed.filter(({ path }) => path === '/v1/agents/register')).toHaveLength(1);
+  expect(observed.filter(({ path }) => path === '/v1/auth/token')).toHaveLength(1);
+  expect(unexpected).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
 test('loads the Chinese registration resources', async ({ page }) => {
   const observed: ObservedRequest[] = [];
   const unexpected: string[] = [];
@@ -263,11 +342,21 @@ test('loads the Chinese registration resources', async ({ page }) => {
   await page.goto('/agents');
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh');
   await page.getByRole('button', { name: '注册代理' }).click();
-  await expect(page.getByText('CLI 适配器')).toBeVisible();
+  await expect(page.getByText('原生 Hooks')).toBeVisible();
   await expect(page.getByText('自定义 SDK')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'OpenAI Codex' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Codex CLI' })).toBeVisible();
+  await page.getByRole('button', { name: 'Kimi Code' }).click();
+  await page.getByLabel('显示名称').fill('生产 Kimi');
+  await page.locator('form').getByRole('button', { name: '注册代理' }).click();
+  await page.getByRole('button', { name: '签发 API 令牌' }).click();
+  await expect(page.getByText(TOKEN)).toBeVisible();
+  await page.getByRole('button', { name: '继续' }).click();
+  await expect(page.getByText('启动新的 Kimi Code 会话。')).toBeVisible();
+  await expect(page.getByText('kimi', { exact: true })).toBeVisible();
 
-  expect(observed.filter(({ path }) => path === '/v1/agents')).toHaveLength(1);
+  expect(observed.filter(({ path }) => path === '/v1/agents')).toHaveLength(2);
+  expect(observed.filter(({ path }) => path === '/v1/agents/register')).toHaveLength(1);
+  expect(observed.filter(({ path }) => path === '/v1/auth/token')).toHaveLength(1);
   expect(unexpected).toEqual([]);
   expect(runtimeErrors).toEqual([]);
 });

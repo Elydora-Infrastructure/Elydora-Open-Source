@@ -12,7 +12,7 @@ import Modal from '@/components/ui/Modal';
 import Link from 'next/link';
 import type { AgentKey, Operation } from '@elydora/shared';
 import { useTranslation } from 'react-i18next';
-import { ADAPTER_INTEGRATION_IDS } from '@/features/agent-registration/integrations';
+import { HOOK_INTEGRATION_IDS } from '@/features/agent-registration/integrations';
 
 export default function AgentDetailClient({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
@@ -37,7 +37,7 @@ export default function AgentDetailClient({ agentId }: { agentId: string }) {
 
   const agent = agentData?.agent;
   const supportsFreeze = agent
-    ? ADAPTER_INTEGRATION_IDS.has(agent.integration_type)
+    ? HOOK_INTEGRATION_IDS.has(agent.integration_type)
     : false;
   const keys = agentData?.keys ?? [];
   const operations = opsData?.operations ?? [];

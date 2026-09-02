@@ -1,14 +1,10 @@
 /**
- * Better Auth authentication middleware.
+ * Authentication middleware for opaque API tokens and Better Auth sessions.
  *
- * Validates requests via Better Auth sessions (cookie or bearer token).
- * On success, extracts `org_id`, `role`, and user `id` (actor) from the
- * session and stores them in the Hono context variables for downstream
- * handlers.
- *
- * Supports:
- *   - Session cookies (browser / console)
- *   - Bearer tokens via Better Auth's bearer plugin (SDK clients)
+ * A bearer value is resolved as a hashed API token first; anything else is
+ * validated as a Better Auth session (cookie or bearer session token).
+ * On success the org_id, role, actor, and credential kind are stored in the
+ * Hono context variables for downstream handlers.
  */
 
 import type { MiddlewareHandler } from 'hono';
@@ -16,13 +12,8 @@ import type { RbacRole } from '../shared/index.js';
 import type { Env, AppVariables } from '../types.js';
 import { AppError } from './error-handler.js';
 import { createAuth } from '../lib/auth.js';
+import { authenticateApiToken } from '../services/api-token-service.js';
 
-/**
- * Authentication middleware.
- *
- * Uses Better Auth's getSession to validate the request via session
- * cookie or bearer token. Sets org_id, role, and actor on the context.
- */
 export const authMiddleware: MiddlewareHandler<{
   Bindings: Env;
   Variables: AppVariables;
@@ -30,6 +21,19 @@ export const authMiddleware: MiddlewareHandler<{
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
     throw new AppError(401, 'UNAUTHORIZED', { key: 'auth.missingHeader' });
+  }
+
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  if (bearerToken) {
+    const apiToken = await authenticateApiToken(c.env.ELYDORA_DB, bearerToken);
+    if (apiToken) {
+      c.set('org_id', apiToken.org_id);
+      c.set('role', apiToken.role);
+      c.set('actor', apiToken.user_id);
+      c.set('auth_token_type', 'api');
+      await next();
+      return;
+    }
   }
 
   let session: Awaited<ReturnType<ReturnType<typeof createAuth>['api']['getSession']>>;
@@ -57,6 +61,7 @@ export const authMiddleware: MiddlewareHandler<{
   c.set('org_id', user.org_id ?? '');
   c.set('role', ((user.role ?? 'readonly_investigator') as RbacRole));
   c.set('actor', user.id);
+  c.set('auth_token_type', 'session');
 
   await next();
 };

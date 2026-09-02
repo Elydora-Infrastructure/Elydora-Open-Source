@@ -56,6 +56,7 @@ This repository publishes the open-source server, console, integration catalog, 
 - Keep production source files at or below 500 lines.
 - Keep functions focused on one ownership boundary.
 - Propagate unexpected errors to the CLI or request boundary.
+- Issue API tokens only from a Better Auth session: 32 random bytes returned once and stored as a SHA-256 hash in `api_tokens`, honoring `ttl_seconds` with `null` meaning no expiry. Resolve bearer values as API tokens before session validation.
 - Commit the operation and receipt before enqueueing. Log a failed enqueue as `operation.enqueue_failed` and still return the receipt; answer a `UNIQUE(agent_id, seq_no)` conflict with `PREV_HASH_MISMATCH` carrying the stored chain hash.
 - Keep technical claims executable through tests or generated validation.
 - Keep the mirrored Python package, distribution, and CLI version in `sdks/python/elydora/_version.py`; Setuptools metadata must read that literal dynamically.
@@ -65,8 +66,8 @@ This repository publishes the open-source server, console, integration catalog, 
 - Honor valid `Retry-After` delay-seconds and HTTP-date values, and release retryable responses before sleeping.
 - Avoid compatibility shims without a named public contract.
 - Preserve the minimum runtime versions declared by each package.
-- Keep private keys and API tokens out of process arguments and generated setup commands. Accept them through hidden terminal input or owner-only credential files.
-- Keep Console instruction generation limited to agent identity and public configuration. Adapter commands use hidden CLI prompts; direct SDK examples read named runtime environment variables. Expose credentials through explicit copy controls only.
+- Keep private keys and API tokens out of process arguments. CLIs accept them through hidden terminal input or owner-only credential files.
+- Console instruction generation accepts agent identity, public configuration, and the issued credentials. Native hook commands store both credentials in owner-only files, install through the SDK file flags, and delete the files; direct SDK examples read named runtime environment variables. Credential values also remain available through explicit copy controls.
 - Persist credential-bearing files through owner-only same-directory temporary files and atomic rename.
 - Read runtime config, private keys, status cache, chain state, and error logs through physical-file descriptors with identity checks. Write cache and validated chain state atomically, and append error logs through no-follow owner-only descriptors. Preserve rollback artifacts when recovery cannot safely restore an original file and include the recovery path in the surfaced error.
 - Go CLI install credentials come from terminal-echo-disabled input or physical owner-only files containing one UTF-8 line of at most 64 KiB. Runtime config, private key, and audit script form one rollback-capable transaction, and generated runtimes validate file identity, size, and Unix permissions before reads.

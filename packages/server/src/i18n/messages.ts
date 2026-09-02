@@ -90,8 +90,8 @@ const messages: Record<string, Record<Lang, string>> = {
     zh: 'Bearer \u4ee4\u724c\u4e3a\u7a7a',
   },
   'auth.ttlMustBePositive': {
-    en: 'ttl_seconds must be a positive number',
-    zh: 'ttl_seconds \u5fc5\u987b\u4e3a\u6b63\u6570',
+    en: 'ttl_seconds must be a whole number of seconds from 1 to 31536000',
+    zh: 'ttl_seconds 必须是 1 到 31536000 之间的整数秒',
   },
 
   // ---------------------------------------------------------------------------
@@ -120,6 +120,14 @@ const messages: Record<string, Record<Lang, string>> = {
   'auth.ttlMustBeNumber': {
     en: 'ttl_seconds must be a number or null',
     zh: 'ttl_seconds \u5fc5\u987b\u4e3a\u6570\u5b57\u6216 null',
+  },
+  'auth.issueRequiresSession': {
+    en: 'API token issuance requires a session credential.',
+    zh: '签发 API 令牌需要使用会话凭据。',
+  },
+  'auth.organizationRequiredForApiToken': {
+    en: 'Organization setup is required before issuing an API token.',
+    zh: '签发 API 令牌前需要完成组织设置。',
   },
 
   // ---------------------------------------------------------------------------
