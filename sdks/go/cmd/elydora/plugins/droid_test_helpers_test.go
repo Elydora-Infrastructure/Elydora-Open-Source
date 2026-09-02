@@ -71,6 +71,7 @@ func prepareDroidFixture(t *testing.T, options droidFixtureOptions) *droidFixtur
 	t.Helper()
 	rootDir := t.TempDir()
 	homeDir := filepath.Join(rootDir, "home with spaces and 'quote %DROID%")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	workspaceDir := filepath.Join(rootDir, "workspace with spaces")
 	factoryDir := filepath.Join(homeDir, ".factory")
 	configPath := filepath.Join(factoryDir, "hooks.json")

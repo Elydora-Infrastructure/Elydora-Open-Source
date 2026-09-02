@@ -13,6 +13,7 @@ type managedFileSnapshot struct {
 	contents []byte
 	info     os.FileInfo
 	mode     os.FileMode
+	identity string
 }
 
 func readManagedFile(
@@ -51,6 +52,13 @@ func readManagedFile(
 			file.Close(),
 		)
 	}
+	identity, identityErr := transactionFileIdentity(file, after)
+	if identityErr != nil {
+		return nil, errors.Join(
+			fmt.Errorf("identify %s at %s: %w", label, filePath, identityErr),
+			file.Close(),
+		)
+	}
 	raw, readErr := io.ReadAll(io.LimitReader(file, maximumBytes+1))
 	closeErr := file.Close()
 	if readErr != nil || closeErr != nil {
@@ -70,6 +78,7 @@ func readManagedFile(
 		contents: raw,
 		info:     after,
 		mode:     after.Mode().Perm(),
+		identity: identity,
 	}, nil
 }
 

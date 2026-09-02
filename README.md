@@ -129,7 +129,7 @@ Elydora-Open-Source/
 ├── sdks/
 │   ├── node/            # @elydora/sdk — Node.js / TypeScript SDK
 │   ├── python/          # elydora — Python SDK (sync + async)
-│   └── go/              # github.com/Elydora-Infrastructure/Elydora-Go-SDK
+│   └── go/              # github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2
 ├── helm/
 │   └── elydora/         # Kubernetes Helm chart
 ├── scripts/             # Key generation, migration, and utility scripts
@@ -675,7 +675,7 @@ elydora keygen
 **Installation:**
 
 ```bash
-go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
+go get github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2
 ```
 
 **Requirements:** Go 1.21+
@@ -689,7 +689,7 @@ import (
     "fmt"
     "os"
 
-    elydora "github.com/Elydora-Infrastructure/Elydora-Go-SDK"
+    elydora "github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2"
 )
 
 func main() {

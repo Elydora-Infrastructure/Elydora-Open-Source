@@ -45,6 +45,7 @@ func prepareGrokFixture(t *testing.T, options grokFixtureOptions) *grokFixture {
 	t.Helper()
 	root := t.TempDir()
 	homeDir := filepath.Join(root, "home with 'quote %ELYDORA_HOOK_PATH%")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	projectDir := filepath.Join(root, "project with spaces")
 	grokHome := filepath.Join(homeDir, "custom grok")
 	if options.useDefaultHome {

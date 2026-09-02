@@ -48,6 +48,7 @@ func prepareCursorFixture(t *testing.T, existingRaw *string, createGuard bool) *
 	t.Helper()
 	rootDir := t.TempDir()
 	homeDir := filepath.Join(rootDir, "home with spaces and 'quote")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	agentDir := filepath.Join(homeDir, ".elydora", cursorTestAgentID)
 	configPath := filepath.Join(homeDir, ".cursor", "hooks.json")
 	guardPath := filepath.Join(agentDir, "guard.js")

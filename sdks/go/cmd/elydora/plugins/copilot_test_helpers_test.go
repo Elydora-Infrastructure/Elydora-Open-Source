@@ -72,6 +72,7 @@ func prepareCopilotFixture(t *testing.T, options copilotFixtureOptions) *copilot
 	t.Helper()
 	rootDir := t.TempDir()
 	homeDir := filepath.Join(rootDir, "home with spaces and 'quote")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	projectDir := filepath.Join(rootDir, "project with spaces")
 	copilotHome := filepath.Join(homeDir, "custom copilot")
 	agentDir := filepath.Join(homeDir, ".elydora", copilotTestAgentID)

@@ -14,6 +14,7 @@ func prepareDroidCLIEnvironment(t *testing.T) (string, string, []string) {
 	t.Helper()
 	root := t.TempDir()
 	homeDir := filepath.Join(root, "home with spaces and 'quote %DROID%")
+	preparePrivateCLITestHome(t, homeDir)
 	workspace := filepath.Join(root, "workspace with spaces")
 	if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0700); err != nil {
 		t.Fatalf("create Factory Droid CLI workspace: %v", err)

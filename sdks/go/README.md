@@ -5,7 +5,7 @@ Official Go SDK for the [Elydora](https://elydora.com) tamper-evident audit plat
 ## Installation
 
 ```bash
-go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
+go get github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2
 ```
 
 Requires Go 1.21+. The CLI uses focused TOML and JSONC parsers to preserve user-owned agent configuration.
@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"log"
 
-	elydora "github.com/Elydora-Infrastructure/Elydora-Go-SDK"
+	elydora "github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2"
 )
 
 func main() {
@@ -63,7 +63,7 @@ The SDK includes a CLI for installing audit hooks into AI coding agents.
 Agent IDs map to one physical directory directly under `~/.elydora`; portable filename rules and physical directory/config checks apply before writes or recursive removal. Ambiguous uninstall discovery requires an explicit agent ID.
 
 ```bash
-go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest
+go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2/cmd/elydora@latest
 
 elydora install \
   --agent claudecode \
@@ -75,6 +75,8 @@ elydora install \
 ```
 
 Credential options may be omitted in an interactive terminal; the CLI then reads the private key and optional API token without terminal echo. Credential files must contain one UTF-8 line of at most 64 KiB. Unix credential files require owner-only permissions such as `chmod 600`. Provider settings, `guard.js`, `config.json`, `private.key`, and `hook.js` commit as one rollback-capable transaction, and the generated scripts validate protected files at execution time.
+
+Durable managed-file transactions support Windows, Linux, and macOS. The CLI serializes writers across processes, records append-only recovery state under `~/.elydora/transactions`, stages transaction-owned files on each target filesystem, and completes pending recovery before accepting new writes. Windows requires protected owner-only DACLs, hard-link support, atomic `MoveFileEx` replacement, and writable directory handles with `FlushFileBuffers`; Linux filesystems require `renameat2` with `RENAME_NOREPLACE` and `RENAME_EXCHANGE`; macOS filesystems require `renamex_np` with `RENAME_EXCL` and `RENAME_SWAP`. Unsupported platforms and filesystems fail before managed targets change. Recovery and cleanup verify file and directory identities and retain changed or unexpected objects for manual recovery.
 
 Claude Code installation writes exact matchless `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` exec-form hooks to `$CLAUDE_CONFIG_DIR/settings.json` (`~/.claude/settings.json` by default). Elydora preserves unrelated user settings, keeps project, local, managed, plugin, skill, and agent sources unchanged, forwards native snake_case payloads, and uses exit code `2` for frozen or revoked agents. Installation validates the complete official hook schema and commits settings with all four runtime artifacts in one rollback-capable transaction. Run `/hooks` and `claude doctor` after installation to inspect the effective hook sources.
 
@@ -89,6 +91,8 @@ GitHub Copilot CLI installation writes native `preToolUse`, `postToolUse`, and `
 Cline 3.0.46 installation commits `guard.js`, `config.json`, `private.key`, `hook.js`, `PreToolUse.mjs`, and `PostToolUse.mjs` through one rollback-capable transaction. The native hooks live in `$CLINE_DIR/hooks` with `~/.cline/hooks` as the default; the Documents and workspace roots remain read-only. The wrappers forward Cline's complete stdin payload byte-for-byte, use the active Node.js executable for generated runtimes, and emit pure JSON cancellation control for frozen or revoked agents. Status requires physical files, exact generated sources, strict runtime identity, and a canonical private key.
 
 Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
+
+Kiro IDE 1.0 installation writes an exact enabled `PreToolUse` guard and `PostToolUse` audit pair to the active workspace `.kiro/hooks/elydora-audit.json`. Both entries use Kiro's `version: "v1"` schema, `.*` matchers, ten-second timeouts, and platform-safe absolute commands. Elydora preserves unrelated workspace hooks, forwards the complete native event payload, and propagates frozen or revoked state through exit code `2`. Workspace hooks, exact legacy `~/.kiro/hooks/elydora-audit.kiro.hook` migration, generated runtimes, strict runtime metadata, and the canonical private key commit through one rollback-capable transaction. Confirm both entries in Kiro's Agent Hooks panel after installation.
 
 Kimi installation follows home-directory evidence. Kimi Code uses `$KIMI_CODE_HOME/config.toml` with `~/.kimi-code/config.toml` as the default, and legacy `kimi-cli` uses `~/.kimi/config.toml`. Elydora installs exact `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` hooks, preserves native snake_case payloads, and commits all selected TOML documents with the four runtime artifacts in one rollback-capable transaction. Windows commands use encoded PowerShell so paths containing spaces, apostrophes, percent signs, and environment-like text remain literal.
 

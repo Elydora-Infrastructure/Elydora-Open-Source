@@ -18,7 +18,7 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 	"gemini":     {Name: "Gemini CLI", ConfigDir: "~/.gemini", ConfigFile: "settings.json"},
 	"grok":       {Name: "Grok Build", ConfigDir: "~/.grok/hooks", ConfigFile: "elydora-audit.json"},
 	"kirocli":    {Name: "Kiro CLI", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.json"},
-	"kiroide":    {Name: "Kiro IDE", ConfigDir: "~/.kiro/hooks", ConfigFile: "elydora-audit.kiro.hook"},
+	"kiroide":    {Name: "Kiro IDE", ConfigDir: ".kiro/hooks", ConfigFile: "elydora-audit.json"},
 	"kimi":       {Name: "Kimi Code", ConfigDir: "~/.kimi-code", ConfigFile: "config.toml"},
 	"opencode":   {Name: "OpenCode", ConfigDir: "~/.config/opencode/plugins", ConfigFile: "elydora-audit.mjs"},
 	"copilot":    {Name: "GitHub Copilot CLI", ConfigDir: "~/.copilot/hooks", ConfigFile: "elydora-audit.json"},

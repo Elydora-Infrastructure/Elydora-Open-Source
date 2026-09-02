@@ -37,13 +37,13 @@ func WriteRuntimeFileAtomic(
 	if err != nil {
 		return err
 	}
-	return writeChanges([]*fileChange{change}, "write "+label, os.Rename)
+	return writeChanges([]*fileChange{change}, "write "+label, nil)
 }
 
 // GenerateHookScript atomically commits the agent config, private key, and
 // self-contained Node.js audit runtime.
 func GenerateHookScript(destPath string, config InstallConfig) error {
-	return generateHookScriptWithRename(destPath, config, os.Rename)
+	return generateHookScriptWithRename(destPath, config, nil)
 }
 
 func generateHookScriptWithRename(

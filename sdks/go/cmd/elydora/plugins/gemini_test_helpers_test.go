@@ -51,6 +51,7 @@ func prepareGeminiFixture(
 		root,
 		"home with 'quote $GEMINI_CWD %GEMINI_CWD%",
 	)
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	projectDir := filepath.Join(root, "project with spaces")
 	geminiHome := filepath.Join(homeDir, "custom gemini home")
 	if options.useDefaultHome {

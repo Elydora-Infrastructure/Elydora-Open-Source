@@ -10,6 +10,7 @@ type filePrecondition struct {
 	filePath    string
 	label       string
 	snapshot    *managedFileSnapshot
+	directory   os.FileInfo
 	maximumSize int64
 }
 
@@ -38,7 +39,8 @@ func prepareSnapshotSourceChange(
 	if original == nil && (remove || next == nil) {
 		return nil, nil
 	}
-	if original != nil && !remove && bytes.Equal(original.contents, next) {
+	if original != nil && !remove && bytes.Equal(original.contents, next) &&
+		sameManagedFileMode(original.mode, mode) {
 		return nil, nil
 	}
 	change := &fileChange{
@@ -51,6 +53,7 @@ func prepareSnapshotSourceChange(
 	if original != nil {
 		change.original = append([]byte(nil), original.contents...)
 		change.originalInfo = original.info
+		change.originalID = original.identity
 		change.originalMode = original.mode
 		change.existed = true
 	}
@@ -62,7 +65,9 @@ func sameManagedSnapshot(current, expected *managedFileSnapshot) bool {
 		return current == expected
 	}
 	return bytes.Equal(current.contents, expected.contents) &&
-		os.SameFile(current.info, expected.info)
+		current.identity == expected.identity &&
+		os.SameFile(current.info, expected.info) &&
+		sameManagedFileMode(current.mode, expected.mode)
 }
 
 func assertFilePreconditions(
@@ -70,6 +75,27 @@ func assertFilePreconditions(
 	operation string,
 ) error {
 	for _, condition := range preconditions {
+		if condition.directory != nil {
+			current, err := os.Lstat(condition.filePath)
+			if err != nil {
+				return fmt.Errorf(
+					"inspect %s at %s: %w",
+					condition.label,
+					condition.filePath,
+					err,
+				)
+			}
+			if current.Mode()&os.ModeSymlink != 0 || !current.IsDir() ||
+				!os.SameFile(condition.directory, current) {
+				return fmt.Errorf(
+					"%s changed during %s: %s",
+					condition.label,
+					operation,
+					condition.filePath,
+				)
+			}
+			continue
+		}
 		maximumSize := condition.maximumSize
 		if maximumSize <= 0 {
 			maximumSize = maxManagedSourceBytes

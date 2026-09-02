@@ -58,6 +58,7 @@ func prepareQwenFixture(t *testing.T, options qwenFixtureOptions) *qwenFixture {
 	t.Helper()
 	rootDir := t.TempDir()
 	homeDir := filepath.Join(rootDir, "home with spaces and 'quote")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	workspaceDir := filepath.Join(homeDir, "workspace")
 	qwenDir := filepath.Join(homeDir, ".qwen")
 	configPath := filepath.Join(qwenDir, "settings.json")

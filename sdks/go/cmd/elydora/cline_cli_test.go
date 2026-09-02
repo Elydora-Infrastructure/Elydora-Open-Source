@@ -65,6 +65,7 @@ func prepareClineCLIEnvironment(t *testing.T) (string, string, string, []string)
 	t.Helper()
 	root := t.TempDir()
 	homeDir := filepath.Join(root, "home")
+	preparePrivateCLITestHome(t, homeDir)
 	clineDir := filepath.Join(root, "cline-home")
 	workspace := filepath.Join(root, "workspace")
 	if err := os.MkdirAll(workspace, 0700); err != nil {

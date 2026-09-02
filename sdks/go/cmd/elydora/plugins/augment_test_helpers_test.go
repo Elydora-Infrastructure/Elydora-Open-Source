@@ -46,6 +46,7 @@ func prepareAugmentFixture(
 	t.Helper()
 	root := t.TempDir()
 	homeDir := filepath.Join(root, "home with spaces and 'quote")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	projectDir := filepath.Join(root, "project with spaces")
 	if err := os.MkdirAll(projectDir, 0700); err != nil {
 		t.Fatalf("create project directory: %v", err)

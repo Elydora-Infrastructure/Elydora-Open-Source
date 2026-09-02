@@ -35,6 +35,7 @@ type codexFixture struct {
 func prepareCodexFixture(t *testing.T, existingRaw string) *codexFixture {
 	t.Helper()
 	homeDir := filepath.Join(t.TempDir(), "home with 'quote %ELYDORA_HOOK_PATH%")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	agentDir := filepath.Join(homeDir, ".elydora", codexTestAgentID)
 	configPath := filepath.Join(homeDir, ".codex", "hooks.json")
 	guardPath := filepath.Join(agentDir, "guard.js")

@@ -52,6 +52,7 @@ func prepareKimiFixture(t *testing.T, options kimiFixtureOptions) *kimiFixture {
 	t.Helper()
 	root := t.TempDir()
 	homeDir := filepath.Join(root, "home with spaces and 'quote %ELYDORA_HOOK_PATH%")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	projectDir := filepath.Join(root, "project with spaces")
 	kimiHome := filepath.Join(homeDir, "custom kimi-code")
 	if options.useDefaultHome {

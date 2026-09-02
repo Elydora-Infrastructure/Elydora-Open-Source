@@ -113,6 +113,8 @@ function signEd25519(privateKeyBase64url, data) {
   return base64urlEncode(signature);
 }
 
+const MAX_CHAIN_ATTEMPTS = 5;
+const SUBMIT_BUDGET_MS = 4000;
 const ZERO_CHAIN_HASH = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 function validateChainHash(value, source) {
@@ -188,6 +190,81 @@ function writeChainState(chainHash) {
   writeProtectedJson(CHAIN_STATE_PATH, 'Chain state', { prev_chain_hash: chainHash });
 }
 
+function lockOwnerAlive(lockPath) {
+  let owner;
+  try {
+    owner = Number.parseInt(fs.readFileSync(lockPath, 'utf-8'), 10);
+  } catch (error) {
+    if (!hasRuntimeErrorCode(error, 'ENOENT')) throw error;
+    return false;
+  }
+  if (!Number.isInteger(owner) || owner <= 0) return false;
+  try {
+    process.kill(owner, 0);
+    return true;
+  } catch (error) {
+    if (hasRuntimeErrorCode(error, 'ESRCH')) return false;
+    return true;
+  }
+}
+
+function withChainLock(update) {
+  const lockPath = CHAIN_STATE_PATH + '.lock';
+  const deadline = performance.now() + 1000;
+  for (;;) {
+    let descriptor;
+    try {
+      descriptor = fs.openSync(lockPath, 'wx', 0o600);
+      fs.writeSync(descriptor, String(process.pid));
+    } catch (error) {
+      if (!hasRuntimeErrorCode(error, 'EEXIST')) throw error;
+      if (lockOwnerAlive(lockPath)) {
+        if (performance.now() > deadline) throw new Error('Chain state lock timed out: ' + lockPath);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        continue;
+      }
+      let age = 0;
+      try { age = Date.now() - fs.statSync(lockPath).mtimeMs; } catch (statError) {
+        if (!hasRuntimeErrorCode(statError, 'ENOENT')) throw statError;
+      }
+      if (age > 5000) {
+        const reclaimed = lockPath + '.' + process.pid + '.stale';
+        try {
+          fs.renameSync(lockPath, reclaimed);
+          fs.unlinkSync(reclaimed);
+        } catch (reclaimError) {
+          if (!hasRuntimeErrorCode(reclaimError, 'ENOENT')) throw reclaimError;
+        }
+        continue;
+      }
+      if (performance.now() > deadline) throw new Error('Chain state lock timed out: ' + lockPath);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      continue;
+    }
+    try {
+      return update();
+    } finally {
+      let current = null;
+      try {
+        current = fs.lstatSync(lockPath);
+      } catch (statError) {
+        if (!hasRuntimeErrorCode(statError, 'ENOENT')) throw statError;
+      }
+      const own = fs.fstatSync(descriptor);
+      fs.closeSync(descriptor);
+      if (current && current.ino === own.ino && current.dev === own.dev) fs.unlinkSync(lockPath);
+    }
+  }
+}
+
+function advanceChainState(fromHash, toHash) {
+  return withChainLock(() => {
+    if (readChainState() !== fromHash) return false;
+    writeChainState(toHash);
+    return true;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Error logging
 // ---------------------------------------------------------------------------
@@ -229,6 +306,41 @@ function resolveAuditBaseURL(config) {
 // ---------------------------------------------------------------------------
 // Main hook logic
 // ---------------------------------------------------------------------------
+
+async function postOperation(baseUrl, token, eor, deadline) {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw new Error('Audit API retry budget exhausted');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.min(5000, remaining));
+  try {
+    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch(baseUrl + '/v1/operations', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(eor),
+      signal: controller.signal,
+    });
+    if (res.ok) return { accepted: true };
+    if (res.status === 400) {
+      let errBody;
+      try {
+        errBody = await res.json();
+      } catch (err) {
+        throw new Error('Audit API returned invalid error JSON: ' + err.message);
+      }
+      if (errBody.error && errBody.error.code === 'PREV_HASH_MISMATCH') {
+        const match = (errBody.error.message || '').match(/Expected prev_chain_hash "([^"]+)"/);
+        if (match) {
+          return { accepted: false, expected: validateChainHash(match[1], 'Audit API mismatch response') };
+        }
+      }
+    }
+    throw new Error('Audit API returned HTTP ' + res.status);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function main() {
   try {
@@ -304,91 +416,48 @@ async function main() {
     }
     if (typeof token !== 'string') throw new Error('Agent config token must be a string');
 
-    // Read chain state
-    const prevChainHash = readChainState();
-
-    // Build EOR
-    const operationId = uuidv7();
-    const issuedAt = Date.now();
-    const nonce = generateNonce();
-
+    // Build and submit, retrying from the server chain head on PREV_HASH_MISMATCH
     const payload = NATIVE_PAYLOAD ? hookData : {
       tool_name: toolName,
       tool_input: toolInput,
       session_id: sessionId,
     };
-
     const payloadHash = computePayloadHash(payload);
-    const chainHash = computeChainHash(prevChainHash, payloadHash, operationId, issuedAt);
-
-    const eorWithoutSig = {
-      op_version: '1.0',
-      operation_id: operationId,
-      org_id: orgId,
-      agent_id: agentId,
-      issued_at: issuedAt,
-      ttl_ms: 30000,
-      nonce: nonce,
-      operation_type: 'ai.tool_use',
-      subject: { session_id: sessionId },
-      action: { tool: toolName },
-      payload: payload,
-      payload_hash: payloadHash,
-      prev_chain_hash: prevChainHash,
-      agent_pubkey_kid: kid,
-    };
-
-    const canonical = jcsCanonicalise(eorWithoutSig);
-    const signature = signEd25519(privateKey, Buffer.from(canonical, 'utf-8'));
-
-    const eor = Object.assign({}, eorWithoutSig, { chain_hash: chainHash, signature: signature });
-
-    // POST to /v1/operations (5s timeout)
-    // Only update local chain state on success to prevent desync
-    const url = baseUrl + '/v1/operations';
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    try {
-      const headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
+    const deadline = performance.now() + SUBMIT_BUDGET_MS;
+    let prevChainHash = readChainState();
+    for (let attempt = 1; ; attempt += 1) {
+      const operationId = uuidv7();
+      const issuedAt = Date.now();
+      const chainHash = computeChainHash(prevChainHash, payloadHash, operationId, issuedAt);
+      const eorWithoutSig = {
+        op_version: '1.0',
+        operation_id: operationId,
+        org_id: orgId,
+        agent_id: agentId,
+        issued_at: issuedAt,
+        ttl_ms: 30000,
+        nonce: generateNonce(),
+        operation_type: 'ai.tool_use',
+        subject: { session_id: sessionId },
+        action: { tool: toolName },
+        payload: payload,
+        payload_hash: payloadHash,
+        prev_chain_hash: prevChainHash,
+        agent_pubkey_kid: kid,
       };
-      if (token) {
-        headers['Authorization'] = 'Bearer ' + token;
-      }
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(eor),
-        signal: controller.signal,
-      });
-
-      if (res.ok) {
-        writeChainState(chainHash);
+      const signature = signEd25519(privateKey, Buffer.from(jcsCanonicalise(eorWithoutSig), 'utf-8'));
+      const eor = Object.assign({}, eorWithoutSig, { chain_hash: chainHash, signature: signature });
+      const result = await postOperation(baseUrl, token, eor, deadline);
+      if (result.accepted) {
+        advanceChainState(prevChainHash, chainHash);
         return;
       }
-      if (res.status === 400) {
-        // Possible chain hash mismatch — try to resync from server response
-        try {
-          const errBody = await res.json();
-          if (errBody.error && errBody.error.code === 'PREV_HASH_MISMATCH') {
-            // Extract the expected hash from the error message
-            const match = (errBody.error.message || '').match(/Expected prev_chain_hash "([^"]+)"/);
-            if (match) {
-              const expectedHash = validateChainHash(match[1], 'Audit API mismatch response');
-              writeChainState(expectedHash);
-              logError(new Error('Chain hash resynced to server: ' + expectedHash));
-            }
-          }
-        } catch (err) {
-          logError(new Error('Failed to parse audit API error: ' + err.message));
-        }
+      advanceChainState(prevChainHash, result.expected);
+      logError(new Error('Chain hash resynced to server: ' + result.expected));
+      if (attempt >= MAX_CHAIN_ATTEMPTS) {
+        throw new Error('Audit API rejected prev_chain_hash ' + attempt + ' times');
       }
-      throw new Error('Audit API returned HTTP ' + res.status);
-    } finally {
-      clearTimeout(timeout);
+      prevChainHash = readChainState();
     }
   } catch (err) {
     logError(err);

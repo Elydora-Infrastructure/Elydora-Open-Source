@@ -54,6 +54,7 @@ func prepareClineFixture(t *testing.T, options clineFixtureOptions) *clineFixtur
 	t.Helper()
 	rootDir := t.TempDir()
 	homeDir := filepath.Join(rootDir, "home with spaces and 'quote")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	workspaceDir := filepath.Join(rootDir, "workspace")
 	clineDir := filepath.Join(rootDir, "custom-cline-home")
 	hooksDir := filepath.Join(clineDir, "hooks")

@@ -45,6 +45,7 @@ func TestQwenCLIInstallStatusAndUninstallEndToEnd(t *testing.T) {
 		t.Fatalf("build Elydora CLI: %v\n%s", err, output)
 	}
 	home := filepath.Join(root, "home")
+	preparePrivateCLITestHome(t, home)
 	workspace := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(workspace, 0755); err != nil {
 		t.Fatalf("create workspace: %v", err)

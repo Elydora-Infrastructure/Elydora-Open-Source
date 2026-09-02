@@ -12,6 +12,7 @@ import (
 func setRuntimeFilesTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
+	preparePrivateTransactionTestDirectory(t, home)
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	return home

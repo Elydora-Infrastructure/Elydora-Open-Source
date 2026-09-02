@@ -29,6 +29,7 @@ type kiroFixture struct {
 func prepareKiroFixture(t *testing.T, v2Raw, v3Raw string) *kiroFixture {
 	t.Helper()
 	homeDir := filepath.Join(t.TempDir(), "home with spaces")
+	preparePrivateTransactionTestDirectory(t, homeDir)
 	agentDir := filepath.Join(homeDir, ".elydora", kiroTestAgentID)
 	guardPath := filepath.Join(agentDir, "guard.js")
 	v2Path := filepath.Join(homeDir, ".kiro", "agents", "elydora-audit.json")

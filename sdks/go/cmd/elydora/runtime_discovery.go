@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora/plugins"
+	"github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2/cmd/elydora/plugins"
 )
 
 type installedAgentRuntime struct {
