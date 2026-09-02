@@ -32,7 +32,7 @@ const AUDIT_STATUS = 'Recording Elydora tool use';
 test('Codex is registered with the native user hooks file', async () => {
   const { SUPPORTED_AGENTS } = await import(registryModuleUrl);
   assert.deepEqual(SUPPORTED_AGENTS.get('codex'), {
-    name: 'OpenAI Codex',
+    name: 'Codex CLI',
     configDir: '~/.codex',
     configFile: 'hooks.json',
   });

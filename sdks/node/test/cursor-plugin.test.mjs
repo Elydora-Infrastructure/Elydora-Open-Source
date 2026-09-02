@@ -25,7 +25,7 @@ import {
 test('Cursor is registered with the native user hook file', async () => {
   const { SUPPORTED_AGENTS } = await import(registryModuleUrl);
   assert.deepEqual(SUPPORTED_AGENTS.get('cursor'), {
-    name: 'Cursor',
+    name: 'Cursor CLI',
     configDir: '~/.cursor',
     configFile: 'hooks.json',
   });

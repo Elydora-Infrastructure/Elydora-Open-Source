@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { existsSync, utimesSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import http from 'node:http';
 import path from 'node:path';
 import test from 'node:test';
 import {
@@ -141,5 +143,198 @@ test('Claude runtime failures stay observable while guard and audit delivery rem
     assert.match(updatedLog, /Hook input is invalid JSON/i);
   } finally {
     await fixture.close();
+  }
+});
+
+function mismatchServer(respond) {
+  const submissions = [];
+  const server = http.createServer((request, response) => {
+    let raw = '';
+    request.on('data', (chunk) => { raw += chunk; });
+    request.on('end', () => {
+      if (request.url !== '/v1/operations') {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ agent: { status: 'active' } }));
+        return;
+      }
+      submissions.push(JSON.parse(raw));
+      const reply = respond(submissions) ?? mismatch(String(submissions.length).padStart(43, 'A'), 'x');
+      const send = () => {
+        response.writeHead(reply.status, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify(reply.body));
+      };
+      if (api.slow) setTimeout(send, 2600); else send();
+    });
+  });
+  const api = { submissions, slow: false };
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(Object.assign(api, {
+    baseUrl: 'http://127.0.0.1:' + server.address().port,
+    close: () => new Promise((done) => { server.closeAllConnections?.(); server.close(done); }),
+  }))));
+}
+
+function mismatch(expected, actual) {
+  return {
+    status: 400,
+    body: { error: { code: 'PREV_HASH_MISMATCH', message: 'Expected prev_chain_hash "' + expected + '", got "' + actual + '".' } },
+  };
+}
+
+test('Claude audit retries a rejected prev_chain_hash with the server value', async () => {
+  const expected = 'Rxlf4j36C3KvIQ3hWuOkX698BR5iDypUFuB70JjEuvM';
+  const api = await mismatchServer((submissions) => (submissions.length === 1
+    ? mismatch(expected, submissions[0].prev_chain_hash)
+    : { status: 202, body: { receipt: { seq_no: 2 } } }));
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const { settings } = await readSettings(fixture.settingsPath);
+    const audit = managedHandler(settings, 'PostToolUse');
+    const result = await runClaudeHook(
+      audit,
+      JSON.stringify(officialPayload('PostToolUse', { tool_response: { stdout: 'ok' } })),
+      fixture,
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(api.submissions.length, 2);
+    assert.equal(api.submissions[1].prev_chain_hash, expected);
+    assert.notEqual(api.submissions[1].operation_id, api.submissions[0].operation_id);
+    assert.notEqual(api.submissions[1].nonce, api.submissions[0].nonce);
+    const state = JSON.parse(await readFile(path.join(fixture.agentDir, 'chain-state.json'), 'utf-8'));
+    assert.equal(state.prev_chain_hash, api.submissions[1].chain_hash);
+    assert.match(await readFile(path.join(fixture.agentDir, 'error.log'), 'utf-8'), /resynced to server: Rxlf/);
+  } finally {
+    await fixture.close();
+    await api.close();
+  }
+});
+
+test('Claude audit stops after five rejected prev_chain_hash attempts', async () => {
+  const api = await mismatchServer((submissions) => (
+    mismatch(String(submissions.length).padStart(43, 'A'), submissions.at(-1).prev_chain_hash)
+  ));
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const { settings } = await readSettings(fixture.settingsPath);
+    const audit = managedHandler(settings, 'PostToolUse');
+    const result = await runClaudeHook(
+      audit,
+      JSON.stringify(officialPayload('PostToolUse', { tool_response: { stdout: 'ok' } })),
+      fixture,
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(api.submissions.length, 5);
+    assert.equal(api.submissions[4].prev_chain_hash, '4'.padStart(43, 'A'));
+    assert.match(await readFile(path.join(fixture.agentDir, 'error.log'), 'utf-8'), /rejected prev_chain_hash 5 times/);
+  } finally {
+    await fixture.close();
+    await api.close();
+  }
+});
+
+test('Claude audit stops retrying when the submit budget is spent', async () => {
+  const api = await mismatchServer(() => null);
+  api.slow = true;
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const { settings } = await readSettings(fixture.settingsPath);
+    const audit = managedHandler(settings, 'PostToolUse');
+    const started = Date.now();
+    const result = await runClaudeHook(
+      audit,
+      JSON.stringify(officialPayload('PostToolUse', { tool_response: { stdout: 'ok' } })),
+      fixture,
+    );
+    const elapsed = Date.now() - started;
+    assert.equal(result.code, 0, result.stderr);
+    assert.ok(elapsed < 7000, `hook ran ${elapsed}ms`);
+    assert.ok(api.submissions.length >= 2 && api.submissions.length <= 3, `${api.submissions.length} submissions`);
+    assert.match(await readFile(path.join(fixture.agentDir, 'error.log'), 'utf-8'), /aborted|retry budget exhausted/i);
+  } finally {
+    await fixture.close();
+    await api.close();
+  }
+});
+
+test('Claude audit does not regress a chain head advanced by a concurrent hook', async () => {
+  const newerHead = 'B'.repeat(43);
+  let statePath;
+  const api = await mismatchServer(() => {
+    writeFileSync(statePath, JSON.stringify({ prev_chain_hash: newerHead }), { mode: 0o600 });
+    return { status: 202, body: { receipt: { seq_no: 1 } } };
+  });
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    statePath = path.join(fixture.agentDir, 'chain-state.json');
+    const { settings } = await readSettings(fixture.settingsPath);
+    const audit = managedHandler(settings, 'PostToolUse');
+    const result = await runClaudeHook(
+      audit,
+      JSON.stringify(officialPayload('PostToolUse', { tool_response: { stdout: 'ok' } })),
+      fixture,
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(api.submissions[0].prev_chain_hash, 'A'.repeat(43));
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    assert.equal(state.prev_chain_hash, newerHead);
+  } finally {
+    await fixture.close();
+    await api.close();
+  }
+});
+
+test('Claude audit clears a stale chain-state lock and proceeds', async () => {
+  const api = await mismatchServer(() => ({ status: 202, body: { receipt: { seq_no: 1 } } }));
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const lockPath = path.join(fixture.agentDir, 'chain-state.json.lock');
+    writeFileSync(lockPath, '', { mode: 0o600 });
+    const stale = new Date(Date.now() - 10_000);
+    utimesSync(lockPath, stale, stale);
+    const { settings } = await readSettings(fixture.settingsPath);
+    const audit = managedHandler(settings, 'PostToolUse');
+    const result = await runClaudeHook(
+      audit,
+      JSON.stringify(officialPayload('PostToolUse', { tool_response: { stdout: 'ok' } })),
+      fixture,
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(api.submissions.length, 1);
+    assert.equal(existsSync(lockPath), false);
+    const state = JSON.parse(await readFile(path.join(fixture.agentDir, 'chain-state.json'), 'utf-8'));
+    assert.equal(state.prev_chain_hash, api.submissions[0].chain_hash);
+  } finally {
+    await fixture.close();
+    await api.close();
+  }
+});
+
+test('Claude audit does not reclaim a chain-state lock whose owner is alive', async () => {
+  const api = await mismatchServer(() => ({ status: 202, body: { receipt: { seq_no: 1 } } }));
+  const fixture = await createFixture({ baseUrl: api.baseUrl });
+  try {
+    assert.equal((await fixture.install()).code, 0);
+    const lockPath = path.join(fixture.agentDir, 'chain-state.json.lock');
+    writeFileSync(lockPath, String(process.pid), { mode: 0o600 });
+    const stale = new Date(Date.now() - 10_000);
+    utimesSync(lockPath, stale, stale);
+    const { settings } = await readSettings(fixture.settingsPath);
+    const audit = managedHandler(settings, 'PostToolUse');
+    const result = await runClaudeHook(
+      audit,
+      JSON.stringify(officialPayload('PostToolUse', { tool_response: { stdout: 'ok' } })),
+      fixture,
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(api.submissions.length, 1);
+    assert.equal(existsSync(lockPath), true);
+    assert.match(await readFile(path.join(fixture.agentDir, 'error.log'), 'utf-8'), /lock timed out/);
+  } finally {
+    await fixture.close();
+    await api.close();
   }
 });

@@ -53,6 +53,35 @@ npx elydora install \
 
 The CLI reads the private key and optional API token through hidden terminal prompts. For non-interactive installation, store each secret in an owner-only file and pass `--private_key_file <path>` and `--token_file <path>`. Secret values are rejected as command-line arguments because process listings and shell history can expose them. Agent IDs map to one physical directory directly under `~/.elydora`; portable filename rules and physical-directory checks apply before writes or recursive removal. Ambiguous uninstall discovery requires an explicit agent ID.
 
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `elydora install` | Install Elydora audit hook for a coding agent |
+| `elydora uninstall` | Remove Elydora audit hook for a coding agent |
+| `elydora status` | Show installation status for all agents |
+| `elydora agents` | List supported coding agents |
+
+### Supported Agents
+
+| Agent | Key |
+|-------|-----|
+| Augment Code CLI | `augment` |
+| Claude Code | `claudecode` |
+| Codex CLI | `codex` |
+| Cline | `cline` |
+| Factory Droid | `droid` |
+| Kimi Code | `kimi` |
+| Grok Build | `grok` |
+| Qwen Code | `qwen` |
+| Cursor CLI | `cursor` |
+| Gemini CLI | `gemini` |
+| Kiro CLI | `kirocli` |
+| Kiro IDE | `kiroide` |
+| OpenCode | `opencode` |
+| GitHub Copilot CLI | `copilot` |
+| Letta Code | `letta` |
+
 Claude Code installation writes exact matchless `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` groups to `$CLAUDE_CONFIG_DIR/settings.json`, with `~/.claude/settings.json` selected when the variable is absent. Relative and empty overrides resolve from the current working directory, matching Claude Code's native path behavior. Each handler uses Claude Code's cross-platform exec form with the current Node.js executable, a single script argument, and a ten-second timeout. Managed runtimes preserve the complete native snake_case event payload and enforce frozen or revoked state through exit code `2`. Project, local, managed, plugin, skill, and agent hook sources remain unchanged and continue loading additively. User settings, generated runtimes, runtime config, and private key commit as one rollback-capable transaction. `disableAllHooks` blocks installation; managed hook policy and safe mode can suppress user hooks. Run `/hooks` and `claude doctor` after installation.
 
 Codex installation writes exact `PreToolUse` and `PostToolUse` command groups to `$CODEX_HOME/hooks.json` (`~/.codex/hooks.json` by default) and preserves the complete native event payload. A configured `CODEX_HOME` follows Codex's existing-directory canonicalization rule. User TOML, project, plugin, and managed sources remain unchanged and continue loading additively. The hook file, generated runtimes, runtime config, and private key commit as one rollback-capable update. Run `/hooks` after installation and approve both Elydora definition hashes.
@@ -75,36 +104,13 @@ Qwen Code 0.20.0 installation writes exact, named `PreToolUse`, `PostToolUse`, a
 
 Auggie installation commits `~/.augment/settings.json`, both platform wrappers, generated runtimes, runtime config, and private key as one rollback-capable transaction. The managed `PreToolUse` guard propagates exit code `2`; `PostToolUse` preserves Auggie's complete native hook payload. System, workspace, local workspace, and alternate `--augment-cache-dir` settings remain unchanged. Run `auggie tools list` to validate the effective user configuration.
 
-Kiro CLI installation covers both runtime contracts. Kiro CLI v2 uses the generated custom agent through `kiro-cli --agent elydora-audit`. Kiro CLI v3 loads the global standalone hooks when started with `kiro-cli --v3`.
+Kiro IDE 1.0 installation is workspace-scoped. Run the installer from the workspace root; it writes `.kiro/hooks/elydora-audit.json` with exact `PreToolUse` and `PostToolUse` command hooks in Kiro's v1 JSON schema. The hook file, any exact Elydora legacy migration, generated runtimes, runtime config, and private key commit through one rollback-capable transaction. Managed handlers preserve Kiro's complete native payload and propagate frozen or revoked state through exit code `2`. Open the Agent Hooks panel after installation and confirm both Elydora entries.
 
-### Commands
+Kiro CLI installation commits the global v2 custom agent at `~/.kiro/agents/elydora-audit.json`, the CLI 2.13.0+ v3 global hooks at `~/.kiro/hooks/elydora-audit.json`, generated runtimes, runtime config, and private key through one rollback-capable transaction. The v2 agent uses exact lower-camel `preToolUse` and `postToolUse` handlers with ten-second millisecond timeouts. The v3 source uses Kiro's v1 schema with exact PascalCase `PreToolUse` and `PostToolUse` command hooks. Both contracts preserve the complete native event payload and propagate frozen or revoked state through exit code `2`. Validate v2 with `kiro-cli agent validate --path ~/.kiro/agents/elydora-audit.json` and start it with `kiro-cli --agent elydora-audit`; start the v3 TUI with `kiro-cli --v3`.
 
-| Command | Description |
-|---------|-------------|
-| `elydora install` | Install Elydora audit hook for a coding agent |
-| `elydora uninstall` | Remove Elydora audit hook for a coding agent |
-| `elydora status` | Show installation status for all agents |
-| `elydora agents` | List supported coding agents |
+OpenCode 1.18.4 installation writes the named `ElydoraAuditPlugin` export to `${XDG_CONFIG_HOME:-~/.config}/opencode/plugins/elydora-audit.js`, matching the official global plugin loader's `.js` and `.ts` discovery contract. `XDG_CONFIG_HOME` must be absolute. The `tool.execute.before` hook synchronously evaluates the full native input and argument payload and throws on frozen or revoked state. The awaited `tool.execute.after` hook preserves the complete native input and output payload and reports audit runtime failures to stderr. The plugin, exact legacy `.mjs` migration, generated runtimes, runtime config, and private key commit through one rollback-capable transaction. Status requires physical paths, exact generated sources, the installed Node executable, canonical private keys, and matching runtime identity. Restart active OpenCode sessions after installation.
 
-### Supported Agents
-
-| Agent | Key |
-|-------|-----|
-| Augment Code CLI | `augment` |
-| Claude Code | `claudecode` |
-| OpenAI Codex | `codex` |
-| Cline | `cline` |
-| Factory Droid | `droid` |
-| Kimi Code | `kimi` |
-| Grok Build | `grok` |
-| Qwen Code | `qwen` |
-| Cursor | `cursor` |
-| Gemini CLI | `gemini` |
-| Kiro CLI | `kirocli` |
-| Kiro IDE | `kiroide` |
-| OpenCode | `opencode` |
-| GitHub Copilot CLI | `copilot` |
-| Letta Code | `letta` |
+Letta Code 0.28.13 installation writes exact `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` groups to `${HOME:-~}/.letta/settings.json`, following the [official hook source and event contract](https://docs.letta.com/reference/deprecated/hooks). Workspace `.letta/settings.json` and `.letta/settings.local.json` remain read-only and participate in effective `hooks.disabled` evaluation. An explicit global `false` enables hooks; global `true`, project `true`, and project-local `true` disable them according to Letta's precedence. Managed command handlers use ten-second millisecond timeouts, the current absolute Node.js executable, PowerShell exit-code propagation on Windows, and complete native snake_case payloads. Frozen and revoked state propagates through exit code `2`; audit delivery failures remain visible through stderr, owner-only `error.log`, and exit code `1`, while Letta post events remain nonblocking. Global settings, generated runtimes, runtime config, and private key commit through one rollback-capable transaction guarded by snapshots of all three settings sources. Status requires an effective enabled state, exact hook and executable identity, physical files, canonical private keys, and matching runtime identity. Run `/hooks` and restart active Letta Code sessions after installation.
 
 ## API Reference
 

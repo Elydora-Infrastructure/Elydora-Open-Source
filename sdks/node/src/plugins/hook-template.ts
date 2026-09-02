@@ -38,6 +38,8 @@ const KEY_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'private.key');
 const CHAIN_STATE_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'chain-state.json');
 const ERROR_LOG_PATH = path.join(ELYDORA_DIR, AGENT_ID, 'error.log');
 const ZERO_CHAIN_HASH = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const MAX_CHAIN_ATTEMPTS = 5;
+const SUBMIT_BUDGET_MS = 4000;
 
 ${PROTECTED_RUNTIME_READER}
 
@@ -165,6 +167,81 @@ function writeChainState(chainHash) {
   writeProtectedJson(CHAIN_STATE_PATH, 'Chain state', { prev_chain_hash: chainHash });
 }
 
+function lockOwnerAlive(lockPath) {
+  let owner;
+  try {
+    owner = Number.parseInt(fs.readFileSync(lockPath, 'utf-8'), 10);
+  } catch (error) {
+    if (!hasRuntimeErrorCode(error, 'ENOENT')) throw error;
+    return false;
+  }
+  if (!Number.isInteger(owner) || owner <= 0) return false;
+  try {
+    process.kill(owner, 0);
+    return true;
+  } catch (error) {
+    if (hasRuntimeErrorCode(error, 'ESRCH')) return false;
+    return true;
+  }
+}
+
+function withChainLock(update) {
+  const lockPath = CHAIN_STATE_PATH + '.lock';
+  const deadline = performance.now() + 1000;
+  for (;;) {
+    let descriptor;
+    try {
+      descriptor = fs.openSync(lockPath, 'wx', 0o600);
+      fs.writeSync(descriptor, String(process.pid));
+    } catch (error) {
+      if (!hasRuntimeErrorCode(error, 'EEXIST')) throw error;
+      if (lockOwnerAlive(lockPath)) {
+        if (performance.now() > deadline) throw new Error('Chain state lock timed out: ' + lockPath);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        continue;
+      }
+      let age = 0;
+      try { age = Date.now() - fs.statSync(lockPath).mtimeMs; } catch (statError) {
+        if (!hasRuntimeErrorCode(statError, 'ENOENT')) throw statError;
+      }
+      if (age > 5000) {
+        const reclaimed = lockPath + '.' + process.pid + '.stale';
+        try {
+          fs.renameSync(lockPath, reclaimed);
+          fs.unlinkSync(reclaimed);
+        } catch (reclaimError) {
+          if (!hasRuntimeErrorCode(reclaimError, 'ENOENT')) throw reclaimError;
+        }
+        continue;
+      }
+      if (performance.now() > deadline) throw new Error('Chain state lock timed out: ' + lockPath);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      continue;
+    }
+    try {
+      return update();
+    } finally {
+      let current = null;
+      try {
+        current = fs.lstatSync(lockPath);
+      } catch (statError) {
+        if (!hasRuntimeErrorCode(statError, 'ENOENT')) throw statError;
+      }
+      const own = fs.fstatSync(descriptor);
+      fs.closeSync(descriptor);
+      if (current && current.ino === own.ino && current.dev === own.dev) fs.unlinkSync(lockPath);
+    }
+  }
+}
+
+function advanceChainState(fromHash, toHash) {
+  return withChainLock(() => {
+    if (readChainState() !== fromHash) return false;
+    writeChainState(toHash);
+    return true;
+  });
+}
+
 function readConfigAndKey() {
   const raw = readProtectedFile(
     CONFIG_PATH,
@@ -219,27 +296,43 @@ async function readHookInput() {
   return value;
 }
 
-async function submitOperation(hookData, runtime) {
-  const toolEvent = hookData.tool_result && typeof hookData.tool_result === 'object'
-    ? hookData.tool_result
-    : hookData.tool_call && typeof hookData.tool_call === 'object'
-      ? hookData.tool_call
-      : {};
-  const toolName = hookData.tool_name || hookData.toolName || hookData.name ||
-    toolEvent.name || 'unknown';
-  const toolInput = hookData.tool_input || hookData.toolInput || hookData.input ||
-    hookData.parameters || toolEvent.input || {};
-  const sessionId = hookData.conversation_id || hookData.session_id || hookData.sessionId ||
-    hookData.session || hookData.taskId || 'unknown';
-  const previousHash = readChainState();
+async function postOperation(operation, runtime, deadline) {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw new Error('Audit API retry budget exhausted');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.min(5000, remaining));
+  try {
+    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    if (runtime.config.token) headers.Authorization = 'Bearer ' + runtime.config.token;
+    const response = await fetch(runtime.baseUrl + '/v1/operations', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(operation),
+      signal: controller.signal,
+    });
+    if (response.ok) return { accepted: true };
+    const responseBody = await response.text();
+    if (response.status === 400 && responseBody) {
+      let failure;
+      try { failure = JSON.parse(responseBody); } catch (error) {
+        throw new Error('Audit API returned invalid error JSON: ' + error.message);
+      }
+      if (failure.error && failure.error.code === 'PREV_HASH_MISMATCH') {
+        const match = String(failure.error.message || '').match(
+          /Expected prev_chain_hash "([A-Za-z0-9_-]{43})"/,
+        );
+        if (match) return { accepted: false, expected: match[1] };
+      }
+    }
+    throw new Error('Audit API returned HTTP ' + response.status);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildOperation(runtime, payload, payloadHash, toolName, sessionId, previousHash) {
   const operationId = uuidv7();
   const issuedAt = Date.now();
-  const payload = NATIVE_PAYLOAD ? hookData : {
-    tool_name: toolName,
-    tool_input: toolInput,
-    session_id: sessionId,
-  };
-  const payloadHash = computePayloadHash(payload);
   const chainHash = computeChainHash(previousHash, payloadHash, operationId, issuedAt);
   const unsigned = {
     op_version: '1.0',
@@ -261,41 +354,42 @@ async function submitOperation(hookData, runtime) {
     runtime.privateKey,
     Buffer.from(jcsCanonicalise(unsigned), 'utf-8'),
   );
-  const operation = { ...unsigned, chain_hash: chainHash, signature };
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-  try {
-    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-    if (runtime.config.token) headers.Authorization = 'Bearer ' + runtime.config.token;
-    const response = await fetch(runtime.baseUrl + '/v1/operations', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(operation),
-      signal: controller.signal,
-    });
-    if (response.ok) {
-      writeChainState(chainHash);
+  return { operation: { ...unsigned, chain_hash: chainHash, signature }, chainHash };
+}
+
+async function submitOperation(hookData, runtime) {
+  const toolEvent = hookData.tool_result && typeof hookData.tool_result === 'object'
+    ? hookData.tool_result
+    : hookData.tool_call && typeof hookData.tool_call === 'object'
+      ? hookData.tool_call
+      : {};
+  const toolName = hookData.tool_name || hookData.toolName || hookData.name ||
+    toolEvent.name || 'unknown';
+  const toolInput = hookData.tool_input || hookData.toolInput || hookData.input ||
+    hookData.parameters || toolEvent.input || {};
+  const sessionId = hookData.conversation_id || hookData.session_id || hookData.sessionId ||
+    hookData.session || hookData.taskId || 'unknown';
+  const payload = NATIVE_PAYLOAD ? hookData : {
+    tool_name: toolName,
+    tool_input: toolInput,
+    session_id: sessionId,
+  };
+  const payloadHash = computePayloadHash(payload);
+  const deadline = performance.now() + SUBMIT_BUDGET_MS;
+  let previousHash = readChainState();
+  for (let attempt = 1; ; attempt += 1) {
+    const built = buildOperation(runtime, payload, payloadHash, toolName, sessionId, previousHash);
+    const result = await postOperation(built.operation, runtime, deadline);
+    if (result.accepted) {
+      advanceChainState(previousHash, built.chainHash);
       return;
     }
-    const responseBody = await response.text();
-    if (response.status === 400 && responseBody) {
-      let failure;
-      try { failure = JSON.parse(responseBody); } catch (error) {
-        throw new Error('Audit API returned invalid error JSON: ' + error.message);
-      }
-      if (failure.error && failure.error.code === 'PREV_HASH_MISMATCH') {
-        const match = String(failure.error.message || '').match(
-          /Expected prev_chain_hash "([A-Za-z0-9_-]{43})"/,
-        );
-        if (match) {
-          writeChainState(match[1]);
-          logError(new Error('Chain hash resynced to server: ' + match[1]));
-        }
-      }
+    advanceChainState(previousHash, result.expected);
+    logError(new Error('Chain hash resynced to server: ' + result.expected));
+    if (attempt >= MAX_CHAIN_ATTEMPTS) {
+      throw new Error('Audit API rejected prev_chain_hash ' + attempt + ' times');
     }
-    throw new Error('Audit API returned HTTP ' + response.status);
-  } finally {
-    clearTimeout(timeout);
+    previousHash = readChainState();
   }
 }
 
