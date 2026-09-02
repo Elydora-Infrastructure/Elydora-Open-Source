@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 
+from .error_log_template import ERROR_LOG_RUNTIME
 from .guard_template import generate_guard_script
 from .runtime_reader_template import PROTECTED_RUNTIME_READER
 
@@ -50,8 +51,12 @@ PRIVATE_KEY_PATH = os.path.join(ELYDORA_DIR, AGENT_ID, "private.key")
 CHAIN_STATE_PATH = os.path.join(ELYDORA_DIR, AGENT_ID, "chain-state.json")
 ERROR_LOG_PATH = os.path.join(ELYDORA_DIR, AGENT_ID, "error.log")
 ZERO_CHAIN_HASH = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+MAX_CHAIN_ATTEMPTS = 5
+SUBMIT_BUDGET_SECONDS = 4.0
 
 {PROTECTED_RUNTIME_READER}
+
+{ERROR_LOG_RUNTIME}
 
 
 def base64url_encode(data):
@@ -137,9 +142,12 @@ def generate_uuidv7():
 
 def log_error(error):
     try:
-        message = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        message += " [elydora-hook] " + repr(error) + "\\n"
-        append_protected_text(ERROR_LOG_PATH, "Error log", message)
+        append_bounded_error_log(
+            ERROR_LOG_PATH,
+            "Error log",
+            bounded_error_message(error),
+            MAX_PROTECTED_LOG_BYTES,
+        )
     except Exception as log_failure:
         sys.stderr.write(
             "[Elydora audit] Failed to write error log: "
@@ -175,6 +183,77 @@ def write_chain_state(chain_hash):
         "Chain state",
         {{"prev_chain_hash": chain_hash}},
     )
+
+
+def lock_owner_alive(lock_path):
+    if os.name == "nt":
+        return False
+    try:
+        with open(lock_path, "r", encoding="ascii") as handle:
+            owner = int(handle.read().strip() or "0")
+    except (FileNotFoundError, ValueError):
+        return False
+    if owner <= 0:
+        return False
+    try:
+        os.kill(owner, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def with_chain_lock(update):
+    lock_path = CHAIN_STATE_PATH + ".lock"
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            descriptor = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.write(descriptor, str(os.getpid()).encode("ascii"))
+        except FileExistsError:
+            if lock_owner_alive(lock_path):
+                if time.monotonic() > deadline:
+                    raise RuntimeError("Chain state lock timed out: " + lock_path)
+                time.sleep(0.01)
+                continue
+            try:
+                age = time.time() - os.stat(lock_path).st_mtime
+            except FileNotFoundError:
+                age = 0.0
+            if age > 5.0:
+                reclaimed = lock_path + "." + str(os.getpid()) + ".stale"
+                try:
+                    os.rename(lock_path, reclaimed)
+                    os.unlink(reclaimed)
+                except FileNotFoundError:
+                    pass
+                continue
+            if time.monotonic() > deadline:
+                raise RuntimeError("Chain state lock timed out: " + lock_path)
+            time.sleep(0.01)
+            continue
+        try:
+            return update()
+        finally:
+            try:
+                current = os.lstat(lock_path)
+            except FileNotFoundError:
+                current = None
+            own = os.fstat(descriptor)
+            os.close(descriptor)
+            if current is not None and current.st_ino == own.st_ino and current.st_dev == own.st_dev:
+                os.unlink(lock_path)
+
+
+def advance_chain_state(from_hash, to_hash):
+    def update():
+        if read_chain_state() != from_hash:
+            return False
+        write_chain_state(to_hash)
+        return True
+
+    return with_chain_lock(update)
 
 
 def read_runtime_config():
@@ -239,27 +318,44 @@ def read_event():
     return event
 
 
-def submit_operation(event, runtime):
-    nested = event.get("tool_result")
-    if not isinstance(nested, dict):
-        nested = event.get("tool_call")
-    if not isinstance(nested, dict):
-        nested = {{}}
-    tool_name = event.get("tool_name", event.get("toolName", event.get("name", nested.get("name", "unknown"))))
-    tool_input = event.get("tool_input", event.get("toolInput", event.get("input", nested.get("input", {{}}))))
-    session_id = event.get(
-        "conversation_id",
-        event.get("session_id", event.get("sessionId", event.get("session", event.get("taskId", "unknown")))),
+def post_operation(operation, runtime, deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("Audit API retry budget exhausted")
+    url = runtime.get("base_url", "https://api.elydora.com").rstrip("/") + "/v1/operations"
+    headers = {{"Content-Type": "application/json", "Accept": "application/json"}}
+    if runtime.get("token"):
+        headers["Authorization"] = "Bearer " + runtime["token"]
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(operation).encode("utf-8"),
+        headers=headers,
+        method="POST",
     )
-    previous = read_chain_state()
+    try:
+        with urllib.request.urlopen(request, timeout=min(5.0, remaining)):
+            return None
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8")
+        if error.code == 400 and body:
+            try:
+                failure = json.loads(body)
+            except (json.JSONDecodeError, ValueError) as parse_error:
+                raise RuntimeError("Audit API returned invalid error JSON: " + str(parse_error)) from parse_error
+            details = failure.get("error", {{}}) if isinstance(failure, dict) else {{}}
+            if details.get("code") == "PREV_HASH_MISMATCH":
+                match = re.search(
+                    r'Expected prev_chain_hash "([A-Za-z0-9_-]{{43}})"',
+                    str(details.get("message", "")),
+                )
+                if match:
+                    return match.group(1)
+        raise RuntimeError("Audit API returned HTTP " + str(error.code)) from error
+
+
+def build_operation(runtime, seed, payload, payload_hash, tool_name, session_id, previous):
     operation_id = generate_uuidv7()
     issued_at = int(time.time() * 1000)
-    payload = event if NATIVE_PAYLOAD else {{
-        "tool_name": tool_name,
-        "tool_input": tool_input,
-        "session_id": session_id,
-    }}
-    payload_hash = compute_payload_hash(payload)
     chain_hash = compute_chain_hash(previous, payload_hash, operation_id, issued_at)
     unsigned = {{
         "op_version": "1.0",
@@ -277,43 +373,46 @@ def submit_operation(event, runtime):
         "prev_chain_hash": previous,
         "agent_pubkey_kid": runtime["kid"],
     }}
-    signature = sign_ed25519(
-        read_private_key(),
-        jcs_canonicalize(unsigned).encode("utf-8"),
-    )
+    signature = sign_ed25519(seed, jcs_canonicalize(unsigned).encode("utf-8"))
     operation = dict(unsigned)
     operation.update({{"chain_hash": chain_hash, "signature": signature}})
-    url = runtime.get("base_url", "https://api.elydora.com").rstrip("/") + "/v1/operations"
-    headers = {{"Content-Type": "application/json", "Accept": "application/json"}}
-    if runtime.get("token"):
-        headers["Authorization"] = "Bearer " + runtime["token"]
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(operation).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=5):
-            write_chain_state(chain_hash)
-    except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8")
-        if error.code == 400 and body:
-            try:
-                failure = json.loads(body)
-            except (json.JSONDecodeError, ValueError) as parse_error:
-                raise RuntimeError("Audit API returned invalid error JSON: " + str(parse_error)) from parse_error
-            details = failure.get("error", {{}}) if isinstance(failure, dict) else {{}}
-            if details.get("code") == "PREV_HASH_MISMATCH":
-                match = re.search(
-                    r'Expected prev_chain_hash "([A-Za-z0-9_-]{{43}})"',
-                    str(details.get("message", "")),
-                )
-                if match:
-                    write_chain_state(match.group(1))
-                    log_error("Chain hash resynced to server: " + match.group(1))
-        raise RuntimeError("Audit API returned HTTP " + str(error.code)) from error
+    return operation, chain_hash
 
+
+def submit_operation(event, runtime):
+    nested = event.get("tool_result")
+    if not isinstance(nested, dict):
+        nested = event.get("tool_call")
+    if not isinstance(nested, dict):
+        nested = {{}}
+    tool_name = event.get("tool_name", event.get("toolName", event.get("name", nested.get("name", "unknown"))))
+    tool_input = event.get("tool_input", event.get("toolInput", event.get("input", nested.get("input", {{}}))))
+    session_id = event.get(
+        "conversation_id",
+        event.get("session_id", event.get("sessionId", event.get("session", event.get("taskId", "unknown")))),
+    )
+    payload = event if NATIVE_PAYLOAD else {{
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "session_id": session_id,
+    }}
+    payload_hash = compute_payload_hash(payload)
+    seed = read_private_key()
+    deadline = time.monotonic() + SUBMIT_BUDGET_SECONDS
+    previous = read_chain_state()
+    attempt = 0
+    while True:
+        attempt += 1
+        operation, chain_hash = build_operation(runtime, seed, payload, payload_hash, tool_name, session_id, previous)
+        expected = post_operation(operation, runtime, deadline)
+        if expected is None:
+            advance_chain_state(previous, chain_hash)
+            return
+        advance_chain_state(previous, expected)
+        log_error("Chain hash resynced to server: " + expected)
+        if attempt >= MAX_CHAIN_ATTEMPTS:
+            raise RuntimeError("Audit API rejected prev_chain_hash " + str(attempt) + " times")
+        previous = read_chain_state()
 
 def main():
     try:
