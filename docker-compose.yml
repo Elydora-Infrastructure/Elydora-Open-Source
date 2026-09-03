@@ -1,4 +1,3 @@
-version: '3.9'
 
 services:
   # ============================================================
@@ -55,7 +54,7 @@ services:
       retries: 10
 
   # ============================================================
-  # MinIO init — creates the evidence bucket
+  # MinIO init: creates the evidence bucket
   # ============================================================
   minio-init:
     image: minio/mc:latest
@@ -75,7 +74,7 @@ services:
     restart: on-failure
 
   # ============================================================
-  # DB migrate — runs PostgreSQL migrations
+  # DB migrate: applies packages/server/migrations
   # ============================================================
   db-migrate:
     image: postgres:16-alpine
@@ -84,181 +83,24 @@ services:
         condition: service_healthy
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:-elydora-secret-change-me}
-    command: >
-      psql -h postgres -U ${POSTGRES_USER:-elydora} -d ${POSTGRES_DB:-elydora} -c "
-        CREATE TABLE IF NOT EXISTS schema_versions (
-          version     BIGINT PRIMARY KEY,
-          applied_at  BIGINT NOT NULL,
-          description TEXT   NOT NULL
-        );
+    volumes:
+      - ./packages/server/migrations:/migrations:ro,z
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        PSQL="psql -h postgres -U ${POSTGRES_USER:-elydora} -d ${POSTGRES_DB:-elydora}"
+        for file in /migrations/*.sql; do
+          version=$$(basename "$$file" | cut -d_ -f1 | sed 's/^0*//')
+          applied=$$($$PSQL -tAX -c "SELECT 1 FROM schema_versions WHERE version = $$version" 2>/dev/null || true)
+          if [ "$$applied" = "1" ]; then
+            echo "Skipping $$file (already applied)"
+            continue
+          fi
+          echo "Applying $$file"
+          $$PSQL -v ON_ERROR_STOP=1 -f "$$file"
+        done
 
-        CREATE TABLE IF NOT EXISTS organizations (
-          org_id     TEXT   NOT NULL PRIMARY KEY,
-          name       TEXT   NOT NULL,
-          created_at BIGINT NOT NULL,
-          updated_at BIGINT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS users (
-          user_id       TEXT   NOT NULL PRIMARY KEY,
-          org_id        TEXT   NOT NULL REFERENCES organizations (org_id),
-          email         TEXT   NOT NULL UNIQUE,
-          password_hash TEXT   NOT NULL,
-          display_name  TEXT   NOT NULL,
-          role          TEXT   NOT NULL DEFAULT 'org_owner'
-                        CHECK (role IN ('org_owner', 'security_admin', 'compliance_auditor', 'readonly_investigator', 'integration_engineer')),
-          status        TEXT   NOT NULL DEFAULT 'active'
-                        CHECK (status IN ('active', 'suspended')),
-          created_at    BIGINT NOT NULL,
-          updated_at    BIGINT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_users_org_id ON users (org_id);
-        CREATE INDEX IF NOT EXISTS idx_users_email  ON users (email);
-
-        CREATE TABLE IF NOT EXISTS agents (
-          agent_id           TEXT   NOT NULL PRIMARY KEY,
-          org_id             TEXT   NOT NULL REFERENCES organizations (org_id),
-          display_name       TEXT   NOT NULL,
-          responsible_entity TEXT   NOT NULL,
-          integration_type   TEXT   NOT NULL
-                             CONSTRAINT agents_integration_type_check
-                             CHECK (integration_type IN (
-                               'augment', 'claudecode', 'cline', 'codex', 'copilot',
-                               'cursor', 'droid', 'gemini', 'grok', 'kimi', 'kirocli',
-                               'kiroide', 'letta', 'opencode', 'qwen', 'enterprise',
-                               'gui', 'sdk', 'other'
-                             )),
-          status             TEXT   NOT NULL DEFAULT 'active'
-                             CHECK (status IN ('active', 'frozen', 'revoked')),
-          created_at         BIGINT NOT NULL,
-          updated_at         BIGINT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_agents_org_id ON agents (org_id);
-
-        ALTER TABLE agents ALTER COLUMN integration_type DROP DEFAULT;
-        ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_integration_type_check;
-        ALTER TABLE agents
-          ADD CONSTRAINT agents_integration_type_check
-          CHECK (integration_type IN (
-            'augment', 'claudecode', 'cline', 'codex', 'copilot',
-            'cursor', 'droid', 'gemini', 'grok', 'kimi', 'kirocli',
-            'kiroide', 'letta', 'opencode', 'qwen', 'enterprise',
-            'gui', 'sdk', 'other'
-          ));
-
-        CREATE TABLE IF NOT EXISTS agent_keys (
-          kid        TEXT   NOT NULL PRIMARY KEY,
-          agent_id   TEXT   NOT NULL REFERENCES agents (agent_id),
-          public_key TEXT   NOT NULL,
-          algorithm  TEXT   NOT NULL DEFAULT 'ed25519'
-                     CHECK (algorithm = 'ed25519'),
-          status     TEXT   NOT NULL DEFAULT 'active'
-                     CHECK (status IN ('active', 'retired', 'revoked')),
-          created_at BIGINT NOT NULL,
-          retired_at BIGINT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_agent_keys_agent_id ON agent_keys (agent_id);
-
-        CREATE TABLE IF NOT EXISTS operations (
-          operation_id     TEXT   NOT NULL PRIMARY KEY,
-          org_id           TEXT   NOT NULL,
-          agent_id         TEXT   NOT NULL REFERENCES agents (agent_id),
-          seq_no           BIGINT NOT NULL,
-          operation_type   TEXT   NOT NULL,
-          issued_at        BIGINT NOT NULL,
-          ttl_ms           BIGINT NOT NULL,
-          nonce            TEXT   NOT NULL,
-          subject          TEXT   NOT NULL,
-          action           TEXT   NOT NULL,
-          payload_hash     TEXT   NOT NULL,
-          prev_chain_hash  TEXT   NOT NULL,
-          chain_hash       TEXT   NOT NULL,
-          agent_pubkey_kid TEXT   NOT NULL,
-          signature        TEXT   NOT NULL,
-          r2_payload_key   TEXT,
-          created_at       BIGINT NOT NULL,
-          UNIQUE (agent_id, seq_no)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_operations_org_created ON operations (org_id, created_at);
-        CREATE INDEX IF NOT EXISTS idx_operations_agent_seq   ON operations (agent_id, seq_no);
-        CREATE INDEX IF NOT EXISTS idx_operations_type        ON operations (operation_type);
-
-        CREATE TABLE IF NOT EXISTS receipts (
-          receipt_id     TEXT   NOT NULL PRIMARY KEY,
-          operation_id   TEXT   NOT NULL UNIQUE REFERENCES operations (operation_id),
-          r2_receipt_key TEXT   NOT NULL,
-          created_at     BIGINT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS epochs (
-          epoch_id     TEXT   NOT NULL PRIMARY KEY,
-          org_id       TEXT   NOT NULL,
-          start_time   BIGINT NOT NULL,
-          end_time     BIGINT NOT NULL,
-          root_hash    TEXT   NOT NULL,
-          leaf_count   BIGINT NOT NULL,
-          r2_epoch_key TEXT   NOT NULL,
-          created_at   BIGINT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS admin_events (
-          event_id    TEXT   NOT NULL PRIMARY KEY,
-          org_id      TEXT   NOT NULL,
-          actor       TEXT   NOT NULL,
-          action      TEXT   NOT NULL,
-          target_type TEXT   NOT NULL,
-          target_id   TEXT   NOT NULL,
-          details     TEXT,
-          created_at  BIGINT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_admin_events_org_created ON admin_events (org_id, created_at);
-
-        CREATE TABLE IF NOT EXISTS exports (
-          export_id     TEXT   NOT NULL PRIMARY KEY,
-          org_id        TEXT   NOT NULL,
-          status        TEXT   NOT NULL DEFAULT 'queued'
-                        CHECK (status IN ('queued', 'running', 'done', 'failed')),
-          query_params  TEXT   NOT NULL,
-          r2_export_key TEXT,
-          created_at    BIGINT NOT NULL,
-          completed_at  BIGINT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_exports_org_status ON exports (org_id, status);
-
-        CREATE TABLE IF NOT EXISTS api_tokens (
-          token_id   TEXT   NOT NULL PRIMARY KEY,
-          user_id    TEXT   NOT NULL REFERENCES users (user_id),
-          org_id     TEXT   NOT NULL REFERENCES organizations (org_id),
-          token_hash TEXT   NOT NULL UNIQUE,
-          issued_at  BIGINT NOT NULL,
-          expires_at BIGINT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens (user_id);
-
-        INSERT INTO schema_versions (version, applied_at, description)
-        VALUES (1, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Initial schema')
-        ON CONFLICT DO NOTHING;
-
-        INSERT INTO schema_versions (version, applied_at, description)
-        VALUES (2, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Require supported agent integration type')
-        ON CONFLICT DO NOTHING;
-
-        INSERT INTO schema_versions (version, applied_at, description)
-        VALUES (3, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Opaque API tokens')
-        ON CONFLICT DO NOTHING;
-      "
-    restart: on-failure
-
-  # ============================================================
-  # API server
-  # ============================================================
   api:
     build:
       context: ./packages/server

@@ -130,7 +130,6 @@ test('server, SDK, and PostgreSQL contracts match the integration catalog', asyn
   for (const path of [
     'packages/server/migrations/001_initial.sql',
     'packages/server/migrations/002_agent_integration_contract.sql',
-    'docker-compose.yml',
   ]) {
     assert.deepEqual(
       extractQuotedValues(await readText(path), constraintPattern, path),

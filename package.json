@@ -2,7 +2,7 @@
   "name": "elydora-open-source",
   "version": "0.1.0",
   "private": true,
-  "description": "Open-source responsibility layer for AI agents — tamper-evident audit trails with cryptographic proof for every action.",
+  "description": "Open-source responsibility layer for AI agents: tamper-evident audit trails with cryptographic proof for every action.",
   "keywords": [
     "ai",
     "agents",

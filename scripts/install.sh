@@ -2,7 +2,7 @@
 set -e
 
 # ───────────────────────────────────────────────────────────
-#  Elydora Open Source — One-click deployment
+#  Elydora Open Source installer
 # ───────────────────────────────────────────────────────────
 
 printf '\n'
@@ -50,7 +50,7 @@ ok "All prerequisites satisfied."
 cd "$(dirname "$0")/.."
 
 if [ -f .env ]; then
-  info "Existing .env found — skipping secret generation."
+  info "Existing .env found; skipping secret generation."
 else
   info "Generating .env from .env.example..."
 
