@@ -1,6 +1,6 @@
 # Contributing to Elydora
 
-Thank you for your interest in contributing to [Elydora](https://elydora.com) — the open-source responsibility layer for AI agents. This document explains how to get a development environment running, our code style expectations, and how to submit changes.
+Thank you for your interest in contributing to [Elydora](https://elydora.com), the open-source responsibility layer for AI agents. This document explains how to get a development environment running, our code style expectations, and how to submit changes.
 
 ---
 
@@ -34,7 +34,7 @@ This project follows the [Contributor Covenant](https://www.contributor-covenant
 | Docker | 24+ |
 | Docker Compose | v2.20+ |
 | Node.js | 18+ (for Console / Node SDK) |
-| Python | 3.9+ (for Python SDK) |
+| Python | 3.10+ (for Python SDK) |
 | Go | 1.21+ (for Go SDK) |
 
 ### Running the API Server
@@ -50,7 +50,7 @@ This project follows the [Contributor Covenant](https://www.contributor-covenant
 
    ```bash
    cp .env.example .env
-   # Edit .env — required variables are documented inside the file
+   # Edit .env; required variables are documented inside the file
    ```
 
 3. **Generate cryptographic keys**
@@ -154,11 +154,11 @@ go build -o elydora ./cmd/elydora
 - Use strict TypeScript (`"strict": true` in tsconfig).
 - Prefer `readonly` properties on interfaces.
 - Use explicit return types on exported functions and methods.
-- No `any` types — use `unknown` and narrow explicitly.
+- No `any` types; use `unknown` and narrow explicitly.
 
 ### Python SDK
 
-- Target Python 3.9+ compatibility.
+- Target Python 3.10+ compatibility.
 - Use type hints everywhere (checked with `mypy`).
 - Follow PEP 8 with a line length of 100.
 - Prefer keyword-only arguments for optional parameters.
@@ -166,7 +166,7 @@ go build -o elydora ./cmd/elydora
 ### Go SDK
 
 - Follow standard Go formatting (`gofmt`).
-- Return `(T, error)` — never panic in library code.
+- Return `(T, error)`; never panic in library code.
 - Keep the public API minimal; unexported helpers start with a lowercase letter.
 - Document all exported symbols with Go doc comments.
 

@@ -10,9 +10,9 @@ Tamper-evident audit trails with cryptographic proof for every AI agent action.
 
 [![GitHub Stars](https://img.shields.io/github/stars/Elydora-Infrastructure/Elydora-Open-Source?style=social)](https://github.com/Elydora-Infrastructure/Elydora-Open-Source)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Node SDK](https://img.shields.io/badge/node%20sdk-v2.0.1-green.svg)](sdks/node/)
-[![Python SDK](https://img.shields.io/badge/python%20sdk-v2.0.2-green.svg)](sdks/python/)
-[![Go SDK](https://img.shields.io/badge/go%20sdk-v2.0.1-green.svg)](sdks/go/)
+[![Node SDK](https://img.shields.io/badge/node%20sdk%20mirror-v2.1.0-green.svg)](sdks/node/)
+[![Python SDK](https://img.shields.io/badge/python%20sdk%20mirror-v2.1.0-green.svg)](sdks/python/)
+[![Go SDK](https://img.shields.io/badge/go%20sdk%20mirror-v2.1.0-green.svg)](sdks/go/)
 [![CI](https://img.shields.io/github/actions/workflow/status/Elydora-Infrastructure/Elydora-Open-Source/ci.yml?branch=main&label=CI)](https://github.com/Elydora-Infrastructure/Elydora-Open-Source/actions)
 [![Website](https://img.shields.io/badge/website-elydora.com-purple.svg)](https://elydora.com)
 
@@ -24,17 +24,17 @@ Tamper-evident audit trails with cryptographic proof for every AI agent action.
 
 ## What is Elydora?
 
-Elydora is an open-source **responsibility protocol for AI agents**. When an AI agent takes an action — reading a file, calling an API, modifying a database, sending a message — Elydora captures a cryptographically signed, tamper-evident record of that action. These records are chain-hashed together to form an unforgeable audit trail, then rolled up into Merkle tree epochs anchored to public timestamp authorities.
+Elydora is an open-source **responsibility protocol for AI agents**. When an AI agent reads a file, calls an API, modifies a database, or sends a message, Elydora captures a cryptographically signed, tamper-evident record of that action. These records are chain-hashed together to form an unforgeable audit trail, then rolled up into Merkle tree epochs anchored to public timestamp authorities.
 
-The result is a complete, verifiable history of everything your AI agents have ever done, that no one — not even the platform operator — can silently alter.
+The result is a complete, verifiable history of everything your AI agents have ever done, that no one, including the platform operator, can silently alter.
 
 **Core protocol features:**
 
-- **Ed25519 signed operation records (EOR)** — every agent action is signed with the agent's private key before leaving the agent's process
-- **Chain-hashed audit trails** — each record cryptographically commits to the previous record, making silent insertion, deletion, or reordering detectable
-- **Merkle tree epoch rollups with TSA anchoring** — periodic epochs hash all records into a Merkle tree whose root is anchored via RFC 3161 Trusted Timestamping
-- **Multi-tenant with RBAC** — fine-grained role-based access control with five distinct roles from read-only investigator to organization owner
-- **Compliance exports (JSON / PDF)** — one-click export of the complete audit trail for any time range, agent, or operation type
+- **Ed25519 signed operation records (EOR)**: every agent action is signed with the agent's private key before leaving the agent's process
+- **Chain-hashed audit trails**: each record cryptographically commits to the previous record, making silent insertion, deletion, or reordering detectable
+- **Merkle tree epoch rollups with TSA anchoring**: periodic epochs hash all records into a Merkle tree whose root is anchored via RFC 3161 Trusted Timestamping
+- **Multi-tenant with RBAC**: fine-grained role-based access control with five distinct roles from read-only investigator to organization owner
+- **Compliance exports (JSON / PDF)**: one-click export of the complete audit trail for any time range, agent, or operation type
 
 ---
 
@@ -87,7 +87,7 @@ The result is a complete, verifiable history of everything your AI agents have e
 git clone https://github.com/Elydora-Infrastructure/Elydora-Open-Source.git
 cd Elydora-Open-Source
 
-# One-click install — generates all secrets and starts every service
+# One-command install: generates all secrets and starts every service
 ./scripts/install.sh
 ```
 
@@ -127,12 +127,15 @@ Elydora-Open-Source/
 │   ├── server/          # Elydora API server
 │   └── console/         # Next.js web management console
 ├── sdks/
-│   ├── node/            # @elydora/sdk — Node.js / TypeScript SDK
-│   ├── python/          # elydora — Python SDK (sync + async)
+│   ├── node/            # @elydora/sdk, Node.js and TypeScript
+│   ├── python/          # elydora, sync and async clients
 │   └── go/              # github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2
 ├── helm/
 │   └── elydora/         # Kubernetes Helm chart
-├── scripts/             # Key generation, migration, and utility scripts
+├── integrations/        # catalog.json: provider IDs and hook contracts
+├── scripts/             # Installer, key generation, MinIO bucket setup
+├── test/                # Catalog contract tests
+├── docker-compose.yml   # One-command self-host stack
 ├── CONTRIBUTING.md
 ├── LICENSE
 └── README.md
@@ -143,7 +146,7 @@ Elydora-Open-Source/
 | `packages/server` | The core API server. Handles EOR ingestion, signature verification, chain validation, RBAC, epoch rollups, and compliance exports. |
 | `packages/console` | A web-based management console for viewing agents, browsing the audit trail, managing exports, and administering users. |
 | `sdks/node` | TypeScript SDK with full type coverage. Ships a CLI (`elydora`) and a programmatic client. Supports plugin hooks for popular AI coding agents. |
-| `sdks/python` | Python SDK with both synchronous (`ElydoraClient`) and asynchronous (`AsyncElydoraClient`) clients. Requires Python 3.9+. |
+| `sdks/python` | Python SDK with both synchronous (`ElydoraClient`) and asynchronous (`AsyncElydoraClient`) clients. Requires Python 3.10+. |
 | `sdks/go` | Go SDK with idiomatic error handling. Ships a CLI binary and embeds zero external runtime dependencies. |
 | `helm/elydora` | Production-ready Helm chart for Kubernetes deployments with configurable replicas, resource limits, and secret management. |
 
@@ -363,11 +366,11 @@ Revoke a specific signing key. The agent remains registered but the key can no l
 
 #### `POST /v1/operations`
 
-Submit a signed Elydora Operation Record (EOR). Required role: **integration_engineer**. The EOR must be constructed and signed by the agent SDK — never by the server.
+Submit a signed Elydora Operation Record (EOR). Required role: **integration_engineer**. The EOR must be constructed and signed by the agent SDK, never by the server.
 
 **Request body:** A complete EOR (see [Protocol Specification](#protocol-specification)).
 
-**Response:** `{ "receipt": <EAR> }` — the server-issued Elydora Acknowledgment Receipt.
+**Response:** `{ "receipt": <EAR> }`, the server-issued Elydora Acknowledgment Receipt.
 
 ---
 
@@ -604,7 +607,7 @@ npx elydora submit-op ...        # Submit an operation from the CLI
 pip install elydora
 ```
 
-**Requirements:** Python 3.9+, `requests`, `aiohttp`, `cryptography`
+**Requirements:** Python 3.10+, `requests`, `aiohttp`, `cryptography`
 
 **Quickstart (synchronous):**
 
@@ -748,7 +751,7 @@ go run ./cmd/elydora keygen
 
 ## Protocol Specification
 
-### EOR — Elydora Operation Record
+### EOR: Elydora Operation Record
 
 The EOR is the fundamental unit of the protocol. It is constructed and signed by the agent SDK before being sent to the server. The server never modifies an EOR after signing.
 
@@ -757,7 +760,7 @@ The EOR is the fundamental unit of the protocol. It is constructed and signed by
 | Field | Type | Description |
 |-------|------|-------------|
 | `op_version` | `"1.0"` | Protocol version |
-| `operation_id` | string | UUIDv7 — monotonic, time-ordered unique ID |
+| `operation_id` | string | UUIDv7, monotonic and time-ordered |
 | `org_id` | string | Organization identifier |
 | `agent_id` | string | Agent identifier |
 | `issued_at` | integer | Unix timestamp in milliseconds when the EOR was constructed |
@@ -799,7 +802,7 @@ If `payload` is `null`, the hash is of the JCS canonical form of `null`.
 
 ---
 
-### EAR — Elydora Acknowledgment Receipt
+### EAR: Elydora Acknowledgment Receipt
 
 The EAR is issued by the server upon accepting a valid EOR. It constitutes server-side proof of ingestion.
 
@@ -820,7 +823,7 @@ The EAR is issued by the server upon accepting a valid EOR. It constitutes serve
 
 ---
 
-### EER — Elydora Epoch Record
+### EER: Elydora Epoch Record
 
 Epochs are created periodically. All EOR chain hashes within the epoch window are hashed into a binary Merkle tree. The root hash is then anchored to an RFC 3161-compliant Trusted Timestamp Authority.
 
@@ -876,7 +879,7 @@ Elydora is configured via environment variables. Copy `.env.example` to `.env` a
 |----------|---------|-------------|
 | `PORT` | `8787` | HTTP port the API server listens on |
 | `EPOCH_INTERVAL_SECONDS` | `3600` | How often epoch rollups are created |
-| `TSA_URL` | — | RFC 3161 Trusted Timestamp Authority URL. If unset, TSA anchoring is disabled. |
+| `TSA_URL` | none | RFC 3161 Trusted Timestamp Authority URL. If unset, TSA anchoring is disabled. |
 | `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `MAX_PAYLOAD_BYTES` | `65536` | Maximum size of an EOR payload |
 | `OPERATION_TTL_MAX_MS` | `300000` | Maximum allowable `ttl_ms` in submitted EORs |
@@ -888,17 +891,17 @@ Elydora is configured via environment variables. Copy `.env.example` to `.env` a
 
 ### Cryptographic Guarantees
 
-**Ed25519 signatures** — Every EOR is signed by the agent's Ed25519 private key before leaving the agent's process. The server verifies this signature against the registered public key before accepting the record. A compromised server cannot forge valid EORs without access to the agent's private key.
+**Ed25519 signatures.** Every EOR is signed by the agent's Ed25519 private key before leaving the agent's process. The server verifies this signature against the registered public key before accepting the record. A compromised server cannot forge valid EORs without access to the agent's private key.
 
-**SHA-256 chain hashing** — Each EOR commits to the hash of the previous EOR, the payload, the operation ID, and the timestamp. Silent insertion, deletion, or reordering of records in the chain is detectable because any change invalidates all subsequent chain hashes.
+**SHA-256 chain hashing.** Each EOR commits to the hash of the previous EOR, the payload, the operation ID, and the timestamp. Silent insertion, deletion, or reordering of records in the chain is detectable because any change invalidates all subsequent chain hashes.
 
-**PBKDF2-SHA256 password hashing** — User passwords are hashed with PBKDF2-SHA256 before storage.
+**PBKDF2-SHA256 password hashing.** User passwords are hashed with PBKDF2-SHA256 before storage.
 
-**Better Auth session-based authentication** — User sessions are managed by Better Auth with secure server-side session storage. Session tokens cannot be forged without the secret.
+**Better Auth session-based authentication.** User sessions are managed by Better Auth with secure server-side session storage. Session tokens cannot be forged without the secret.
 
-**RFC 3161 TSA anchoring** — Epoch Merkle roots are submitted to a public timestamp authority, providing independent third-party attestation of when records existed. This prevents retroactive alteration of historical data even by the platform operator.
+**RFC 3161 TSA anchoring.** Epoch Merkle roots are submitted to a public timestamp authority, providing independent third-party attestation of when records existed. This prevents retroactive alteration of historical data even by the platform operator.
 
-**JCS canonicalization (RFC 8785)** — All signing operations use JSON Canonicalization Scheme, eliminating ambiguity in JSON serialization and ensuring signatures are deterministic across all SDK implementations.
+**JCS canonicalization (RFC 8785).** All signing operations use JSON Canonicalization Scheme, eliminating ambiguity in JSON serialization and ensuring signatures are deterministic across all SDK implementations.
 
 ### Key Management
 
