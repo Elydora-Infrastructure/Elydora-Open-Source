@@ -11,7 +11,7 @@ import (
 	"github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2/cmd/elydora/plugins"
 )
 
-const version = "2.1.0"
+const version = "2.1.1"
 
 func main() {
 	if len(os.Args) < 2 {

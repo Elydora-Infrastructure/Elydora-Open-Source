@@ -309,7 +309,7 @@ deep, err := elydora.DeepHealth("https://api.elydora.com")
 ### Constants
 
 ```go
-// Genesis chain hash — initial prev_chain_hash for an agent's first operation
+// Genesis chain hash: initial prev_chain_hash for an agent's first operation
 elydora.GenesisChainHash // "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 ```
 
