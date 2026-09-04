@@ -1,10 +1,4 @@
-/**
- * Environment bindings for the ElydoraOpenSource Node.js server.
- *
- * Replaces Cloudflare-specific bindings (D1Database, R2Bucket, KVNamespace,
- * Queue) with adapter interfaces backed by PostgreSQL, MinIO, Redis, and
- * BullMQ respectively.
- */
+/** Environment bindings for the ElydoraOpenSource Node.js server. */
 
 import type { Database, ObjectStore, Cache, MessageQueue } from './adapters/interfaces.js';
 
@@ -46,9 +40,7 @@ export interface Env {
   TSA_URL?: string;
 }
 
-/**
- * Variables set by middleware and available via `c.get(...)` / `c.var`.
- */
+/** Variables set by middleware and available via `c.get(...)` / `c.var`. */
 export interface AppVariables {
   /** UUIDv7 request identifier injected by the request-id middleware */
   request_id: string;

@@ -1,97 +1,21 @@
 package plugins
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "fmt"
 
 type clineRuntimePaths struct {
-	runtimeRoot    string
-	agentDirectory string
-	configPath     string
-	keyPath        string
-	guardPath      string
-	auditPath      string
-	hooks          clineHookPaths
+	managedRuntimePaths
+	hooks clineHookPaths
 }
 
-func validateClineInstallConfig(config InstallConfig) error {
-	for _, field := range []struct{ name, value string }{
-		{"agent name", config.AgentName},
-		{"organization ID", config.OrgID},
-		{"agent ID", config.AgentID},
-		{"key ID", config.KID},
-		{"private key", config.PrivateKey},
-		{"base URL", config.BaseURL},
-		{"guard script path", config.GuardScriptPath},
-	} {
-		if field.value == "" {
-			return fmt.Errorf("%s is required", field.name)
-		}
-	}
-	if config.AgentName != clineAgentKey {
-		return fmt.Errorf("Cline installation requires agent name %s", clineAgentKey)
-	}
-	if strings.TrimSpace(config.OrgID) == "" {
-		return fmt.Errorf("organization ID is required")
-	}
-	if strings.TrimSpace(config.KID) == "" {
-		return fmt.Errorf("key ID is required")
-	}
-	if config.Token != "" && strings.TrimSpace(config.Token) == "" {
-		return fmt.Errorf("token must contain a non-whitespace value when provided")
-	}
-	if err := validateManagedPrivateKey(config.PrivateKey); err != nil {
-		return err
-	}
-	return validateManagedBaseURL(config.BaseURL)
-}
-
-func clineAgentPaths(
-	config InstallConfig,
-	hooks clineHookPaths,
-) (*clineRuntimePaths, error) {
-	if err := validateClineInstallConfig(config); err != nil {
+func clineAgentPaths(config InstallConfig, hooks clineHookPaths) (*clineRuntimePaths, error) {
+	if err := validateManagedInstallConfig(config, clineAgentKey, "Cline"); err != nil {
 		return nil, err
 	}
-	runtimeRoot, err := AgentRuntimeRoot()
+	paths, err := resolveManagedRuntimePaths(config, clineGuardScript, clineAuditScript)
 	if err != nil {
 		return nil, err
 	}
-	agentDirectory, err := ResolveAgentRuntimeDirectory(config.AgentID)
-	if err != nil {
-		return nil, err
-	}
-	paths := &clineRuntimePaths{
-		runtimeRoot: runtimeRoot, agentDirectory: agentDirectory, hooks: hooks,
-		configPath: filepath.Join(agentDirectory, "config.json"),
-		keyPath:    filepath.Join(agentDirectory, "private.key"),
-		guardPath:  filepath.Join(agentDirectory, clineGuardScript),
-		auditPath:  filepath.Join(agentDirectory, clineAuditScript),
-	}
-	if !filepath.IsAbs(config.GuardScriptPath) ||
-		!sameClinePathValue(config.GuardScriptPath, paths.guardPath) {
-		return nil, fmt.Errorf(
-			"Elydora guard runtime must use the managed agent directory: %s",
-			paths.guardPath,
-		)
-	}
-	if config.HookScript != "" && (!filepath.IsAbs(config.HookScript) ||
-		!sameClinePathValue(config.HookScript, paths.auditPath)) {
-		return nil, fmt.Errorf(
-			"Elydora audit runtime must use the managed agent directory: %s",
-			paths.auditPath,
-		)
-	}
-	return paths, nil
-}
-
-func sameClinePathValue(left, right string) bool {
-	matches, err := sameClinePath(left, right)
-	return err == nil && matches
+	return &clineRuntimePaths{managedRuntimePaths: *paths, hooks: hooks}, nil
 }
 
 func preflightClineInstallation(
@@ -102,39 +26,20 @@ func preflightClineInstallation(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateClineRuntimeIdentity(paths.agentDirectory, config.AgentID); err != nil {
+	if err := validateManagedRuntimeIdentity(
+		paths.agentDirectory, config.AgentID, clineAgentKey, "Cline",
+	); err != nil {
 		return nil, err
 	}
-	nodePath, err := resolveNodeRuntime()
-	if err != nil {
+	if _, err := resolveAbsoluteNodeRuntime("Cline"); err != nil {
 		return nil, err
-	}
-	if !filepath.IsAbs(nodePath) || !isClaudeNodeExecutable(nodePath) {
-		return nil, fmt.Errorf("Cline hooks require an absolute Node.js executable path")
 	}
 	return paths, nil
 }
 
-func buildClineRuntimeConfig(config InstallConfig) ([]byte, error) {
-	value := map[string]any{
-		"org_id": config.OrgID, "agent_id": config.AgentID, "kid": config.KID,
-		"base_url": config.BaseURL, "agent_name": clineAgentKey,
-	}
-	if config.Token != "" {
-		value["token"] = config.Token
-	}
-	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("encode Elydora runtime config: %w", err)
-	}
-	encoded = append(encoded, '\n')
-	if len(encoded) > maxRuntimeConfigBytes {
-		return nil, fmt.Errorf(
-			"Elydora runtime config exceeds %d bytes after JSON encoding",
-			maxRuntimeConfigBytes,
-		)
-	}
-	return encoded, nil
+func clineExpectedScripts(agentID string, _ map[string]any) ([]byte, []byte) {
+	return []byte(generateGuardScript(clineAgentKey, agentID, "", false, "")),
+		[]byte(buildHookScriptWithOutput(clineAgentKey, agentID, "", false, true))
 }
 
 func prepareClineInstallationChanges(
@@ -146,11 +51,9 @@ func prepareClineInstallationChanges(
 	if paths == nil {
 		return nil, fmt.Errorf("prepared Cline installation is required")
 	}
-	if err := validateClineRuntimeIdentity(paths.agentDirectory, config.AgentID); err != nil {
-		return nil, err
-	}
-	runtimeConfig, err := buildClineRuntimeConfig(config)
-	if err != nil {
+	if err := validateManagedRuntimeIdentity(
+		paths.agentDirectory, config.AgentID, clineAgentKey, "Cline",
+	); err != nil {
 		return nil, err
 	}
 	guardMetadata, err := buildClineMetadata("guard", config.AgentID, paths.guardPath)
@@ -175,23 +78,12 @@ func prepareClineInstallationChanges(
 	); err != nil {
 		return nil, err
 	}
-	runtimeItems := []struct {
-		path, label string
-		content     []byte
-		mode        os.FileMode
-	}{
-		{paths.guardPath, "Elydora guard runtime", []byte(generateGuardScript(clineAgentKey, config.AgentID, "", false, "")), 0700},
-		{paths.configPath, "Elydora runtime config", runtimeConfig, 0600},
-		{paths.keyPath, "Elydora private key", []byte(config.PrivateKey), 0600},
-		{paths.auditPath, "Elydora audit runtime", []byte(buildHookScriptWithOutput(clineAgentKey, config.AgentID, "", false, true)), 0700},
-	}
-	changes := make([]*fileChange, 0, len(runtimeItems)+2)
-	for _, item := range runtimeItems {
-		change, err := prepareFileChange(item.path, item.label, item.content, item.mode)
-		if err != nil {
-			return nil, err
-		}
-		changes = append(changes, change)
+	guardScript, auditScript := clineExpectedScripts(config.AgentID, nil)
+	changes, err := managedRuntimeFileChanges(
+		config, &paths.managedRuntimePaths, clineAgentKey, string(guardScript), string(auditScript),
+	)
+	if err != nil {
+		return nil, err
 	}
 	for _, item := range []struct {
 		file   clineHookFile

@@ -7,8 +7,8 @@ import {
   OPENCODE_AUDIT_OPTIONS,
   buildOpenCodeMetadata,
   buildOpenCodePlugin,
-  sameOpenCodeAgentId,
 } from './opencode-contract.js';
+import { sameAgentId } from './common.js';
 import type { OpenCodePluginFile, OpenCodeSources } from './opencode-io.js';
 import {
   commitManagedInstallation,
@@ -29,14 +29,10 @@ import {
 const DISPLAY_NAME = 'OpenCode';
 const DIRECTORY_LABEL = 'OpenCode plugins directory';
 
-export type OpenCodeRuntimePaths = ManagedRuntimePaths;
-export type PreparedOpenCodeInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
 export async function preflightOpenCodeInstallation(
   config: InstallConfig,
   sources: OpenCodeSources,
-): Promise<OpenCodeRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: [{
@@ -50,7 +46,7 @@ export async function preflightOpenCodeInstallation(
 export async function prepareOpenCodeInstallation(
   config: InstallConfig,
   sources: OpenCodeSources,
-): Promise<PreparedOpenCodeInstallation> {
+): Promise<PreparedManagedInstallation> {
   const paths = await preflightOpenCodeInstallation(config, sources);
   const metadata = buildOpenCodeMetadata(
     config.agentId,
@@ -85,7 +81,7 @@ export async function prepareOpenCodeInstallation(
 }
 
 export async function commitOpenCodeInstallation(
-  prepared: PreparedOpenCodeInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);
@@ -96,7 +92,7 @@ function ownedByAgent<TContract extends { readonly agentId: string }>(
   agentId?: string,
 ): boolean {
   return file.contract !== undefined
-    && (agentId === undefined || sameOpenCodeAgentId(file.contract.agentId, agentId));
+    && (agentId === undefined || sameAgentId(file.contract.agentId, agentId));
 }
 
 export async function prepareOpenCodeUninstall(

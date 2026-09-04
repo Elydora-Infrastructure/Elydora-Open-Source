@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2/cmd/elydora/plugins"
 )
 
 func setMainTestHome(t *testing.T) string {
@@ -17,9 +19,9 @@ func setMainTestHome(t *testing.T) string {
 
 func TestGuardScriptPathRejectsUnsafeAgentID(t *testing.T) {
 	setMainTestHome(t)
-	_, err := guardScriptPathForAgent("../escape")
+	_, err := plugins.ResolveAgentRuntimeDirectory("../escape")
 	if err == nil || !strings.Contains(err.Error(), "invalid agent ID") {
-		t.Fatalf("guardScriptPathForAgent() error = %v", err)
+		t.Fatalf("ResolveAgentRuntimeDirectory() error = %v", err)
 	}
 }
 

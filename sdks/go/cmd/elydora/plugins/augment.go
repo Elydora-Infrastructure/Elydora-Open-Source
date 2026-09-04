@@ -10,8 +10,7 @@ type AugmentPlugin struct {
 	rename renameFunc
 }
 
-// ManagesGuardRuntime reports that Auggie commits its provider guard together
-// with both wrappers, the audit runtime, and user settings.
+// ManagesGuardRuntime reports that the guard is committed with the audit runtime.
 func (p *AugmentPlugin) ManagesGuardRuntime() bool {
 	return true
 }
@@ -57,13 +56,14 @@ func (p *AugmentPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAugmentChanges(
+	if err := writeManagedChanges(
 		changes,
 		"Install Augment Code CLI hooks",
 		p.rename,
 		paths.runtimeRoot,
 		paths.agentDirectory,
 		filepath.Dir(document.configPath),
+		"Auggie configuration directory",
 	); err != nil {
 		return err
 	}
@@ -99,13 +99,14 @@ func (p *AugmentPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	return writeAugmentChanges(
+	return writeManagedChanges(
 		[]*fileChange{change},
 		"Uninstall Augment Code CLI hooks",
 		p.rename,
 		"",
 		"",
 		filepath.Dir(document.configPath),
+		"Auggie configuration directory",
 	)
 }
 

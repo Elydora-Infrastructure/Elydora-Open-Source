@@ -150,10 +150,10 @@ func TestClaudeValidatesManagedRuntimeInputsBeforeWrites(t *testing.T) {
 		}, "query parameters"},
 		{"guard path", func(f *claudeFixture) {
 			f.config.GuardScriptPath = filepath.Join(f.homeDir, "outside", "guard.js")
-		}, "managed Elydora agent directory"},
+		}, "managed agent directory"},
 		{"audit path", func(f *claudeFixture) {
 			f.config.HookScript = filepath.Join(f.homeDir, "outside", "hook.js")
-		}, "managed Elydora agent directory"},
+		}, "managed agent directory"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {

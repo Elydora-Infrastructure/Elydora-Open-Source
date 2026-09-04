@@ -1,6 +1,6 @@
 {
   "name": "@elydora/sdk",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Node.js/TypeScript SDK for the Elydora tamper-evident audit platform",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,8 +8,7 @@
     "elydora": "dist/cli.js"
   },
   "files": [
-    "dist",
-    "scripts"
+    "dist"
   ],
   "scripts": {
     "build": "tsc && node scripts/postbuild.mjs",

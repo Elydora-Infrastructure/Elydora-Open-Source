@@ -1,15 +1,19 @@
+import { sameAgentId } from './common.js';
 import {
   buildGrokCommand,
   grokRuntimeReference,
-  sameGrokAgentId,
   type GrokRuntimeReference,
 } from './grok-command.js';
+import type { GuardScriptOptions } from './guard-template.js';
+import type { HookScriptOptions } from './hook-template.js';
 import { isObject, parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'grok';
 export const GUARD_SCRIPT = 'guard.js';
 export const AUDIT_SCRIPT = 'hook.js';
 export const HOOK_TIMEOUT_SECONDS = 10;
+export const GUARD_OPTIONS: GuardScriptOptions = { denyProtocol: 'grok' };
+export const AUDIT_OPTIONS: HookScriptOptions = { nativePayload: true };
 
 const MATCHER_REJECTING_EVENTS = new Set([
   'SessionStart',
@@ -172,7 +176,7 @@ function removeFromGroups(
     const handlers = group.hooks.filter((handler) => {
       const reference = managedReference(handler, scriptName);
       return !reference
-        || (agentId !== undefined && !sameGrokAgentId(reference.agentId, agentId));
+        || (agentId !== undefined && !sameAgentId(reference.agentId, agentId));
     });
     if (handlers.length > 0) result.push({ hooks: handlers });
   }

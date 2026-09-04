@@ -66,7 +66,7 @@ func resolveKimiContracts() ([]kimiContract, error) {
 	legacyHome := filepath.Join(home, ".kimi")
 	stable := stableKimiContract(filepath.Join(stableHome, "config.toml"))
 	legacy := legacyKimiContract(filepath.Join(legacyHome, "config.toml"))
-	if sameKimiPath(stable.configPath, legacy.configPath) {
+	if sameManagedPath(stable.configPath, legacy.configPath) {
 		return []kimiContract{stable}, nil
 	}
 

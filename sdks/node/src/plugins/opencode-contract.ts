@@ -1,7 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { HookScriptOptions } from './hook-template.js';
-import { samePath } from './managed-installation.js';
+import { errorMessage, samePath } from './common.js';
+import { isNodeExecutable } from './shell-command.js';
 import { parseStrictJsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'opencode';
@@ -51,10 +52,6 @@ interface OpenCodePluginMetadata {
   readonly auditPath: string;
 }
 
-export function sameOpenCodeAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
-}
-
 export function resolveOpenCodePaths(
   homeDirectory = os.homedir(),
   xdgConfigHome = process.env.XDG_CONFIG_HOME,
@@ -81,11 +78,6 @@ function validAgentSegment(agentId: string): boolean {
     && agentId !== '.'
     && agentId !== '..'
     && path.basename(agentId) === agentId;
-}
-
-function isNodeExecutable(filePath: string): boolean {
-  const basename = path.basename(filePath).toLowerCase();
-  return basename === 'node' || basename === 'node.exe';
 }
 
 function validateRuntimePaths(metadata: OpenCodePluginMetadata): void {
@@ -285,10 +277,6 @@ export const ElydoraAuditPlugin = async () => ({
   },
 });
 `);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export function parseOpenCodePlugin(

@@ -5,7 +5,7 @@ import {
   AUDIT_SCRIPT,
   GUARD_SCRIPT,
 } from './qwen-contract.js';
-import { sameQwenPath } from './qwen-command.js';
+import { MAX_SOURCE_BYTES, samePath } from './common.js';
 import {
   qwenDocumentLabel,
   type RenderedQwenDocument,
@@ -30,16 +30,11 @@ import {
 
 const DISPLAY_NAME = 'Qwen Code';
 const SETTINGS_DIRECTORY_LABEL = 'Qwen Code user configuration directory';
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
-
-export type QwenRuntimePaths = ManagedRuntimePaths;
-export type PreparedQwenInstallation = PreparedManagedInstallation;
-export type { RenameFile };
 
 export async function preflightQwenInstallation(
   config: InstallConfig,
   sources: QwenSources,
-): Promise<QwenRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   requireQwenHooksEnabled(sources);
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
@@ -53,7 +48,7 @@ export async function preflightQwenInstallation(
 
 function readOnlyPreconditions(sources: QwenSources, changedPath?: string) {
   return sources.preconditions.filter((condition) => (
-    changedPath === undefined || !sameQwenPath(condition.filePath, changedPath)
+    changedPath === undefined || !samePath(condition.filePath, changedPath)
   ));
 }
 
@@ -61,7 +56,7 @@ export async function prepareQwenInstallation(
   config: InstallConfig,
   sources: QwenSources,
   rendered: RenderedQwenDocument,
-): Promise<PreparedQwenInstallation> {
+): Promise<PreparedManagedInstallation> {
   await preflightQwenInstallation(config, sources);
   const settingsSource = rendered.next ?? rendered.document.raw;
   const prepared = await prepareManagedInstallation({
@@ -88,7 +83,7 @@ export async function prepareQwenInstallation(
 }
 
 export async function commitQwenInstallation(
-  prepared: PreparedQwenInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

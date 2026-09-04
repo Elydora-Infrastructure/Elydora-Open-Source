@@ -251,7 +251,7 @@ func runGeminiRawCommand(
 	var process *exec.Cmd
 	if runtime.GOOS == "windows" {
 		process = exec.Command(
-			codexPowerShellPath(),
+			windowsPowerShellPath(),
 			"-NoLogo",
 			"-NoProfile",
 			"-NonInteractive",

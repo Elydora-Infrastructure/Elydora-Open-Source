@@ -10,8 +10,7 @@ type GeminiPlugin struct {
 	rename renameFunc
 }
 
-// ManagesGuardRuntime reports that Gemini commits both generated runtimes and
-// the user settings document through one transaction.
+// ManagesGuardRuntime reports that the guard is committed with the audit runtime.
 func (p *GeminiPlugin) ManagesGuardRuntime() bool {
 	return true
 }
@@ -92,13 +91,14 @@ func (p *GeminiPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := writeGeminiChanges(
+	if err := writeManagedChanges(
 		changes,
 		"Install Gemini CLI hooks",
 		p.rename,
 		paths.runtimeRoot,
 		paths.agentDirectory,
 		filepath.Dir(document.filePath),
+		"Gemini CLI configuration directory",
 	); err != nil {
 		return err
 	}
@@ -120,13 +120,14 @@ func (p *GeminiPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	return writeGeminiChanges(
+	return writeManagedChanges(
 		[]*fileChange{change},
 		"Uninstall Gemini CLI hooks",
 		p.rename,
 		"",
 		"",
 		filepath.Dir(document.filePath),
+		"Gemini CLI configuration directory",
 	)
 }
 

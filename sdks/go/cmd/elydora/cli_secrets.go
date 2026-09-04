@@ -119,9 +119,6 @@ func readSecretFileWithOpen(
 	if err := validateSecretFile(before, path, label); err != nil {
 		return "", err
 	}
-	if !os.SameFile(before, before) {
-		return "", fmt.Errorf("establish %s file identity at %s", label, path)
-	}
 
 	file, err := openFile(path)
 	if err != nil {

@@ -1,9 +1,4 @@
-/**
- * Redis cache adapter implementing the Cache interface.
- *
- * Uses ioredis to back the nonce-deduplication and chain-hash caching
- * that was previously served by Cloudflare KVNamespace.
- */
+/** Redis cache adapter implementing the Cache interface. */
 
 import { Redis } from 'ioredis';
 import type { Cache } from './interfaces.js';

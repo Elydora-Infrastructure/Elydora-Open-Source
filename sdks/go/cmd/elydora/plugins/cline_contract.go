@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -78,37 +77,6 @@ func resolveClineHookFiles() (clineHookPaths, error) {
 		guardPath:      filepath.Join(hooksDirectory, clineGuardFileName),
 		auditPath:      filepath.Join(hooksDirectory, clineAuditFileName),
 	}, nil
-}
-
-func sameClineAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func normalizeClinePath(value string) (string, error) {
-	absolute, err := filepath.Abs(value)
-	if err != nil {
-		return "", err
-	}
-	normalized := filepath.Clean(absolute)
-	if runtime.GOOS == "windows" {
-		normalized = strings.ToLower(normalized)
-	}
-	return normalized, nil
-}
-
-func sameClinePath(left, right string) (bool, error) {
-	normalizedLeft, err := normalizeClinePath(left)
-	if err != nil {
-		return false, err
-	}
-	normalizedRight, err := normalizeClinePath(right)
-	if err != nil {
-		return false, err
-	}
-	return normalizedLeft == normalizedRight, nil
 }
 
 func buildClineMetadata(kind, agentID, runtimePath string) (clineHookMetadata, error) {
@@ -314,7 +282,7 @@ func clineContractForFiles(
 	if guard.Kind != "guard" || audit.Kind != "audit" {
 		return nil, fmt.Errorf("Elydora Cline hook files contain mismatched event metadata")
 	}
-	if !sameClineAgentID(guard.AgentID, audit.AgentID) {
+	if !sameManagedAgentID(guard.AgentID, audit.AgentID) {
 		return nil, fmt.Errorf("Elydora Cline hook files reference different agents")
 	}
 	agentDirectory, err := ResolveAgentRuntimeDirectory(guard.AgentID)
@@ -323,15 +291,8 @@ func clineContractForFiles(
 	}
 	expectedGuard := filepath.Join(agentDirectory, clineGuardScript)
 	expectedAudit := filepath.Join(agentDirectory, clineAuditScript)
-	guardMatches, err := sameClinePath(guard.RuntimePath, expectedGuard)
-	if err != nil {
-		return nil, fmt.Errorf("compare Cline guard runtime path: %w", err)
-	}
-	auditMatches, err := sameClinePath(audit.RuntimePath, expectedAudit)
-	if err != nil {
-		return nil, fmt.Errorf("compare Cline audit runtime path: %w", err)
-	}
-	if !guardMatches || !auditMatches {
+	if !sameManagedPath(guard.RuntimePath, expectedGuard) ||
+		!sameManagedPath(audit.RuntimePath, expectedAudit) {
 		return nil, fmt.Errorf("Elydora Cline hook metadata references an unexpected runtime path")
 	}
 	return &clineRuntimeContract{

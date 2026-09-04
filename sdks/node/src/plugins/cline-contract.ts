@@ -1,5 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
+import { asError, errorMessage, sameAgentId, samePath } from './common.js';
+import { isObject } from './strict-json.js';
 
 export const AGENT_KEY = 'cline';
 export const GUARD_SCRIPT = 'guard.js';
@@ -31,32 +33,6 @@ export interface ClineRuntimeContract {
   readonly agentDirectory: string;
   readonly guardPath: string;
   readonly auditPath: string;
-}
-
-type JsonObject = Record<string, unknown>;
-
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-export function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 export function resolveHooksDirectory(): string {

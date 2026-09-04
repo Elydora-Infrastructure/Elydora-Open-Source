@@ -1,9 +1,5 @@
 package elydora
 
-// ---------------------------------------------------------------------------
-// Enums
-// ---------------------------------------------------------------------------
-
 type AgentStatus string
 
 const (
@@ -44,34 +40,6 @@ const (
 	IntegrationTypeOther      IntegrationType = "other"
 )
 
-// IsValid reports whether the integration type belongs to the public registration contract.
-func (integrationType IntegrationType) IsValid() bool {
-	switch integrationType {
-	case IntegrationTypeAugment,
-		IntegrationTypeClaudecode,
-		IntegrationTypeCline,
-		IntegrationTypeCodex,
-		IntegrationTypeCopilot,
-		IntegrationTypeCursor,
-		IntegrationTypeDroid,
-		IntegrationTypeGemini,
-		IntegrationTypeGrok,
-		IntegrationTypeKimi,
-		IntegrationTypeKiroCLI,
-		IntegrationTypeKiroIDE,
-		IntegrationTypeLetta,
-		IntegrationTypeOpenCode,
-		IntegrationTypeQwen,
-		IntegrationTypeEnterprise,
-		IntegrationTypeGUI,
-		IntegrationTypeSDK,
-		IntegrationTypeOther:
-		return true
-	default:
-		return false
-	}
-}
-
 type ExportStatus string
 
 const (
@@ -97,7 +65,9 @@ const (
 	ErrorCodeInvalidSignature ErrorCode = "INVALID_SIGNATURE"
 	ErrorCodeUnknownAgent     ErrorCode = "UNKNOWN_AGENT"
 	ErrorCodeKeyRevoked       ErrorCode = "KEY_REVOKED"
+	ErrorCodeKeyRetired       ErrorCode = "KEY_RETIRED"
 	ErrorCodeAgentFrozen      ErrorCode = "AGENT_FROZEN"
+	ErrorCodeAgentRevoked     ErrorCode = "AGENT_REVOKED"
 	ErrorCodeTTLExpired       ErrorCode = "TTL_EXPIRED"
 	ErrorCodeReplayDetected   ErrorCode = "REPLAY_DETECTED"
 	ErrorCodePrevHashMismatch ErrorCode = "PREV_HASH_MISMATCH"
@@ -110,16 +80,42 @@ const (
 	ErrorCodeValidationError  ErrorCode = "VALIDATION_ERROR"
 )
 
+type AdminAction string
+
+const (
+	AdminActionAgentRegister    AdminAction = "agent.register"
+	AdminActionAgentUpdate      AdminAction = "agent.update"
+	AdminActionAgentFreeze      AdminAction = "agent.freeze"
+	AdminActionAgentUnfreeze    AdminAction = "agent.unfreeze"
+	AdminActionAgentRevoke      AdminAction = "agent.revoke"
+	AdminActionAgentDelete      AdminAction = "agent.delete"
+	AdminActionKeyRevoke        AdminAction = "key.revoke"
+	AdminActionExportCreate     AdminAction = "export.create"
+	AdminActionOrgCreate        AdminAction = "org.create"
+	AdminActionOrgUpdate        AdminAction = "org.update"
+	AdminActionMemberInvite     AdminAction = "member.invite"
+	AdminActionInvitationCancel AdminAction = "invitation.cancel"
+	AdminActionMemberRemove     AdminAction = "member.remove"
+	AdminActionMemberRoleChange AdminAction = "member.role_change"
+	AdminActionAgentAssign      AdminAction = "agent.assign"
+	AdminActionAgentUnassign    AdminAction = "agent.unassign"
+	AdminActionWebhookRegister  AdminAction = "webhook.register"
+	AdminActionWebhookDelete    AdminAction = "webhook.delete"
+)
+
+type WebhookStatus string
+
+const (
+	WebhookStatusActive   WebhookStatus = "active"
+	WebhookStatusDisabled WebhookStatus = "disabled"
+)
+
 type ExportFormat string
 
 const (
 	ExportFormatJSON ExportFormat = "json"
 	ExportFormatPDF  ExportFormat = "pdf"
 )
-
-// ---------------------------------------------------------------------------
-// Entity types
-// ---------------------------------------------------------------------------
 
 type Agent struct {
 	AgentID           string          `json:"agent_id"`
@@ -181,10 +177,12 @@ type Epoch struct {
 }
 
 type Organization struct {
-	OrgID     string `json:"org_id"`
-	Name      string `json:"name"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	OrgID       string  `json:"org_id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	BAOrgID     *string `json:"ba_org_id"`
+	CreatedAt   int64   `json:"created_at"`
+	UpdatedAt   int64   `json:"updated_at"`
 }
 
 type User struct {
@@ -208,11 +206,7 @@ type Export struct {
 	CompletedAt *int64       `json:"completed_at"`
 }
 
-// ---------------------------------------------------------------------------
-// Protocol types
-// ---------------------------------------------------------------------------
-
-// EOR is the Elydora Operation Record — the fundamental unit of auditable activity.
+// EOR is the Elydora Operation Record.
 type EOR struct {
 	OpVersion      string      `json:"op_version"`
 	OperationID    string      `json:"operation_id"`
@@ -231,7 +225,7 @@ type EOR struct {
 	Signature      string      `json:"signature"`
 }
 
-// EAR is the Elydora Acknowledgment Receipt — server-issued receipt confirming acceptance.
+// EAR is the Elydora Acknowledgment Receipt.
 type EAR struct {
 	ReceiptVersion   string `json:"receipt_version"`
 	ReceiptID        string `json:"receipt_id"`
@@ -247,187 +241,85 @@ type EAR struct {
 	ElydoraSignature string `json:"elydora_signature"`
 }
 
-// ---------------------------------------------------------------------------
-// API request/response types
-// ---------------------------------------------------------------------------
-
-type RegisterAgentKeyInput struct {
-	KID       string `json:"kid"`
-	PublicKey string `json:"public_key"`
-	Algorithm string `json:"algorithm"`
+// AdminEvent represents an administrative event log entry.
+type AdminEvent struct {
+	EventID    string  `json:"event_id"`
+	OrgID      string  `json:"org_id"`
+	Actor      string  `json:"actor"`
+	Action     string  `json:"action"`
+	TargetType string  `json:"target_type"`
+	TargetID   string  `json:"target_id"`
+	Details    *string `json:"details"`
+	CreatedAt  int64   `json:"created_at"`
 }
 
-type RegisterAgentRequest struct {
-	AgentID           string                  `json:"agent_id"`
-	DisplayName       string                  `json:"display_name,omitempty"`
-	ResponsibleEntity string                  `json:"responsible_entity,omitempty"`
-	IntegrationType   IntegrationType         `json:"integration_type"`
-	Keys              []RegisterAgentKeyInput `json:"keys"`
+// AgentAssignment represents a many-to-many agent-to-user assignment.
+type AgentAssignment struct {
+	ID         string `json:"id"`
+	AgentID    string `json:"agent_id"`
+	UserID     string `json:"user_id"`
+	OrgID      string `json:"org_id"`
+	AssignedBy string `json:"assigned_by"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
-type RegisterAgentResponse struct {
-	Agent Agent      `json:"agent"`
-	Keys  []AgentKey `json:"keys"`
+// Webhook represents a registered webhook endpoint.
+type Webhook struct {
+	WebhookID   string        `json:"webhook_id"`
+	OrgID       string        `json:"org_id"`
+	EndpointURL string        `json:"endpoint_url"`
+	Events      []string      `json:"events"`
+	Status      WebhookStatus `json:"status"`
+	CreatedAt   int64         `json:"created_at"`
+	UpdatedAt   int64         `json:"updated_at"`
 }
 
-type GetAgentResponse struct {
-	Agent Agent      `json:"agent"`
-	Keys  []AgentKey `json:"keys"`
-}
-
-type FreezeAgentRequest struct {
-	Reason string `json:"reason"`
-}
-
-type RevokeAgentRequest struct {
-	KID    string `json:"kid"`
-	Reason string `json:"reason"`
-}
-
-type UnfreezeAgentRequest struct {
-	Reason string `json:"reason"`
-}
-
-type ListAgentsResponse struct {
-	Agents []Agent `json:"agents"`
-}
-
-type DeleteAgentResponse struct {
-	Deleted bool `json:"deleted"`
-}
-
-type GetMeResponse struct {
-	User User `json:"user"`
-}
-
-type IssueApiTokenRequest struct {
-	TTLSeconds *int `json:"ttl_seconds"`
-}
-
-type IssueApiTokenResponse struct {
-	Token     string `json:"token"`
-	ExpiresAt *int64 `json:"expires_at"`
-}
-
-type HealthResponse struct {
-	Status          string `json:"status"`
-	Version         string `json:"version"`
-	ProtocolVersion string `json:"protocol_version"`
-	Timestamp       int64  `json:"timestamp"`
-}
-
-type SubmitOperationResponse struct {
-	Receipt EAR `json:"receipt"`
-}
-
-type GetOperationResponse struct {
-	Operation Operation `json:"operation"`
-	Receipt   *Receipt  `json:"receipt,omitempty"`
-}
-
-type VerifyOperationChecks struct {
-	Signature bool  `json:"signature"`
-	Chain     bool  `json:"chain"`
-	Receipt   bool  `json:"receipt"`
-	Merkle    *bool `json:"merkle,omitempty"`
-}
-
-type VerifyOperationResponse struct {
-	Valid  bool                  `json:"valid"`
-	Checks VerifyOperationChecks `json:"checks"`
-	Errors []string              `json:"errors,omitempty"`
-}
-
-type AuditQueryRequest struct {
-	OrgID         string `json:"org_id,omitempty"`
-	AgentID       string `json:"agent_id,omitempty"`
-	OperationType string `json:"operation_type,omitempty"`
-	StartTime     *int64 `json:"start_time,omitempty"`
-	EndTime       *int64 `json:"end_time,omitempty"`
-	Cursor        string `json:"cursor,omitempty"`
-	Limit         *int   `json:"limit,omitempty"`
-}
-
-type AuditQueryResponse struct {
-	Operations []Operation `json:"operations"`
-	Cursor     string      `json:"cursor,omitempty"`
-	TotalCount int64       `json:"total_count"`
-}
-
-type GetEpochResponse struct {
-	Epoch  Epoch        `json:"epoch"`
-	Anchor *EpochAnchor `json:"anchor,omitempty"`
-}
-
-type EpochAnchor struct {
-	TSAToken string `json:"tsa_token,omitempty"`
-}
-
-type ListEpochsResponse struct {
-	Epochs []Epoch `json:"epochs"`
-}
-
-type CreateExportRequest struct {
-	StartTime     int64        `json:"start_time"`
-	EndTime       int64        `json:"end_time"`
-	AgentID       string       `json:"agent_id,omitempty"`
-	OperationType string       `json:"operation_type,omitempty"`
-	Format        ExportFormat `json:"format"`
-}
-
-type CreateExportResponse struct {
-	Export Export `json:"export"`
-}
-
-type GetExportResponse struct {
-	Export      Export `json:"export"`
-	DownloadURL string `json:"download_url,omitempty"`
-}
-
-type ListExportsResponse struct {
-	Exports []Export `json:"exports"`
-}
-
-type JWK struct {
-	KTY string `json:"kty"`
-	CRV string `json:"crv,omitempty"`
-	X   string `json:"x,omitempty"`
-	KID string `json:"kid"`
-	Use string `json:"use"`
-	Alg string `json:"alg"`
-}
-
-type JWKSResponse struct {
-	Keys []JWK `json:"keys"`
-}
-
-type AuthRegisterRequest struct {
+// Member represents a console user returned from the members list endpoint.
+type Member struct {
+	MemberID    string `json:"member_id"`
+	UserID      string `json:"user_id"`
+	Role        string `json:"role"`
+	JoinedAt    string `json:"joined_at"`
 	Email       string `json:"email"`
-	Password    string `json:"password"`
-	DisplayName string `json:"display_name,omitempty"`
-	OrgName     string `json:"org_name,omitempty"`
+	DisplayName string `json:"display_name"`
 }
 
-type AuthRegisterResponse struct {
-	User         User         `json:"user"`
-	Organization Organization `json:"organization"`
-	Token        string       `json:"token"`
+// AuthMeUser is the profile returned by GET /v1/auth/me.
+type AuthMeUser struct {
+	UserID              string   `json:"user_id"`
+	OrgID               *string  `json:"org_id"`
+	Email               string   `json:"email"`
+	DisplayName         string   `json:"display_name"`
+	Role                RbacRole `json:"role"`
+	Status              string   `json:"status"`
+	CreatedAt           int64    `json:"created_at"`
+	UpdatedAt           int64    `json:"updated_at"`
+	OnboardingCompleted bool     `json:"onboarding_completed"`
 }
 
-type AuthLoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+// CurrentOrganization is the active organization of the authenticated user.
+type CurrentOrganization struct {
+	OrgID   *string  `json:"org_id"`
+	BAOrgID *string  `json:"ba_org_id"`
+	Role    RbacRole `json:"role"`
 }
 
-type AuthLoginResponse struct {
-	User  User   `json:"user"`
-	Token string `json:"token"`
+// DependencyHealth is the health of one backend dependency.
+type DependencyHealth struct {
+	Status        string `json:"status"`
+	LatencyMs     int64  `json:"latency_ms"`
+	ContractPhase string `json:"contract_phase,omitempty"`
 }
 
-// ---------------------------------------------------------------------------
-// CreateOperation params (SDK-specific)
-// ---------------------------------------------------------------------------
+// DeepHealthDependencies lists every backend dependency.
+type DeepHealthDependencies struct {
+	D1          DependencyHealth `json:"d1"`
+	AuthStorage DependencyHealth `json:"auth_storage"`
+	R2          DependencyHealth `json:"r2"`
+	KV          DependencyHealth `json:"kv"`
+}
 
+// CreateOperationParams are the inputs for CreateOperation.
 type CreateOperationParams struct {
 	OperationType string
 	Subject       map[string]interface{}

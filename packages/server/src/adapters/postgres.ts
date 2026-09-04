@@ -1,13 +1,4 @@
-/**
- * PostgreSQL adapter implementing the Database interface.
- *
- * Translates the D1-style API (prepare/bind/first/all/run/batch) into
- * standard `pg` Pool queries. SQLite `?` placeholders are converted to
- * PostgreSQL `$N` positional parameters automatically.
- *
- * Batch execution runs all statements inside a single transaction to
- * preserve the atomicity guarantee of D1.batch().
- */
+/** PostgreSQL adapter implementing the Database interface. */
 
 import pg from 'pg';
 import type { Database, PreparedStatement } from './interfaces.js';
@@ -25,10 +16,7 @@ types.setTypeParser(20, (val: string) => Number(val));
 // Placeholder conversion
 // ---------------------------------------------------------------------------
 
-/**
- * Convert SQLite `?` positional placeholders to PostgreSQL `$N` style.
- * Only replaces `?` outside of SQL string literals (safe for all Elydora queries).
- */
+/** Convert SQLite `?` positional placeholders to PostgreSQL `$N` style. */
 function convertPlaceholders(sql: string): string {
   let index = 0;
   return sql.replace(/\?/g, () => `$${++index}`);
@@ -38,10 +26,7 @@ function convertPlaceholders(sql: string): string {
 // Statement implementation
 // ---------------------------------------------------------------------------
 
-/**
- * Internal PostgreSQL statement that implements PreparedStatement.
- * Stores the SQL and bound values; executes lazily on first/all/run/executeWith.
- */
+/** Internal PostgreSQL statement that implements PreparedStatement. */
 class PostgresStatement implements PreparedStatement {
   constructor(
     private readonly pool: Pool,

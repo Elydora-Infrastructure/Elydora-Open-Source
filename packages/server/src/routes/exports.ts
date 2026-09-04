@@ -1,6 +1,4 @@
-/**
- * Export routes — create and retrieve compliance export jobs.
- */
+/** Export routes: create and retrieve compliance export jobs. */
 
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';
@@ -16,7 +14,7 @@ const exports_ = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 exports_.use('/*', authMiddleware);
 
 // ---------------------------------------------------------------------------
-// GET /v1/exports — List all exports for the organization
+// GET /v1/exports: List all exports for the organization
 // ---------------------------------------------------------------------------
 exports_.get('/', requireRole('compliance_auditor'), async (c) => {
   const orgId = c.get('org_id');
@@ -26,7 +24,7 @@ exports_.get('/', requireRole('compliance_auditor'), async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /v1/exports — Create a compliance export job
+// POST /v1/exports: Create a compliance export job
 // ---------------------------------------------------------------------------
 exports_.post(
   '/',
@@ -55,7 +53,7 @@ exports_.post(
 );
 
 // ---------------------------------------------------------------------------
-// GET /v1/exports/:export_id — Retrieve export status + download URL
+// GET /v1/exports/:export_id: Retrieve export status + download URL
 // ---------------------------------------------------------------------------
 exports_.get(
   '/:export_id',
@@ -77,7 +75,7 @@ exports_.get(
 );
 
 // ---------------------------------------------------------------------------
-// GET /v1/exports/:export_id/download — Stream the export file from R2
+// GET /v1/exports/:export_id/download: Stream the export file from R2
 // ---------------------------------------------------------------------------
 exports_.get(
   '/:export_id/download',

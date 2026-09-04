@@ -26,8 +26,7 @@ var SupportedAgents = map[string]AgentRegistryEntry{
 	"qwen":       {Name: "Qwen Code", ConfigDir: "~/.qwen", ConfigFile: "settings.json"},
 }
 
-// NewPlugin creates a plugin instance for the given agent name.
-// Returns nil if the agent is not supported.
+// NewPlugin returns the plugin for an agent name, or nil when unsupported.
 func NewPlugin(agentName string) AgentPlugin {
 	switch agentName {
 	case "augment":

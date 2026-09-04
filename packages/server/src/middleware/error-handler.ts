@@ -1,15 +1,4 @@
-/**
- * Global error handler middleware.
- *
- * Catches all uncaught exceptions and formats them as a standardized
- * ErrorResponse with the appropriate HTTP status code, error code,
- * and the request's unique identifier for tracing.
- *
- * When an AppError carries a `messageKey`, the handler resolves it to
- * the correct language using the `lang` context variable set by the
- * i18n middleware. This allows services to throw errors with i18n keys
- * without needing direct access to the Hono context.
- */
+/** Global error handler middleware. */
 
 import type { ErrorHandler } from 'hono';
 import type { ErrorCode, ErrorResponse } from '../shared/index.js';
@@ -18,18 +7,14 @@ import type { Env, AppVariables } from '../types.js';
 import { getMessage } from '../i18n/messages.js';
 import type { Lang } from '../i18n/messages.js';
 
-/**
- * Maps each ErrorCode to its corresponding i18n message key.
- *
- * This is used when an AppError is thrown with only an error code
- * (no explicit message or i18n key), so the global error handler
- * can still resolve a translated default message.
- */
+/** Maps each ErrorCode to its corresponding i18n message key. */
 const ERROR_CODE_TO_I18N_KEY: Record<ErrorCode, string> = {
   INVALID_SIGNATURE: 'error.invalidSignature',
   UNKNOWN_AGENT: 'error.unknownAgent',
   KEY_REVOKED: 'error.keyRevoked',
+  KEY_RETIRED: 'error.keyRetired',
   AGENT_FROZEN: 'error.agentFrozen',
+  AGENT_REVOKED: 'error.agentRevoked',
   TTL_EXPIRED: 'error.ttlExpired',
   REPLAY_DETECTED: 'error.replayDetected',
   PREV_HASH_MISMATCH: 'error.prevHashMismatch',
@@ -42,16 +27,7 @@ const ERROR_CODE_TO_I18N_KEY: Record<ErrorCode, string> = {
   VALIDATION_ERROR: 'error.validationError',
 };
 
-/**
- * Custom error class that carries an HTTP status and Elydora error code.
- *
- * Supports three modes:
- * 1. Code-only:  `new AppError(status, code)` — uses ErrorCode default message
- * 2. i18n key:   `new AppError(status, code, { key: 'msg.key', params: {...} })` —
- *                the message is resolved at response time from the translation map
- * 3. Raw string: `new AppError(status, code, 'raw message')` — message is used as-is
- *                (should be avoided in new code; prefer mode 2)
- */
+/** Custom error class that carries an HTTP status and Elydora error code. */
 export class AppError extends Error {
   public readonly statusCode: number;
   public readonly errorCode: ErrorCode;
@@ -68,13 +44,13 @@ export class AppError extends Error {
     details?: Record<string, unknown>,
   ) {
     if (typeof messageOrOpts === 'object' && messageOrOpts !== null) {
-      // i18n mode — store the key; resolve later in the error handler
+      // i18n mode: store the key; resolve later in the error handler
       super(getMessage(messageOrOpts.key, 'en', messageOrOpts.params));
       this.messageKey = messageOrOpts.key;
       this.messageParams = messageOrOpts.params;
       this.usesDefaultMessage = false;
     } else if (messageOrOpts === undefined) {
-      // Code-only mode — will be resolved via ERROR_CODE_TO_I18N_KEY
+      // Code-only mode: will be resolved via ERROR_CODE_TO_I18N_KEY
       super(ERROR_CODES[errorCode]);
       this.usesDefaultMessage = true;
     } else {
@@ -88,15 +64,7 @@ export class AppError extends Error {
     this.details = details;
   }
 
-  /**
-   * Resolve the user-facing message for a given language.
-   *
-   * Resolution order:
-   * 1. If a messageKey was provided, use that with the translation map.
-   * 2. If the error used the default ErrorCode message, translate via
-   *    the ERROR_CODE_TO_I18N_KEY mapping.
-   * 3. Otherwise return the raw message string.
-   */
+  /** Resolve the user-facing message for a given language. */
   resolveMessage(lang: Lang): string {
     if (this.messageKey) {
       return getMessage(this.messageKey, lang, this.messageParams);
@@ -111,12 +79,7 @@ export class AppError extends Error {
   }
 }
 
-/**
- * Build a standardised error response body.
- *
- * When `lang` is provided and no explicit `message` is given, the
- * ErrorCode default message is resolved from the translation map.
- */
+/** Build a standardised error response body. */
 export function buildErrorResponse(
   code: ErrorCode,
   requestId: string,
@@ -139,12 +102,7 @@ export function buildErrorResponse(
   };
 }
 
-/**
- * Hono error handler that converts all errors into the ErrorResponse format.
- *
- * Resolves i18n message keys using the `lang` context variable set by
- * the i18n middleware.
- */
+/** Hono error handler that converts all errors into the ErrorResponse format. */
 export const globalErrorHandler: ErrorHandler<{
   Bindings: Env;
   Variables: AppVariables;

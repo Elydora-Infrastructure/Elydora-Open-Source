@@ -45,7 +45,7 @@ type kiroIdeDocument struct {
 type kiroIdeLegacyDocument struct {
 	filePath string
 	snapshot *managedFileSnapshot
-	contract *kiroIdeRuntimeContract
+	contract *managedRuntimeContract
 }
 
 type kiroIdeRenderedDocument struct {
@@ -53,12 +53,6 @@ type kiroIdeRenderedDocument struct {
 	changed  bool
 	next     []byte
 	remove   bool
-}
-
-type kiroIdeRuntimeContract struct {
-	agentID   string
-	guardPath string
-	auditPath string
 }
 
 type kiroIdeHookSpecification struct {
@@ -80,14 +74,6 @@ func kiroIdeSpecification(name any) (kiroIdeHookSpecification, bool) {
 	default:
 		return kiroIdeHookSpecification{}, false
 	}
-}
-
-func cloneKiroIdeObject(value map[string]any) map[string]any {
-	clone := make(map[string]any, len(value))
-	for key, item := range value {
-		clone[key] = item
-	}
-	return clone
 }
 
 func validateKiroIdeAction(value any, label string) error {
@@ -212,7 +198,7 @@ func exactKiroIdeKeys(value map[string]any, keys ...string) bool {
 
 func ownedKiroIdeReference(
 	hook map[string]any,
-) (*kiroIdeRuntimeReference, error) {
+) (*managedScriptReference, error) {
 	specification, managed := kiroIdeSpecification(hook["name"])
 	if !managed {
 		return nil, nil
@@ -230,7 +216,7 @@ func ownedKiroIdeReference(
 
 func managedKiroIdeReference(
 	hook map[string]any,
-) (*kiroIdeRuntimeReference, error) {
+) (*managedScriptReference, error) {
 	specification, managed := kiroIdeSpecification(hook["name"])
 	if !managed ||
 		!exactKiroIdeKeys(
@@ -278,7 +264,7 @@ func buildKiroIdeHook(
 	if !managed {
 		return nil, fmt.Errorf("unsupported Elydora Kiro IDE hook name %q", name)
 	}
-	command, err := buildKiroIdeCommand(runtimePath, scriptPath)
+	command, err := buildEncodedCommand("Kiro IDE", runtimePath, scriptPath)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +284,7 @@ func withoutManagedKiroIdeHooks(
 	for _, hook := range hooks {
 		reference, err := ownedKiroIdeReference(hook)
 		remove := err == nil && reference != nil &&
-			(agentID == "" || sameKiroIdeAgentID(reference.agentID, agentID))
+			(agentID == "" || sameManagedAgentID(reference.agentID, agentID))
 		if !remove {
 			filtered = append(filtered, hook)
 		}
@@ -339,7 +325,7 @@ func renderKiroIdeDocument(
 			document: document, changed: true, remove: true,
 		}, nil
 	}
-	root := cloneKiroIdeObject(document.root)
+	root := cloneJSONObject(document.root)
 	root["version"] = "v1"
 	values := make([]any, 0, len(hooks))
 	for _, hook := range hooks {
@@ -364,7 +350,7 @@ func renderKiroIdeDocument(
 
 func kiroIdeRuntimeContracts(
 	hooks []map[string]any,
-) ([]kiroIdeRuntimeContract, error) {
+) ([]managedRuntimeContract, error) {
 	managedHooks := make([]map[string]any, 0, 2)
 	for _, hook := range hooks {
 		_, managed := kiroIdeSpecification(hook["name"])
@@ -373,38 +359,38 @@ func kiroIdeRuntimeContracts(
 		}
 	}
 	if len(managedHooks) != 2 {
-		return []kiroIdeRuntimeContract{}, nil
+		return []managedRuntimeContract{}, nil
 	}
 	nodePath, err := resolveNodeRuntime()
 	if err != nil {
 		return nil, err
 	}
-	var guard, audit *kiroIdeRuntimeReference
+	var guard, audit *managedScriptReference
 	for _, hook := range managedHooks {
 		reference, err := currentKiroIdeReference(hook, nodePath)
 		if err != nil {
 			return nil, err
 		}
 		if reference == nil {
-			return []kiroIdeRuntimeContract{}, nil
+			return []managedRuntimeContract{}, nil
 		}
 		if hook["name"] == kiroIdeGuardName {
 			if guard != nil {
-				return []kiroIdeRuntimeContract{}, nil
+				return []managedRuntimeContract{}, nil
 			}
 			guard = reference
 		} else {
 			if audit != nil {
-				return []kiroIdeRuntimeContract{}, nil
+				return []managedRuntimeContract{}, nil
 			}
 			audit = reference
 		}
 	}
 	if guard == nil || audit == nil ||
-		!sameKiroIdeAgentID(guard.agentID, audit.agentID) {
-		return []kiroIdeRuntimeContract{}, nil
+		!sameManagedAgentID(guard.agentID, audit.agentID) {
+		return []managedRuntimeContract{}, nil
 	}
-	return []kiroIdeRuntimeContract{{
+	return []managedRuntimeContract{{
 		agentID: guard.agentID, guardPath: guard.scriptPath,
 		auditPath: audit.scriptPath,
 	}}, nil
@@ -449,10 +435,10 @@ func parseKiroIdeLegacyDocument(
 		return nil, err
 	}
 	if guardReference == nil || auditReference == nil ||
-		!sameKiroIdeAgentID(guardReference.agentID, auditReference.agentID) {
+		!sameManagedAgentID(guardReference.agentID, auditReference.agentID) {
 		return document, nil
 	}
-	document.contract = &kiroIdeRuntimeContract{
+	document.contract = &managedRuntimeContract{
 		agentID: guardReference.agentID, guardPath: guardReference.scriptPath,
 		auditPath: auditReference.scriptPath,
 	}

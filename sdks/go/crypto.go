@@ -11,12 +11,6 @@ import (
 	"strings"
 )
 
-// sha256Base64url computes SHA-256 of the input string and returns base64url-encoded result.
-func sha256Base64url(data string) string {
-	h := sha256.Sum256([]byte(data))
-	return base64urlEncode(h[:])
-}
-
 // sha256BytesBase64url computes SHA-256 of raw bytes and returns base64url-encoded result.
 func sha256BytesBase64url(data []byte) string {
 	h := sha256.Sum256(data)
@@ -32,8 +26,7 @@ func computePayloadHash(payload interface{}) (string, error) {
 	return sha256BytesBase64url([]byte(canonical)), nil
 }
 
-// signEd25519 signs data with an Ed25519 private key seed (base64url-encoded 32 bytes).
-// Returns the signature as base64url.
+// signEd25519 signs data with a base64url Ed25519 seed and returns a base64url signature.
 func signEd25519(privateKeyBase64url string, data []byte) (string, error) {
 	seed, err := base64urlDecode(privateKeyBase64url)
 	if err != nil {
@@ -47,13 +40,7 @@ func signEd25519(privateKeyBase64url string, data []byte) (string, error) {
 	return base64urlEncode(sig), nil
 }
 
-// ---------------------------------------------------------------------------
-// JCS Canonicalization (RFC 8785)
-// ---------------------------------------------------------------------------
-
-// jcsCanonicalise produces a JCS-canonicalized JSON string from a Go value.
-// Object keys are sorted lexicographically, no whitespace is used, and numbers
-// follow ES2015 serialization rules.
+// jcsCanonicalise renders a value as RFC 8785 canonical JSON.
 func jcsCanonicalise(value interface{}) (string, error) {
 	var b strings.Builder
 	if err := jcsWrite(&b, value); err != nil {
@@ -113,10 +100,6 @@ func jcsWrite(b *strings.Builder, value interface{}) error {
 		first := true
 		for _, k := range keys {
 			val := v[k]
-			if val == nil {
-				// JCS includes null values but skips undefined; in Go there is no undefined
-				// so we include null.
-			}
 			if !first {
 				b.WriteByte(',')
 			}
@@ -145,7 +128,7 @@ func jcsWrite(b *strings.Builder, value interface{}) error {
 	return nil
 }
 
-// jcsWriteString writes a JSON string with minimal escaping per the JSON spec.
+// jcsWriteString writes a JSON string with minimal escaping.
 func jcsWriteString(b *strings.Builder, s string) {
 	b.WriteByte('"')
 	for _, r := range s {
@@ -175,7 +158,7 @@ func jcsWriteString(b *strings.Builder, s string) {
 	b.WriteByte('"')
 }
 
-// jcsFormatNumber formats a float64 according to ES2015 Number serialization (JCS/RFC 8785).
+// jcsFormatNumber formats a float64 as ES2015 Number serialization.
 func jcsFormatNumber(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return "null"
@@ -183,32 +166,28 @@ func jcsFormatNumber(f float64) string {
 	if f == 0 {
 		return "0"
 	}
-	// If the number is an integer that fits in int64, format without decimal point
 	if f == math.Trunc(f) && !math.IsInf(f, 0) && math.Abs(f) < 1e20 {
 		return strconv.FormatInt(int64(f), 10)
 	}
-	// Use the shortest representation that round-trips
 	return strconv.FormatFloat(f, 'G', -1, 64)
 }
 
-// signEOR signs an EOR struct. It computes the canonical representation (all fields except signature),
-// hashes it, and produces an Ed25519 signature.
+// signEOR signs the canonical EOR fields except the signature.
 func signEOR(eor *EOR, privateKeyBase64url string) (string, error) {
-	// Build canonical EOR without signature field
 	canonical := map[string]interface{}{
-		"op_version":      eor.OpVersion,
-		"operation_id":    eor.OperationID,
-		"org_id":          eor.OrgID,
-		"agent_id":        eor.AgentID,
-		"issued_at":       eor.IssuedAt,
-		"ttl_ms":          eor.TTLMs,
-		"nonce":           eor.Nonce,
-		"operation_type":  eor.OperationType,
-		"subject":         eor.Subject,
-		"action":          eor.Action,
-		"payload":         eor.Payload,
-		"payload_hash":    eor.PayloadHash,
-		"prev_chain_hash": eor.PrevChainHash,
+		"op_version":       eor.OpVersion,
+		"operation_id":     eor.OperationID,
+		"org_id":           eor.OrgID,
+		"agent_id":         eor.AgentID,
+		"issued_at":        eor.IssuedAt,
+		"ttl_ms":           eor.TTLMs,
+		"nonce":            eor.Nonce,
+		"operation_type":   eor.OperationType,
+		"subject":          eor.Subject,
+		"action":           eor.Action,
+		"payload":          eor.Payload,
+		"payload_hash":     eor.PayloadHash,
+		"prev_chain_hash":  eor.PrevChainHash,
 		"agent_pubkey_kid": eor.AgentPubkeyKID,
 	}
 	canonicalStr, err := jcsCanonicalise(canonical)

@@ -74,7 +74,7 @@ func writeClineHookChanges(
 	rename renameFunc,
 	paths clineHookPaths,
 ) error {
-	if !hasClineChanges(changes) {
+	if !hasFileChanges(changes) {
 		return nil
 	}
 	if err := ensureManagedDirectory(
@@ -95,7 +95,7 @@ func writeClineChanges(
 	rename renameFunc,
 	paths *clineRuntimePaths,
 ) error {
-	if !hasClineChanges(changes) {
+	if !hasFileChanges(changes) {
 		return nil
 	}
 	if err := EnsurePrivateDirectory(paths.runtimeRoot); err != nil {
@@ -107,15 +107,6 @@ func writeClineChanges(
 	return writeClineHookChanges(changes, label, rename, paths.hooks)
 }
 
-func hasClineChanges(changes []*fileChange) bool {
-	for _, change := range changes {
-		if change != nil {
-			return true
-		}
-	}
-	return false
-}
-
 func prepareClineUninstallChanges(
 	files []clineHookFile,
 	agentID string,
@@ -123,7 +114,7 @@ func prepareClineUninstallChanges(
 	changes := make([]*fileChange, 0, len(files))
 	for _, file := range files {
 		if file.metadata == nil ||
-			(agentID != "" && !sameClineAgentID(file.metadata.AgentID, agentID)) {
+			(agentID != "" && !sameManagedAgentID(file.metadata.AgentID, agentID)) {
 			continue
 		}
 		if err := assertClineWrapperIntegrity(file); err != nil {

@@ -1,9 +1,10 @@
+import { sameAgentId } from './common.js';
 import {
   buildKimiCommand,
   kimiRuntimeReference,
-  sameKimiAgentId,
   type KimiRuntimeReference,
 } from './kimi-command.js';
+import { isObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'kimi';
 export const GUARD_SCRIPT = 'guard.js';
@@ -34,7 +35,7 @@ export const STABLE_EVENTS = new Set<string>([
 ]);
 export const LEGACY_EVENTS = new Set<string>(SHARED_EVENTS);
 
-export type TomlObject = Record<string, unknown>;
+export type TomlObject = JsonObject;
 export type ManagedKimiEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure';
 
 export interface KimiHook extends TomlObject {
@@ -73,14 +74,6 @@ export interface KimiRuntimeContract {
   readonly guardPath: string;
   readonly auditPath: string;
   readonly configPath: string;
-}
-
-function isObject(value: unknown): value is TomlObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasOwn(value: TomlObject, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function exactManagedKeys(hook: KimiHook): boolean {
@@ -194,7 +187,7 @@ async function renderHookSource(
   if (document.usesHookTables) return patchToml(document.raw ?? '', nextRoot);
 
   let base = document.raw ?? '';
-  if (hasOwn(document.root, 'hooks')) {
+  if (Object.hasOwn(document.root, 'hooks')) {
     const rootWithoutHooks = { ...document.root };
     delete rootWithoutHooks.hooks;
     base = patchToml(base, rootWithoutHooks);
@@ -248,7 +241,7 @@ export function removeManagedKimiHooks(
     if (!expected) return true;
     const managedId = managedAgentId(hook, expected[0], expected[1]);
     if (!managedId) return true;
-    return agentId !== undefined && !sameKimiAgentId(managedId, agentId);
+    return agentId !== undefined && !sameAgentId(managedId, agentId);
   });
 }
 

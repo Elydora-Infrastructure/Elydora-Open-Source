@@ -6,7 +6,7 @@ import {
   GUARD_SCRIPT,
   LETTA_AUDIT_OPTIONS,
 } from './letta-contract.js';
-import { sameLettaPath } from './letta-command.js';
+import { MAX_SOURCE_BYTES, samePath } from './common.js';
 import {
   lettaDocumentLabel,
   type RenderedLettaDocument,
@@ -31,16 +31,11 @@ import {
 
 const DISPLAY_NAME = 'Letta Code';
 const SETTINGS_DIRECTORY_LABEL = 'Letta Code global configuration directory';
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
-
-export type LettaRuntimePaths = ManagedRuntimePaths;
-export type PreparedLettaInstallation = PreparedManagedInstallation;
-export type { RenameFile };
 
 export async function preflightLettaInstallation(
   config: InstallConfig,
   sources: LettaSources,
-): Promise<LettaRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   requireLettaHooksEnabled(sources);
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
@@ -54,7 +49,7 @@ export async function preflightLettaInstallation(
 
 function readOnlyPreconditions(sources: LettaSources, changedPath?: string) {
   return sources.preconditions.filter((condition) => (
-    changedPath === undefined || !sameLettaPath(condition.filePath, changedPath)
+    changedPath === undefined || !samePath(condition.filePath, changedPath)
   ));
 }
 
@@ -62,7 +57,7 @@ export async function prepareLettaInstallation(
   config: InstallConfig,
   sources: LettaSources,
   rendered: RenderedLettaDocument,
-): Promise<PreparedLettaInstallation> {
+): Promise<PreparedManagedInstallation> {
   await preflightLettaInstallation(config, sources);
   const settingsSource = rendered.next ?? rendered.document.raw;
   const prepared = await prepareManagedInstallation({
@@ -89,7 +84,7 @@ export async function prepareLettaInstallation(
 }
 
 export async function commitLettaInstallation(
-  prepared: PreparedLettaInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

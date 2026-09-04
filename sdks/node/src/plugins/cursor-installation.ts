@@ -1,7 +1,6 @@
 import type { InstallConfig } from './base.js';
 import {
   commitManagedInstallation,
-  managedRuntimePaths,
   preflightManagedInstallation,
   prepareManagedInstallation,
   type ManagedRuntimePaths,
@@ -10,7 +9,9 @@ import {
 } from './managed-installation.js';
 import {
   AGENT_KEY,
+  AUDIT_OPTIONS,
   AUDIT_SCRIPT,
+  GUARD_OPTIONS,
   GUARD_SCRIPT,
   type RenderedDocument,
 } from './cursor-contract.js';
@@ -20,17 +21,9 @@ const DISPLAY_NAME = 'Cursor';
 const HOOKS_DIRECTORY_LABEL = 'Cursor hooks directory';
 const HOOKS_LABEL = 'Cursor user hooks';
 
-export type CursorRuntimePaths = ManagedRuntimePaths;
-export type PreparedCursorInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
-export function cursorRuntimePaths(config: InstallConfig): CursorRuntimePaths {
-  return managedRuntimePaths(config, AGENT_KEY, GUARD_SCRIPT, AUDIT_SCRIPT);
-}
-
 export async function preflightCursorInstallation(
   config: InstallConfig,
-): Promise<CursorRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: [{
@@ -44,7 +37,7 @@ export async function preflightCursorInstallation(
 export async function prepareCursorInstallation(
   config: InstallConfig,
   rendered: RenderedDocument,
-): Promise<PreparedCursorInstallation> {
+): Promise<PreparedManagedInstallation> {
   if (!rendered.changed && rendered.document.raw === undefined) {
     throw new Error('Cursor hook installation did not produce a configuration document');
   }
@@ -61,21 +54,13 @@ export async function prepareCursorInstallation(
       source: hooksSource,
     }],
     config,
-    guardOptions: {
-      failClosed: true,
-      successOutput: '{"permission":"allow"}\n',
-      denyProtocol: 'cursor',
-    },
-    auditOptions: {
-      failClosed: true,
-      nativePayload: true,
-      successOutput: '{}\n',
-    },
+    guardOptions: GUARD_OPTIONS,
+    auditOptions: AUDIT_OPTIONS,
   }, GUARD_SCRIPT, AUDIT_SCRIPT);
 }
 
 export async function commitCursorInstallation(
-  prepared: PreparedCursorInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

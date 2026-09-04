@@ -59,7 +59,7 @@ func TestGrokInstallRollsBackFourRuntimesAfterConfigCommitFailure(t *testing.T) 
 	}
 	before := snapshotGrokFiles(t, paths...)
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameGrokPath(destination, fixture.configPath) &&
+		if sameManagedPath(destination, fixture.configPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			return errors.New("injected Grok config failure")
 		}
@@ -85,11 +85,11 @@ func TestPreparedGrokInstallRejectsConcurrentConfigChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preflight Grok installation: %v", err)
 	}
-	guardCommand, err := buildGrokCommand(nodePath, paths.guardPath)
+	guardCommand, err := buildEncodedCommand("Grok", nodePath, paths.guardPath)
 	if err != nil {
 		t.Fatalf("build guard command: %v", err)
 	}
-	auditCommand, err := buildGrokCommand(nodePath, paths.auditPath)
+	auditCommand, err := buildEncodedCommand("Grok", nodePath, paths.auditPath)
 	if err != nil {
 		t.Fatalf("build audit command: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestGrokUninstallPreservesConfigAfterCommitFailure(t *testing.T) {
 		t.Fatalf("read installed Grok config: %v", err)
 	}
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameGrokPath(destination, fixture.configPath) &&
+		if sameManagedPath(destination, fixture.configPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			return errors.New("injected Grok uninstall failure")
 		}

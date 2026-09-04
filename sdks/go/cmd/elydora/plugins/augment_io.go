@@ -83,43 +83,6 @@ func prepareRenderedAugmentChange(
 	)
 }
 
-func writeAugmentChanges(
-	changes []*fileChange,
-	label string,
-	rename renameFunc,
-	runtimeRoot string,
-	agentDirectory string,
-	settingsDirectory string,
-) error {
-	hasChanges := false
-	for _, change := range changes {
-		if change != nil {
-			hasChanges = true
-			break
-		}
-	}
-	if !hasChanges {
-		return nil
-	}
-	if agentDirectory != "" {
-		if err := EnsurePrivateDirectory(runtimeRoot); err != nil {
-			return err
-		}
-		if err := EnsurePrivateDirectory(agentDirectory); err != nil {
-			return err
-		}
-	}
-	if settingsDirectory != "" {
-		if err := ensureManagedDirectory(
-			settingsDirectory,
-			"Auggie configuration directory",
-		); err != nil {
-			return err
-		}
-	}
-	return writeChanges(changes, label, rename)
-}
-
 func validateAugmentMatchers(hooks augmentHooks, nodePath string) error {
 	events := make([]string, 0, len(hooks))
 	for event := range hooks {
@@ -208,11 +171,4 @@ func resolveAugmentWrapperPaths(agentDirectory string) augmentWrapperPaths {
 		guard: filepath.Join(agentDirectory, augmentGuardWrapperName()),
 		audit: filepath.Join(agentDirectory, augmentAuditWrapperName()),
 	}
-}
-
-func requireAugmentAbsoluteNode(nodePath string) error {
-	if !filepath.IsAbs(nodePath) || !isClaudeNodeExecutable(nodePath) {
-		return fmt.Errorf("Auggie hooks require an absolute Node.js executable path")
-	}
-	return nil
 }

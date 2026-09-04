@@ -1,24 +1,12 @@
-/**
- * Adapter interfaces for ElydoraOpenSource infrastructure services.
- *
- * These interfaces mirror the shape of Cloudflare's D1, R2, KV, and Queue
- * APIs so that all existing service code can run unchanged against
- * PostgreSQL, MinIO, Redis, and BullMQ implementations.
- */
+/** Adapter interfaces for ElydoraOpenSource infrastructure services. */
 
 // ---------------------------------------------------------------------------
 // Database (replaces D1Database)
 // ---------------------------------------------------------------------------
 
-/**
- * A prepared (and optionally bound) SQL statement.
- * Mirrors D1PreparedStatement's interface exactly.
- */
+/** A prepared (and optionally bound) SQL statement. */
 export interface PreparedStatement {
-  /**
-   * Bind positional parameters (? placeholders) to the statement.
-   * Returns a new statement with the values set.
-   */
+  /** Bind positional parameters (? placeholders) to the statement. */
   bind(...values: unknown[]): PreparedStatement;
 
   /** Execute and return the first row, or null if no rows match. */
@@ -31,18 +19,12 @@ export interface PreparedStatement {
   run(): Promise<{ success: boolean }>;
 }
 
-/**
- * Relational database adapter.
- * Mirrors the subset of D1Database methods used by Elydora services.
- */
+/** Relational database adapter. */
 export interface Database {
   /** Prepare a SQL statement for execution. */
   prepare(sql: string): PreparedStatement;
 
-  /**
-   * Execute multiple prepared statements atomically (within a transaction).
-   * Mirrors D1Database.batch().
-   */
+  /** Execute multiple prepared statements atomically (within a transaction). */
   batch(statements: PreparedStatement[]): Promise<{ results: unknown[]; success: boolean }[]>;
 }
 
@@ -73,10 +55,7 @@ export interface ObjectStoreHead {
   readonly httpMetadata?: { readonly contentType?: string };
 }
 
-/**
- * Object/blob storage adapter.
- * Mirrors the subset of R2Bucket methods used by Elydora services.
- */
+/** Object/blob storage adapter. */
 export interface ObjectStore {
   /** Upload an object to the store. */
   put(
@@ -96,10 +75,7 @@ export interface ObjectStore {
 // Cache (replaces KVNamespace)
 // ---------------------------------------------------------------------------
 
-/**
- * Key/value cache adapter.
- * Mirrors the subset of KVNamespace methods used by Elydora services.
- */
+/** Key/value cache adapter. */
 export interface Cache {
   /** Retrieve a cached value, or null if not found / expired. */
   get(key: string): Promise<string | null>;
@@ -112,10 +88,7 @@ export interface Cache {
 // Message queue (replaces Queue)
 // ---------------------------------------------------------------------------
 
-/**
- * Message queue adapter.
- * Mirrors the subset of Cloudflare Queue methods used by Elydora services.
- */
+/** Message queue adapter. */
 export interface MessageQueue {
   /** Enqueue a message under the caller's durable message ID. */
   send(messageId: string, body: unknown): Promise<void>;

@@ -1,10 +1,4 @@
-/**
- * BullMQ queue adapter implementing the MessageQueue interface.
- *
- * Wraps a BullMQ Queue instance to replace Cloudflare's Queue producer.
- * Jobs are enqueued with retry-on-failure semantics (3 attempts,
- * exponential back-off) matching the Cloudflare Queues default behaviour.
- */
+/** BullMQ queue adapter implementing the MessageQueue interface. */
 
 import { Queue as BullQueue } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';

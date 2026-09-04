@@ -1,8 +1,5 @@
 import { PROTECTED_RUNTIME_READER } from './runtime-reader-template.js';
 
-export { generateGuardScript } from './guard-template.js';
-export type { GuardScriptOptions } from './guard-template.js';
-
 export interface HookScriptOptions {
   readonly failClosed?: boolean;
   readonly nativePayload?: boolean;

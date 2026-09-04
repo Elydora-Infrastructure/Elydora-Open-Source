@@ -13,7 +13,8 @@ import {
 import { writePrivateFile } from './secure-files.js';
 import { SUPPORTED_AGENTS } from './plugins/registry.js';
 import type { AgentPlugin, InstallConfig } from './plugins/base.js';
-import { generateHookScript, generateGuardScript } from './plugins/hook-template.js';
+import { generateGuardScript } from './plugins/guard-template.js';
+import { generateHookScript } from './plugins/hook-template.js';
 import { augmentPlugin } from './plugins/augment.js';
 import { claudecodePlugin } from './plugins/claudecode.js';
 import { cursorPlugin } from './plugins/cursor.js';
@@ -49,10 +50,6 @@ const PLUGINS: ReadonlyMap<string, AgentPlugin> = new Map([
   ['grok', grokPlugin],
   ['qwen', qwenPlugin],
 ]);
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function die(message: string): never {
   console.error(`Error: ${message}`);
@@ -137,10 +134,6 @@ Supported agents: ${Array.from(SUPPORTED_AGENTS.keys()).join(', ')}
 `);
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
 async function cmdInstall(args: string[]): Promise<void> {
   const { values } = parseArgs({
     args,
@@ -178,7 +171,6 @@ async function cmdInstall(args: string[]): Promise<void> {
   });
   const baseUrl = values.base_url ?? 'https://api.elydora.com';
 
-  // Validate private key by deriving public key
   let publicKey: string;
   try {
     publicKey = derivePublicKey(privateKey);
@@ -255,7 +247,6 @@ async function cmdUninstall(args: string[]): Promise<void> {
   let agentDir: string;
   let agentDirectoryExists: boolean;
 
-  // If --agent_id not provided, scan ~/.elydora/*/config.json for matching agent_name
   if (agentId) {
     agentDir = resolvePrivateChildDirectory(ELYDORA_DIR, agentId);
     const runtimeRootExists = await requirePhysicalDirectory(ELYDORA_DIR);
@@ -287,10 +278,8 @@ async function cmdUninstall(args: string[]): Promise<void> {
   const plugin = PLUGINS.get(agentName)!;
   const registryEntry = SUPPORTED_AGENTS.get(agentName)!;
 
-  // Uninstall agent-specific config
   await plugin.uninstall(agentId);
 
-  // Remove entire agent directory
   if (agentDirectoryExists) {
     await fsp.rm(agentDir, { recursive: true });
   }
@@ -303,14 +292,12 @@ async function cmdStatus(): Promise<void> {
 
   let anyInstalled = false;
 
-  // Scan ~/.elydora/*/config.json to discover installed agents
   const installedAgents = await discoverInstalledAgents();
 
   for (const [name, plugin] of PLUGINS) {
     const st = await plugin.status();
     const statusIcon = st.installed ? '[installed]' : '[not installed]';
 
-    // Find matching installed agent(s) for this plugin
     const matching = installedAgents.filter((a) => a.agentName === name);
 
     console.log(`  ${st.displayName} (${name}) ${statusIcon}`);
@@ -338,10 +325,6 @@ function cmdAgents(): void {
   }
   console.log('\nUse "elydora install --agent <name>" to install an audit hook.');
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);

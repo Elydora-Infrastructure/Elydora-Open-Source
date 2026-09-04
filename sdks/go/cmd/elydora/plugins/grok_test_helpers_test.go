@@ -275,8 +275,7 @@ func legacyGrokCommand(t *testing.T, scriptPath string) string {
 		t.Fatalf("resolve Node.js runtime: %v", err)
 	}
 	if runtime.GOOS == "windows" {
-		return quoteGrokLegacyWindowsArgument(nodePath) + " " +
-			quoteGrokLegacyWindowsArgument(scriptPath)
+		return `"` + nodePath + `" "` + scriptPath + `"`
 	}
 	return quotePOSIXArgument(nodePath) + " " + quotePOSIXArgument(scriptPath)
 }

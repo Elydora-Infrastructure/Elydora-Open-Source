@@ -1,9 +1,5 @@
-import {
-  applyEdits,
-  modify,
-  type FormattingOptions,
-  type JSONPath,
-} from 'jsonc-parser';
+import type { JSONPath } from 'jsonc-parser';
+import { changeJsonc } from './jsonc-edit.js';
 import type { FileSnapshot } from './managed-files.js';
 import {
   MANAGED_EVENTS,
@@ -73,28 +69,6 @@ export function createLettaDocument(
   });
 }
 
-function formatting(raw: string): FormattingOptions {
-  const indentation = /\r?\n([ \t]+)\S/.exec(raw)?.[1];
-  const insertSpaces = !indentation?.includes('\t');
-  return {
-    eol: raw.includes('\r\n') ? '\r\n' : '\n',
-    insertSpaces,
-    tabSize: insertSpaces ? Math.max(1, indentation?.length ?? 2) : 1,
-  };
-}
-
-function change(
-  raw: string,
-  jsonPath: JSONPath,
-  value: unknown,
-  isArrayInsertion = false,
-): string {
-  return applyEdits(raw, modify(raw, jsonPath, value, {
-    formattingOptions: formatting(raw),
-    isArrayInsertion,
-  }));
-}
-
 function currentDocument(document: LettaDocument, raw: string): LettaDocument {
   return parseLettaDocument({
     kind: document.kind,
@@ -124,25 +98,25 @@ function removeManagedEntries(
     for (const removal of eventRemovals) {
       const groupPath: JSONPath = ['hooks', event, removal.groupIndex];
       if (removal.removeGroup) {
-        raw = change(raw, groupPath, undefined);
+        raw = changeJsonc(raw, groupPath, undefined);
         continue;
       }
       for (const handlerIndex of [...removal.handlerIndexes].sort(
         (left, right) => right - left,
       )) {
-        raw = change(raw, [...groupPath, 'hooks', handlerIndex], undefined);
+        raw = changeJsonc(raw, [...groupPath, 'hooks', handlerIndex], undefined);
       }
     }
     if (eventRemovals.length > 0) {
       const current = currentDocument(document, raw);
       if (groupsForEvent(current.hooks, event).length === 0) {
-        raw = change(raw, ['hooks', event], undefined);
+        raw = changeJsonc(raw, ['hooks', event], undefined);
       }
     }
   }
   const current = currentDocument(document, raw);
   if (current.hasHooksContainer && Object.keys(current.hooks).length === 0) {
-    raw = change(raw, ['hooks'], undefined);
+    raw = changeJsonc(raw, ['hooks'], undefined);
   }
   return raw;
 }
@@ -156,9 +130,9 @@ function appendGroup(
   const current = currentDocument(document, raw);
   const groups = groupsForEvent(current.hooks, event);
   if (groups.length > 0) {
-    return change(raw, ['hooks', event, groups.length], group, true);
+    return changeJsonc(raw, ['hooks', event, groups.length], group, true);
   }
-  return change(raw, ['hooks', event], [group]);
+  return changeJsonc(raw, ['hooks', event], [group]);
 }
 
 export function renderLettaDocument(

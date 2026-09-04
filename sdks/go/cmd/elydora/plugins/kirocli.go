@@ -79,7 +79,7 @@ func (p *KiroCliPlugin) Install(config InstallConfig) error {
 	copyKiroObject(nextV2, v2Settings)
 	nextV2["hooks"] = v2Hooks
 
-	nextV3 := cloneKiroObject(v3Settings)
+	nextV3 := cloneJSONObject(v3Settings)
 	nextV3["version"] = "v1"
 	v3Hooks := make([]any, 0, len(currentV3Hooks)+2)
 	for _, hook := range currentV3Hooks {

@@ -1,48 +1,9 @@
 package plugins
 
 import (
-	"fmt"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
-
-type kimiRuntimeReference struct {
-	agentID    string
-	scriptPath string
-}
-
-func sameKimiPath(left, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if absolute, err := filepath.Abs(left); err == nil {
-		left = absolute
-	}
-	if absolute, err := filepath.Abs(right); err == nil {
-		right = absolute
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameKimiAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func buildKimiCommand(runtimePath, scriptPath string) (string, error) {
-	if !filepath.IsAbs(runtimePath) || !filepath.IsAbs(scriptPath) {
-		return "", fmt.Errorf("kimi hook commands require absolute runtime and script paths")
-	}
-	if runtime.GOOS == "windows" {
-		return codexWindowsCommand(runtimePath, scriptPath), nil
-	}
-	return quotePOSIXArgument(runtimePath) + " " + quotePOSIXArgument(scriptPath), nil
-}
 
 func readKimiLegacyWindowsArgument(command string, start int) (string, int, bool) {
 	if start >= len(command) {
@@ -66,6 +27,7 @@ func readKimiLegacyWindowsArgument(command string, start int) (string, int, bool
 	return command[start:end], end, end > start
 }
 
+// parseKimiLegacyWindowsCommand reads the pre-2.1 quoteWindowsArgument form.
 func parseKimiLegacyWindowsCommand(command string) (string, string, bool) {
 	runtimePath, next, ok := readKimiLegacyWindowsArgument(command, 0)
 	if !ok || next >= len(command) || command[next] != ' ' {
@@ -80,40 +42,19 @@ func parseKimiLegacyWindowsCommand(command string) (string, string, bool) {
 }
 
 func parseKimiCommand(command string) (string, string, bool) {
-	if runtimePath, scriptPath, ok := parseCodexPOSIXCommand(command); ok {
-		return runtimePath, scriptPath, true
-	}
-	if runtimePath, scriptPath, ok := parseCodexWindowsCommand(command); ok {
+	if runtimePath, scriptPath, ok := parseEncodedCommand(command); ok {
 		return runtimePath, scriptPath, true
 	}
 	return parseKimiLegacyWindowsCommand(command)
 }
 
-func isKimiNodeExecutable(path string) bool {
-	name := filepath.Base(path)
-	return name == "node" || strings.EqualFold(name, "node.exe")
-}
-
 func kimiRuntimeReferenceForCommand(
 	command string,
 	scriptName string,
-) (*kimiRuntimeReference, error) {
+) (*managedScriptReference, error) {
 	runtimePath, scriptPath, ok := parseKimiCommand(command)
-	if !ok || !filepath.IsAbs(runtimePath) || !filepath.IsAbs(scriptPath) ||
-		!isKimiNodeExecutable(runtimePath) || filepath.Base(scriptPath) != scriptName {
+	if !ok || !filepath.IsAbs(runtimePath) || !isNodeExecutable(runtimePath) {
 		return nil, nil
 	}
-	agentDirectory := filepath.Dir(scriptPath)
-	runtimeRoot, err := AgentRuntimeRoot()
-	if err != nil {
-		return nil, err
-	}
-	if !sameKimiPath(filepath.Dir(agentDirectory), runtimeRoot) {
-		return nil, nil
-	}
-	agentID := filepath.Base(agentDirectory)
-	if agentID == "" || agentID == "." || agentID == ".." {
-		return nil, nil
-	}
-	return &kimiRuntimeReference{agentID: agentID, scriptPath: scriptPath}, nil
+	return resolveManagedScript(scriptPath, scriptName)
 }

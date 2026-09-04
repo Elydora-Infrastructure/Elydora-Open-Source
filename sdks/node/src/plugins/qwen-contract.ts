@@ -1,8 +1,7 @@
+import { sameAgentId, samePath } from './common.js';
 import {
   buildQwenCommand,
   qwenRuntimeReference,
-  sameQwenAgentId,
-  sameQwenPath,
   type QwenRuntimeReference,
 } from './qwen-command.js';
 import { isObject, type JsonObject } from './strict-json.js';
@@ -283,7 +282,7 @@ export function managedQwenRemovals(
     (hooks[event] ?? []).forEach((group, groupIndex) => {
       const handlerIndexes = group.hooks.flatMap((handler, handlerIndex) => {
         const reference = managedReference(handler, scriptName, hookName, true);
-        return reference && (agentId === undefined || sameQwenAgentId(reference.agentId, agentId))
+        return reference && (agentId === undefined || sameAgentId(reference.agentId, agentId))
           ? [handlerIndex]
           : [];
       });
@@ -334,7 +333,7 @@ export function qwenRuntimeContracts(hooks: QwenHooks): QwenRuntimeContract[] {
     const post = posts.get(key);
     const failure = failures.get(key);
     if (guard.length !== 1 || post?.length !== 1 || failure?.length !== 1) continue;
-    if (!sameQwenPath(post[0].scriptPath, failure[0].scriptPath)) continue;
+    if (!samePath(post[0].scriptPath, failure[0].scriptPath)) continue;
     contracts.push({
       agentId: guard[0].agentId,
       guardPath: guard[0].scriptPath,
@@ -343,5 +342,3 @@ export function qwenRuntimeContracts(hooks: QwenHooks): QwenRuntimeContract[] {
   }
   return contracts;
 }
-
-export { isObject, type JsonObject };

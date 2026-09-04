@@ -1,11 +1,4 @@
-/**
- * Cursor-based pagination helpers.
- *
- * Cursors are opaque base64url-encoded JSON objects containing the
- * created_at timestamp and primary key of the last item in the current
- * page. This design avoids OFFSET-based pagination which degrades at
- * scale and is susceptible to drift when rows are inserted concurrently.
- */
+/** Cursor-based pagination helpers. */
 
 import { base64urlDecode, base64urlEncode } from './crypto.js';
 
@@ -17,24 +10,14 @@ export interface CursorPayload {
   readonly id: string;
 }
 
-/**
- * Encode a cursor payload into an opaque cursor string.
- *
- * @param payload - The cursor data to encode
- * @returns An opaque base64url-encoded cursor string
- */
+/** Encode a cursor payload into an opaque cursor string. */
 export function encodeCursor(payload: CursorPayload): string {
   const json = JSON.stringify(payload);
   const bytes = new TextEncoder().encode(json);
   return base64urlEncode(bytes);
 }
 
-/**
- * Decode an opaque cursor string back into its payload.
- *
- * @param cursor - The opaque cursor string
- * @returns The decoded cursor payload, or null if invalid
- */
+/** Decode an opaque cursor string back into its payload. */
 export function decodeCursor(cursor: string): CursorPayload | null {
   try {
     const bytes = base64urlDecode(cursor);

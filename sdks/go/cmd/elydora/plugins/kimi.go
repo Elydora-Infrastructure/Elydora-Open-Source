@@ -34,11 +34,11 @@ func (p *KimiPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	guardCommand, err := buildKimiCommand(nodePath, paths.guardPath)
+	guardCommand, err := buildEncodedCommand("kimi", nodePath, paths.guardPath)
 	if err != nil {
 		return err
 	}
-	auditCommand, err := buildKimiCommand(nodePath, paths.auditPath)
+	auditCommand, err := buildEncodedCommand("kimi", nodePath, paths.auditPath)
 	if err != nil {
 		return err
 	}
@@ -70,12 +70,9 @@ func (p *KimiPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := writeKimiChanges(
-		changes,
-		"Install Kimi hooks",
-		p.rename,
-		paths.runtimeRoot,
-		paths.agentDirectory,
+	if err := writeManagedChanges(
+		changes, "Install Kimi hooks", p.rename,
+		paths.runtimeRoot, paths.agentDirectory, "", "",
 	); err != nil {
 		return err
 	}
@@ -107,13 +104,7 @@ func (p *KimiPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	return writeKimiChanges(
-		changes,
-		"Uninstall Kimi hooks",
-		p.rename,
-		"",
-		"",
-	)
+	return writeManagedChanges(changes, "Uninstall Kimi hooks", p.rename, "", "", "", "")
 }
 
 func (p *KimiPlugin) Status() (PluginStatus, error) {

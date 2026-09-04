@@ -1,10 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
+import { managedScriptReference, sameAgentId } from './common.js';
 import {
   buildKiroIdeCommand,
   kiroIdeRuntimeReference,
-  sameKiroIdeAgentId,
-  sameKiroIdePath,
   type KiroIdeRuntimeReference,
 } from './kiroide-command.js';
 import { isObject, parseStrictJsonObject, type JsonObject } from './strict-json.js';
@@ -154,7 +153,7 @@ export function createKiroIdeDocument(filePath: string): KiroIdeDocument {
   return { exists: false, filePath, root: {}, hooks: [] };
 }
 
-function exactKeys(value: JsonObject, keys: readonly string[]): boolean {
+export function exactKeys(value: JsonObject, keys: readonly string[]): boolean {
   return Object.keys(value).sort().join('|') === [...keys].sort().join('|');
 }
 
@@ -228,7 +227,7 @@ export function withoutManagedKiroIdeHooks(
 ): KiroIdeHook[] {
   return hooks.filter((hook) => {
     const reference = ownedReference(hook);
-    return !reference || (agentId !== undefined && !sameKiroIdeAgentId(reference.agentId, agentId));
+    return !reference || (agentId !== undefined && !sameAgentId(reference.agentId, agentId));
   });
 }
 
@@ -285,12 +284,7 @@ export function kiroIdeRuntimeContracts(
 function legacyReference(command: unknown, scriptName: string) {
   if (typeof command !== 'string') return undefined;
   const match = /^node "([^"\r\n]+)"$/.exec(command);
-  if (!match || !path.isAbsolute(match[1]) || path.basename(match[1]) !== scriptName) return undefined;
-  const agentDirectory = path.dirname(match[1]);
-  if (!sameKiroIdePath(path.dirname(agentDirectory), path.join(os.homedir(), '.elydora'))) {
-    return undefined;
-  }
-  return { agentId: path.basename(agentDirectory), scriptPath: match[1] };
+  return match ? managedScriptReference(match[1], scriptName) : undefined;
 }
 
 export function legacyKiroIdeRuntimeContract(raw: string, filePath: string): KiroIdeRuntimeContract | undefined {
@@ -311,6 +305,6 @@ export function legacyKiroIdeRuntimeContract(raw: string, filePath: string): Kir
     || auditHook.timeout_ms !== 5000) return undefined;
   const guard = legacyReference(guardHook.command, GUARD_SCRIPT);
   const audit = legacyReference(auditHook.command, AUDIT_SCRIPT);
-  if (!guard || !audit || !sameKiroIdeAgentId(guard.agentId, audit.agentId)) return undefined;
+  if (!guard || !audit || !sameAgentId(guard.agentId, audit.agentId)) return undefined;
   return { agentId: guard.agentId, guardPath: guard.scriptPath, auditPath: audit.scriptPath };
 }

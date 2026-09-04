@@ -1,26 +1,13 @@
 import { constants } from 'node:fs';
 import fsp from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
+import { asError, errorMessage, hasCode, MAX_SOURCE_BYTES } from './common.js';
 
 export interface FileSnapshot {
   readonly contents: string;
   readonly device: bigint | number;
   readonly inode: bigint | number;
   readonly mode: number;
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function hasCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 export async function readPhysicalFile(

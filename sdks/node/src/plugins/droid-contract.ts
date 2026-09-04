@@ -1,5 +1,13 @@
 import os from 'node:os';
 import path from 'node:path';
+import { sameAgentId, samePath } from './common.js';
+import {
+  parseLegacyWindowsCommand,
+  parsePosixCommand,
+  parsePowerShellSource,
+  posixSource,
+  powerShellSource,
+} from './shell-command.js';
 import type { JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'droid';
@@ -10,7 +18,6 @@ export const TOOL_EVENTS = ['PreToolUse', 'PostToolUse'] as const;
 
 const HANDLER_KEYS = ['command', 'timeout', 'type'];
 const GROUP_KEYS = ['hooks', 'matcher'];
-const WINDOWS_EXIT_SUFFIX = '; exit $LASTEXITCODE';
 
 export type ToolEvent = typeof TOOL_EVENTS[number];
 
@@ -44,26 +51,13 @@ export interface ManagedRemoval {
   readonly removeGroup: boolean;
 }
 
-interface ParsedArgument {
-  readonly value: string;
-  readonly next: number;
-}
-
-function quotePosix(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-function quotePowerShell(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
 export function buildCommand(scriptPath: string): string {
   if (!path.isAbsolute(process.execPath) || !path.isAbsolute(scriptPath)) {
     throw new Error('Factory Droid hook commands require absolute executable and script paths');
   }
   return process.platform === 'win32'
-    ? `& ${quotePowerShell(process.execPath)} ${quotePowerShell(scriptPath)}${WINDOWS_EXIT_SUFFIX}`
-    : `${quotePosix(process.execPath)} ${quotePosix(scriptPath)}`;
+    ? powerShellSource(scriptPath)
+    : posixSource(scriptPath);
 }
 
 export function buildGroup(scriptPath: string): DroidGroup {
@@ -150,90 +144,13 @@ export function readHookMap(value: unknown, label: string): DroidHookMap {
   return hooks;
 }
 
-function readPowerShellArgument(command: string, start: number): ParsedArgument | undefined {
-  if (command[start] !== "'") return undefined;
-  let value = '';
-  for (let index = start + 1; index < command.length; index += 1) {
-    if (command[index] !== "'") {
-      value += command[index];
-      continue;
-    }
-    if (command[index + 1] === "'") {
-      value += "'";
-      index += 1;
-      continue;
-    }
-    return { value, next: index + 1 };
-  }
-  return undefined;
-}
-
-const POSIX_APOSTROPHE = `'"'"'`;
-
-function readPosixArgument(command: string, start: number): ParsedArgument | undefined {
-  if (command[start] !== "'") return undefined;
-  let value = '';
-  for (let index = start + 1; index < command.length;) {
-    if (command.startsWith(POSIX_APOSTROPHE, index)) {
-      value += "'";
-      index += POSIX_APOSTROPHE.length;
-      continue;
-    }
-    if (command[index] === "'") return { value, next: index + 1 };
-    value += command[index];
-    index += 1;
-  }
-  return undefined;
-}
-
-function parseTwoArguments(
-  command: string,
-  start: number,
-  readArgument: (command: string, start: number) => ParsedArgument | undefined,
-): readonly [string, string] | undefined {
-  const executable = readArgument(command, start);
-  if (!executable || command[executable.next] !== ' ') return undefined;
-  const script = readArgument(command, executable.next + 1);
-  if (!script || script.next !== command.length || !executable.value || !script.value) return undefined;
-  return [executable.value, script.value];
-}
-
-function parseLegacyWindowsCommand(command: string): readonly [string, string] | undefined {
-  const match = /^"([^"\r\n]+)" "([^"\r\n]+)"$/.exec(command);
-  return match ? [match[1], match[2]] : undefined;
-}
-
-function parsePowerShellCommand(command: string): readonly [string, string] | undefined {
-  if (!command.startsWith('& ')) return undefined;
-  const executable = readPowerShellArgument(command, 2);
-  if (!executable || command[executable.next] !== ' ') return undefined;
-  const script = readPowerShellArgument(command, executable.next + 1);
-  if (!script
-    || command.slice(script.next) !== WINDOWS_EXIT_SUFFIX
-    || !executable.value
-    || !script.value) return undefined;
-  return [executable.value, script.value];
-}
-
 function parseGeneratedCommand(
   command: string,
   includeLegacy: boolean,
 ): readonly [string, string] | undefined {
-  if (process.platform !== 'win32') return parseTwoArguments(command, 0, readPosixArgument);
-  const current = parsePowerShellCommand(command);
-  return current ?? (includeLegacy ? parseLegacyWindowsCommand(command) : undefined);
-}
-
-export function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-export function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+  if (process.platform !== 'win32') return parsePosixCommand(command);
+  return parsePowerShellSource(command)
+    ?? (includeLegacy ? parseLegacyWindowsCommand(command) : undefined);
 }
 
 export function managedAgentId(

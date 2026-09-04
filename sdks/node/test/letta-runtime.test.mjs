@@ -60,7 +60,7 @@ async function installedHandlers(fixture) {
 }
 
 test('Letta guard accepts active agents with native exit semantics', async () => {
-  const api = await startApiServer('active');
+  const api = await startApiServer({ status: 'active' });
   const fixture = await createFixture({ baseUrl: api.baseUrl });
   try {
     assert.equal((await fixture.install()).code, 0);
@@ -82,7 +82,7 @@ test('Letta guard accepts active agents with native exit semantics', async () =>
 test('Letta guard propagates frozen and revoked states through exit code 2', async (t) => {
   for (const status of ['frozen', 'revoked']) {
     await t.test(status, async () => {
-      const api = await startApiServer(status);
+      const api = await startApiServer({ status });
       const fixture = await createFixture({ baseUrl: api.baseUrl });
       try {
         assert.equal((await fixture.install()).code, 0);

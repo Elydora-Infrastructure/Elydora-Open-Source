@@ -12,11 +12,10 @@ import (
 )
 
 const (
-	augmentAgentKey        = "augment"
-	augmentGuardScript     = "guard.js"
-	augmentAuditScript     = "hook.js"
-	augmentHookTimeout     = float64(10_000)
-	augmentPOSIXApostrophe = `'"'"'`
+	augmentAgentKey    = "augment"
+	augmentGuardScript = "guard.js"
+	augmentAuditScript = "hook.js"
+	augmentHookTimeout = float64(10_000)
 )
 
 var (
@@ -68,14 +67,6 @@ type augmentRuntimeContract struct {
 	auditWrapper string
 }
 
-func cloneAugmentObject(value map[string]any) map[string]any {
-	clone := make(map[string]any, len(value))
-	for key, item := range value {
-		clone[key] = item
-	}
-	return clone
-}
-
 func validateAugmentHandler(
 	value any,
 	event string,
@@ -114,7 +105,7 @@ func validateAugmentHandler(
 			return nil, fmt.Errorf("%s timeout must be a positive finite number", label)
 		}
 	}
-	return cloneAugmentObject(handler), nil
+	return cloneJSONObject(handler), nil
 }
 
 func validateAugmentMetadata(value any, label string) error {
@@ -169,7 +160,7 @@ func validateAugmentGroup(value any, event string, groupIndex int) (augmentGroup
 		}
 		handlers = append(handlers, handler)
 	}
-	return augmentGroup{object: cloneAugmentObject(object), handlers: handlers}, nil
+	return augmentGroup{object: cloneJSONObject(object), handlers: handlers}, nil
 }
 
 func readAugmentHooks(root map[string]any) (augmentHooks, error) {
@@ -248,7 +239,7 @@ func renderAugmentDocument(
 	if !document.exists && len(hooks) == 0 {
 		return &augmentRenderedDocument{document: document}, nil
 	}
-	root := cloneAugmentObject(document.root)
+	root := cloneJSONObject(document.root)
 	if len(hooks) == 0 {
 		delete(root, "hooks")
 	} else {
@@ -281,7 +272,7 @@ func renderAugmentHooks(hooks augmentHooks) map[string]any {
 	for event, groups := range hooks {
 		values := make([]any, 0, len(groups))
 		for _, group := range groups {
-			object := cloneAugmentObject(group.object)
+			object := cloneJSONObject(group.object)
 			handlers := make([]any, 0, len(group.handlers))
 			for _, handler := range group.handlers {
 				handlers = append(handlers, handler)
@@ -314,23 +305,8 @@ func readAugmentWindowsArgument(command string) (string, bool) {
 }
 
 func readAugmentPOSIXArgument(command string) (string, bool) {
-	if len(command) < 2 || command[0] != '\'' {
-		return "", false
-	}
-	var value strings.Builder
-	for index := 1; index < len(command); {
-		if strings.HasPrefix(command[index:], augmentPOSIXApostrophe) {
-			value.WriteByte('\'')
-			index += len(augmentPOSIXApostrophe)
-			continue
-		}
-		if command[index] == '\'' {
-			return value.String(), index == len(command)-1 && value.Len() > 0
-		}
-		value.WriteByte(command[index])
-		index++
-	}
-	return "", false
+	value, end, ok := readPOSIXArgument(command, 0)
+	return value, ok && end == len(command) && value != ""
 }
 
 func parseAugmentCommand(command string) (string, bool) {
@@ -338,36 +314,6 @@ func parseAugmentCommand(command string) (string, bool) {
 		return readAugmentWindowsArgument(command)
 	}
 	return readAugmentPOSIXArgument(command)
-}
-
-func normalizeAugmentPath(value string) string {
-	absolute, err := filepath.Abs(value)
-	if err == nil {
-		value = absolute
-	}
-	value = filepath.ToSlash(filepath.Clean(value))
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(value)
-	}
-	return value
-}
-
-func sameAugmentPath(left, right string) bool {
-	return normalizeAugmentPath(left) == normalizeAugmentPath(right)
-}
-
-func sameAugmentAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameAugmentFileName(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
 }
 
 func managedAugmentAgentID(
@@ -385,11 +331,11 @@ func managedAugmentAgentID(
 		return "", false
 	}
 	wrapperPath, ok := parseAugmentCommand(command)
-	if !ok || !sameAugmentFileName(filepath.Base(wrapperPath), wrapperName) {
+	if !ok || !sameManagedName(filepath.Base(wrapperPath), wrapperName) {
 		return "", false
 	}
 	agentDirectory := filepath.Dir(wrapperPath)
-	if !sameAugmentPath(filepath.Dir(agentDirectory), runtimeRoot) {
+	if !sameManagedPath(filepath.Dir(agentDirectory), runtimeRoot) {
 		return "", false
 	}
 	agentID := filepath.Base(agentDirectory)
@@ -407,7 +353,7 @@ func removeManagedAugmentGroups(
 		groupChanged := false
 		for _, handler := range group.handlers {
 			managedID, managed := managedAugmentAgentID(handler, wrapperName, runtimeRoot)
-			remove := managed && (agentID == "" || sameAugmentAgentID(managedID, agentID))
+			remove := managed && (agentID == "" || sameManagedAgentID(managedID, agentID))
 			if remove {
 				changed = true
 				groupChanged = true

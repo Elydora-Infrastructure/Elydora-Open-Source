@@ -24,6 +24,7 @@ def install_plugin(
     elydora_dir = tmp_path / ".elydora"
     monkeypatch.setattr(opencode, "PLUGIN_DIR", str(plugin_dir))
     monkeypatch.setattr(opencode, "ELYDORA_DIR", str(elydora_dir))
+
     agent_dir = elydora_dir / AGENT_ID
     agent_dir.mkdir(parents=True)
     guard_path = agent_dir / "guard.py"
@@ -31,7 +32,9 @@ def install_plugin(
         "import sys\nsys.stderr.write('Agent is frozen by Elydora.')\nraise SystemExit(2)\n",
         encoding="utf-8",
     )
-    opencode.OpenCodePlugin().install({
+
+    plugin = opencode.OpenCodePlugin()
+    plugin.install({
         "agent_id": AGENT_ID,
         "agent_name": "opencode",
         "org_id": "org-1",
@@ -66,9 +69,11 @@ def test_generated_opencode_plugin_uses_current_api_and_blocks_frozen_agent(
     tmp_path: Path,
 ) -> None:
     plugin_path, hook_path, _guard_path = install_plugin(monkeypatch, tmp_path)
+
     assert hook_path.is_file()
+    module_url = plugin_path.as_uri()
     script = f"""
-      const pluginModule = await import({json.dumps(plugin_path.as_uri())});
+      const pluginModule = await import({json.dumps(module_url)});
       const hooks = await pluginModule.ElydoraAuditPlugin({{ project: {{ name: 'project' }} }});
       if (typeof hooks['tool.execute.before'] !== 'function') process.exit(10);
       if (typeof hooks['tool.execute.after'] !== 'function') process.exit(11);
@@ -82,7 +87,9 @@ def test_generated_opencode_plugin_uses_current_api_and_blocks_frozen_agent(
         if (!String(error.message).includes('Agent is frozen by Elydora')) process.exit(13);
       }}
     """
+
     result = run_node(script, tmp_path)
+
     assert result.returncode == 0, result.stderr
     assert opencode.OpenCodePlugin().status()["installed"] is True
     assert SUPPORTED_AGENTS["opencode"]["config_path"] == "~/.config/opencode/plugins/"
@@ -112,8 +119,10 @@ def test_generated_opencode_plugin_forwards_tool_event(
         {{ title: 'Shell', output: 'test' }},
       );
     """
+
     result = run_node(script, tmp_path)
     assert result.returncode == 0, result.stderr
+
     deadline = time.monotonic() + 3
     while not capture_path.exists() and time.monotonic() < deadline:
         time.sleep(0.02)

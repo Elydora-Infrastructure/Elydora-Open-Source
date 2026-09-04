@@ -1,39 +1,27 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import http from 'node:http';
-import os from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import {
+  createFixtureRoot,
+  distUrl,
+  homeEnvironment,
+  installConfig as baseInstallConfig,
+  optionalEnvironment,
+  runPlugin as basePlugin,
+  runProcess as baseProcess,
+  runShell,
+} from './harness.mjs';
 
-export const VALID_PRIVATE_KEY = Buffer.alloc(32).toString('base64url');
-export const pluginModuleUrl = pathToFileURL(path.resolve('dist/plugins/grok.js')).href;
-export const registryModuleUrl = pathToFileURL(path.resolve('dist/plugins/registry.js')).href;
-export const contractModuleUrl = pathToFileURL(path.resolve('dist/plugins/grok-contract.js')).href;
-export const ioModuleUrl = pathToFileURL(path.resolve('dist/plugins/grok-io.js')).href;
-export const installationModuleUrl = pathToFileURL(
-  path.resolve('dist/plugins/grok-installation.js'),
-).href;
-export const cliPath = path.resolve('dist/cli.js');
+export { VALID_PRIVATE_KEY, cliPath, registryModuleUrl, startApiServer } from './harness.mjs';
+
+export const pluginModuleUrl = distUrl('plugins/grok.js');
+export const contractModuleUrl = distUrl('plugins/grok-contract.js');
+export const ioModuleUrl = distUrl('plugins/grok-io.js');
+export const installationModuleUrl = distUrl('plugins/grok-installation.js');
+const PLUGIN = { exportName: 'grokPlugin', moduleUrl: pluginModuleUrl };
 
 export function runProcess(command, args, env, cwd, input = '', unset = []) {
-  return new Promise((resolve, reject) => {
-    const childEnv = { ...process.env, ...env };
-    for (const key of unset) delete childEnv[key];
-    const child = spawn(command, args, {
-      cwd,
-      env: childEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
+  return baseProcess(command, args, env, cwd, input, { unset });
 }
 
 export function runNode(args, env, cwd, input = '', unset = []) {
@@ -41,68 +29,23 @@ export function runNode(args, env, cwd, input = '', unset = []) {
 }
 
 export function runGrokHook(command, input, fixture, environment = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, {
-      shell: true,
-      cwd: fixture.projectDir,
-      env: {
-        ...process.env,
-        HOME: fixture.homeDir,
-        USERPROFILE: fixture.homeDir,
-        GROK_HOME: fixture.grokHomeOverride ?? '',
-        ...environment,
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
+  return runShell(command, {
+    ...homeEnvironment(fixture),
+    GROK_HOME: fixture.grokHomeOverride ?? '',
+    ...environment,
+  }, fixture.projectDir, input);
 }
 
 export function installConfig(fixture, overrides = {}) {
-  return {
-    agentName: 'grok',
-    orgId: 'org-1',
-    agentId: 'agent-1',
-    privateKey: VALID_PRIVATE_KEY,
-    kid: 'kid-1',
-    token: 'token-1',
-    baseUrl: fixture.baseUrl,
-    guardScriptPath: fixture.guardScriptPath,
-    hookScriptPath: fixture.hookScriptPath,
-    ...overrides,
-  };
+  return baseInstallConfig('grok', fixture, overrides);
 }
 
-export async function runPlugin(fixture, method, argument, environment = {}) {
-  const source = `
-    import { grokPlugin } from ${JSON.stringify(pluginModuleUrl)};
-    const argument = JSON.parse(process.env.ELYDORA_TEST_ARGUMENT);
-    const result = await grokPlugin[process.env.ELYDORA_TEST_METHOD](argument);
-    if (result !== undefined) console.log(JSON.stringify(result));
-  `;
-  const env = {
-    HOME: fixture.homeDir,
-    USERPROFILE: fixture.homeDir,
-    ELYDORA_TEST_ARGUMENT: JSON.stringify(argument),
-    ELYDORA_TEST_METHOD: method,
-    ...environment,
-  };
-  const unset = [];
-  if (fixture.grokHomeOverride === undefined) unset.push('GROK_HOME');
-  else env.GROK_HOME = fixture.grokHomeOverride;
-  return runNode(
-    ['--input-type=module', '--eval', source],
-    env,
-    fixture.projectDir,
-    '',
-    unset,
-  );
+export function runPlugin(fixture, method, argument, environment = {}) {
+  const home = optionalEnvironment('GROK_HOME', fixture.grokHomeOverride);
+  return basePlugin(PLUGIN, fixture, method, argument, {
+    env: { ...environment, ...home.env },
+    unset: home.unset,
+  });
 }
 
 async function writeOptional(filePath, contents) {
@@ -116,37 +59,25 @@ export async function createFixture({
   config,
   explicitGrokHome = true,
 } = {}) {
-  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-grok-'));
-  const homeDir = path.join(rootDir, "home with spaces and 'quote %GROK_HOOK_EVENT%");
-  const projectDir = path.join(rootDir, 'project with spaces');
+  const base = await createFixtureRoot(
+    'elydora-grok-',
+    "home with spaces and 'quote %GROK_HOOK_EVENT%",
+  );
   const grokHome = explicitGrokHome
-    ? path.join(homeDir, 'custom grok')
-    : path.join(homeDir, '.grok');
+    ? path.join(base.homeDir, 'custom grok')
+    : path.join(base.homeDir, '.grok');
   const configPath = path.join(grokHome, 'hooks', 'elydora-audit.json');
-  const agentDir = path.join(homeDir, '.elydora', 'agent-1');
-  const guardScriptPath = path.join(agentDir, 'guard.js');
-  const hookScriptPath = path.join(agentDir, 'hook.js');
-  await mkdir(projectDir, { recursive: true });
   await writeOptional(configPath, config);
-  const fixture = {
-    agentDir,
+  return {
+    ...base,
     baseUrl,
     configPath,
     grokHome,
     grokHomeOverride: explicitGrokHome ? grokHome : undefined,
-    guardScriptPath,
-    homeDir,
-    hookScriptPath,
-    projectDir,
-    rootDir,
     install(overrides = {}) {
       return runPlugin(this, 'install', installConfig(this, overrides));
     },
-    async close() {
-      await rm(rootDir, { recursive: true, force: true });
-    },
   };
-  return fixture;
 }
 
 export async function readGrokConfig(filePath) {
@@ -183,35 +114,4 @@ export function legacyCommand(scriptPath) {
   if (process.platform === 'win32') return `"${process.execPath}" "${scriptPath}"`;
   const quote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
   return `${quote(process.execPath)} ${quote(scriptPath)}`;
-}
-
-export async function startApiServer({ status = 'active', operationStatus = 201 } = {}) {
-  const requests = [];
-  const server = http.createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const raw = Buffer.concat(chunks).toString('utf-8');
-    requests.push({ headers: request.headers, method: request.method, url: request.url, raw });
-    if (request.method === 'GET') {
-      response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ agent: { status } }));
-      return;
-    }
-    response.writeHead(operationStatus, { 'Content-Type': 'application/json' });
-    response.end(operationStatus >= 200 && operationStatus < 300
-      ? JSON.stringify({ operation: { accepted: true } })
-      : JSON.stringify({ error: { code: 'UPSTREAM_FAILURE', message: 'failed' } }));
-  });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    requests,
-    close: () => new Promise((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
-    }),
-  };
 }

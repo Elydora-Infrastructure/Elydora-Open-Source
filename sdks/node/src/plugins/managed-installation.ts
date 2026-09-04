@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ensurePrivateDirectory, resolvePrivateChildDirectory } from '../runtime-paths.js';
 import type { InstallConfig } from './base.js';
+import { MAX_CONFIG_BYTES, MAX_SECRET_BYTES, sameAgentId, samePath } from './common.js';
 import { generateGuardScript, type GuardScriptOptions } from './guard-template.js';
 import { generateHookScript, type HookScriptOptions } from './hook-template.js';
 import {
@@ -18,9 +19,6 @@ import {
   type RenameFile,
 } from './managed-transaction.js';
 import { parseStrictJsonObject } from './strict-json.js';
-
-const MAX_SECRET_BYTES = 64 * 1024;
-const MAX_CONFIG_BYTES = 512 * 1024;
 
 export interface ManagedRuntimePaths {
   readonly runtimeRoot: string;
@@ -79,14 +77,6 @@ interface RuntimeArtifactLocation {
 
 export type { RenameFile };
 
-export function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
 function validateInstallConfig(config: InstallConfig, agentKey: string): void {
   for (const [field, value] of [
     ['agentName', config.agentName],
@@ -144,12 +134,6 @@ export function managedRuntimePaths(
     guardPath,
     auditPath,
   };
-}
-
-function sameAgentId(left: unknown, right: string): boolean {
-  return typeof left === 'string' && (process.platform === 'win32'
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right);
 }
 
 async function validateRuntimeIdentity(

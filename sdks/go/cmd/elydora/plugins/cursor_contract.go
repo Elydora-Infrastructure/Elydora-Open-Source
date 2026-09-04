@@ -11,12 +11,11 @@ import (
 )
 
 const (
-	cursorAgentKey        = "cursor"
-	cursorConfigFile      = "hooks.json"
-	cursorGuardScript     = "guard.js"
-	cursorAuditScript     = "hook.js"
-	cursorHookTimeout     = float64(10)
-	cursorPOSIXApostrophe = `'"'"'`
+	cursorAgentKey    = "cursor"
+	cursorConfigFile  = "hooks.json"
+	cursorGuardScript = "guard.js"
+	cursorAuditScript = "hook.js"
+	cursorHookTimeout = float64(10)
 )
 
 type cursorHooks map[string][]map[string]any
@@ -36,11 +35,7 @@ type cursorRenderedDocument struct {
 	remove   bool
 }
 
-type cursorRuntimeContract struct {
-	agentID   string
-	guardPath string
-	auditPath string
-}
+type cursorRuntimeContract = managedRuntimeContract
 
 func cloneCursorHooks(source cursorHooks) cursorHooks {
 	clone := make(cursorHooks, len(source))
@@ -50,102 +45,14 @@ func cloneCursorHooks(source cursorHooks) cursorHooks {
 	return clone
 }
 
-func sameCursorPath(left, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if absolute, err := filepath.Abs(left); err == nil {
-		left = absolute
-	}
-	if absolute, err := filepath.Abs(right); err == nil {
-		right = absolute
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameCursorAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func quoteCursorPowerShell(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-}
-
 func buildCursorHandler(nodePath, scriptPath string) map[string]any {
-	command := quotePOSIXArgument(nodePath) + " " + quotePOSIXArgument(scriptPath)
+	command := posixSource(nodePath, scriptPath)
 	if runtime.GOOS == "windows" {
-		command = "& " + quoteCursorPowerShell(nodePath) + " " +
-			quoteCursorPowerShell(scriptPath) + "; exit $LASTEXITCODE"
+		command = powerShellSource(nodePath, scriptPath)
 	}
 	return map[string]any{
 		"command": command, "timeout": cursorHookTimeout, "failClosed": true,
 	}
-}
-
-func readCursorPOSIXArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '\'' {
-		return "", start, false
-	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); {
-		if strings.HasPrefix(command[index:], cursorPOSIXApostrophe) {
-			value.WriteByte('\'')
-			index += len(cursorPOSIXApostrophe)
-			continue
-		}
-		if command[index] == '\'' {
-			return value.String(), index + 1, true
-		}
-		value.WriteByte(command[index])
-		index++
-	}
-	return "", start, false
-}
-
-func readCursorPowerShellArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '\'' {
-		return "", start, false
-	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); index++ {
-		if command[index] != '\'' {
-			value.WriteByte(command[index])
-			continue
-		}
-		if index+1 < len(command) && command[index+1] == '\'' {
-			value.WriteByte('\'')
-			index++
-			continue
-		}
-		return value.String(), index + 1, true
-	}
-	return "", start, false
-}
-
-func parseCursorPOSIXCommand(command string) (string, string, bool) {
-	executable, next, ok := readCursorPOSIXArgument(command, 0)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := readCursorPOSIXArgument(command, next+1)
-	return executable, script, ok && end == len(command)
-}
-
-func parseCursorPowerShellCommand(command string) (string, string, bool) {
-	if !strings.HasPrefix(command, "& ") {
-		return "", "", false
-	}
-	executable, next, ok := readCursorPowerShellArgument(command, 2)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := readCursorPowerShellArgument(command, next+1)
-	return executable, script, ok && command[end:] == "; exit $LASTEXITCODE"
 }
 
 func parseCursorLegacyCommand(command string) (string, bool) {
@@ -164,11 +71,6 @@ func parseCursorLegacyCommand(command string) (string, bool) {
 	return script, script != "" && !strings.ContainsAny(script, "\r\n")
 }
 
-func isCursorNodeExecutable(path string) bool {
-	name := filepath.Base(path)
-	return name == "node" || strings.EqualFold(name, "node.exe")
-}
-
 func cursorManagedScriptPath(handler map[string]any) (string, bool) {
 	if len(handler) == 3 && handler["timeout"] == cursorHookTimeout && handler["failClosed"] == true {
 		command, ok := handler["command"].(string)
@@ -178,12 +80,12 @@ func cursorManagedScriptPath(handler map[string]any) (string, bool) {
 		var nodePath, scriptPath string
 		var parsed bool
 		if runtime.GOOS == "windows" {
-			nodePath, scriptPath, parsed = parseCursorPowerShellCommand(command)
+			nodePath, scriptPath, parsed = parsePowerShellSource(command)
 		} else {
-			nodePath, scriptPath, parsed = parseCursorPOSIXCommand(command)
+			nodePath, scriptPath, parsed = parsePOSIXCommand(command)
 		}
 		if parsed && filepath.IsAbs(nodePath) && filepath.IsAbs(scriptPath) &&
-			isCursorNodeExecutable(nodePath) {
+			isNodeExecutable(nodePath) {
 			return scriptPath, true
 		}
 	}
@@ -207,7 +109,7 @@ func cursorManagedAgentID(
 		return "", false
 	}
 	agentDirectory := filepath.Dir(scriptPath)
-	if !sameCursorPath(filepath.Dir(agentDirectory), runtimeRoot) {
+	if !sameManagedPath(filepath.Dir(agentDirectory), runtimeRoot) {
 		return "", false
 	}
 	agentID := filepath.Base(agentDirectory)
@@ -297,7 +199,7 @@ func removeManagedCursorHooks(hooks cursorHooks, runtimeRoot, agentID string) cu
 		kept := make([]map[string]any, 0, len(result[contract.event]))
 		for _, handler := range result[contract.event] {
 			managedID, managed := cursorManagedAgentID(handler, contract.script, runtimeRoot)
-			if managed && (agentID == "" || sameCursorAgentID(managedID, agentID)) {
+			if managed && (agentID == "" || sameManagedAgentID(managedID, agentID)) {
 				continue
 			}
 			kept = append(kept, handler)
@@ -384,11 +286,7 @@ func managedCursorIDs(
 		if !managed {
 			continue
 		}
-		key := agentID
-		if runtime.GOOS == "windows" {
-			key = strings.ToLower(agentID)
-		}
-		result[key] = agentID
+		result[managedReferenceKey(agentID)] = agentID
 	}
 	return result
 }

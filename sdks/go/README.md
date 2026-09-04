@@ -10,6 +10,8 @@ go get github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2
 
 Requires Go 1.21+. The CLI uses focused TOML and JSONC parsers to preserve user-owned agent configuration.
 
+Upgrading from 2.0.x: run `elydora install` again for every agent. The generated runtimes changed, and `elydora status` does not detect stale runtimes for every adapter.
+
 ## Quick Start
 
 ```go
@@ -23,15 +25,12 @@ import (
 )
 
 func main() {
-	// Initialize the client with your API token.
-	// Obtain an API token by signing in via the Elydora console or:
-	//   POST /api/auth/sign-in/email  ->  get session token
-	//   POST /v1/auth/token           ->  exchange for long-lived API token
+	// Create client with an API token issued in the Console
 	client, err := elydora.NewClient(&elydora.Config{
 		OrgID:      "org-123",
 		AgentID:    "my-agent-id",
 		PrivateKey: "<base64url-encoded-ed25519-seed>",
-		Token:      "your-api-token",
+		Token:      "<api-token>",
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -110,8 +109,9 @@ Qwen Code `0.20.0` installation writes native user hooks to `$QWEN_HOME/settings
 |---------|-------------|
 | `elydora install` | Install Elydora audit hook for a coding agent |
 | `elydora uninstall` | Remove Elydora audit hook for a coding agent |
-| `elydora status` | Show installation status for all agents |
+| `elydora status` | Show installation status for one agent or all agents |
 | `elydora agents` | List supported coding agents |
+| `elydora version` | Print the CLI version |
 
 ### Supported Agents
 
@@ -158,23 +158,23 @@ client.SetToken("new-api-token")
 
 ### Authentication
 
-Authentication uses Better Auth. Register and sign in via the Elydora console or the Better Auth endpoints, then issue a long-lived API token for SDK use:
-
 ```go
-// Sign up (Better Auth) — use the console or call directly:
-//   POST /api/auth/sign-up/email  { email, password, name }
-//
-// Sign in (Better Auth) — get a session token:
-//   POST /api/auth/sign-in/email  { email, password }
-//
-// Issue a long-lived API token from an active session:
+// Get the authenticated user and current organization
+me, err := client.GetMe()
+// me.User.Email, me.User.Role, me.CurrentOrganization.OrgID
+
+// Issue an API token; this call needs a client whose Token is a Console session token
 tokenResp, err := client.IssueApiToken(&elydora.IssueApiTokenRequest{
 	TTLSeconds: &ttlSeconds,
 })
+client.SetToken(tokenResp.Token)
 
-// Update the token on an existing client instance at runtime
-client.SetToken("new-api-token")
+// Rotate the installed API token; the response carries the replacement
+rotated, err := client.RotateApiToken()
+client.SetToken(rotated.Token)
 ```
+
+`elydora.Register` and `elydora.Login` remain for password accounts and are deprecated; use the Console sign-in flow.
 
 ### Operations
 
@@ -215,8 +215,11 @@ agent, err := client.RegisterAgent(&elydora.RegisterAgentRequest{
 // Get agent details
 details, err := client.GetAgent(agentID)
 
+// Change the integration type
+updated, err := client.UpdateAgent(agentID, elydora.IntegrationTypeClaudecode)
+
 // Freeze an agent
-err := client.FreezeAgent(agentID, "security review")
+frozen, err := client.FreezeAgent(agentID, "security review")
 
 // Revoke a key
 err := client.RevokeKey(agentID, kid, "key rotation")
@@ -225,7 +228,7 @@ err := client.RevokeKey(agentID, kid, "key rotation")
 agents, err := client.ListAgents()
 
 // Unfreeze a previously frozen agent
-err := client.UnfreezeAgent(agentID, "review complete")
+unfrozen, err := client.UnfreezeAgent(agentID, "review complete")
 
 // Delete an agent permanently
 deleted, err := client.DeleteAgent(agentID)
@@ -266,6 +269,25 @@ detail, err := client.GetExport(exportID)
 data, err := client.DownloadExport(exportID)
 ```
 
+### Webhooks
+
+```go
+webhook, err := client.RegisterWebhook(&elydora.RegisterWebhookRequest{
+	EndpointURL: "https://example.com/elydora",
+	Events:      []string{"operation.accepted"},
+	Secret:      "<signing-secret>",
+})
+webhooks, err := client.ListWebhooks()
+err = client.DeleteWebhook(webhook.Webhook.WebhookID)
+```
+
+### Organization
+
+```go
+members, err := client.ListMembers()
+events, err := client.ListAdminEvents(50)
+```
+
 ### JWKS
 
 ```go
@@ -277,7 +299,11 @@ jwks, err := client.GetJWKS()
 ```go
 // Check API health (no authentication required, does not need a client)
 health, err := elydora.Health("https://api.elydora.com")
-// health.Status, health.Version, health.ProtocolVersion, health.Timestamp
+// health.Status, health.Version, health.ProtocolVersion, health.Capabilities, health.Timestamp
+
+// Check dependency health (D1, auth storage, R2, KV)
+deep, err := elydora.DeepHealth("https://api.elydora.com")
+// deep.Dependencies.D1.Status, deep.Dependencies.KV.LatencyMs
 ```
 
 ### Constants
@@ -295,8 +321,11 @@ elydora.GenesisChainHash // "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 | `KeyStatus` | `KeyStatusActive`, `KeyStatusRetired`, `KeyStatusRevoked` |
 | `ExportStatus` | `ExportStatusQueued`, `ExportStatusRunning`, `ExportStatusDone`, `ExportStatusFailed` |
 | `ExportFormat` | `ExportFormatJSON`, `ExportFormatPDF` |
+| `WebhookStatus` | `WebhookStatusActive`, `WebhookStatusDisabled` |
+| `IntegrationType` | One constant per supported agent key plus `IntegrationTypeEnterprise`, `IntegrationTypeGUI`, `IntegrationTypeSDK`, `IntegrationTypeOther` |
+| `AdminAction` | One constant per admin event action, for example `AdminActionAgentFreeze` |
 | `RbacRole` | `RbacRoleOrgOwner`, `RbacRoleSecurityAdmin`, `RbacRoleComplianceAuditor`, `RbacRoleReadonlyInvestigator`, `RbacRoleIntegrationEngineer` |
-| `ErrorCode` | `ErrorCodeInvalidSignature`, `ErrorCodeUnknownAgent`, `ErrorCodeKeyRevoked`, `ErrorCodeAgentFrozen`, `ErrorCodeTTLExpired`, `ErrorCodeReplayDetected`, `ErrorCodePrevHashMismatch`, `ErrorCodePayloadTooLarge`, `ErrorCodeRateLimited`, `ErrorCodeInternalError`, `ErrorCodeUnauthorized`, `ErrorCodeForbidden`, `ErrorCodeNotFound`, `ErrorCodeValidationError` |
+| `ErrorCode` | `ErrorCodeInvalidSignature`, `ErrorCodeUnknownAgent`, `ErrorCodeKeyRevoked`, `ErrorCodeKeyRetired`, `ErrorCodeAgentFrozen`, `ErrorCodeAgentRevoked`, `ErrorCodeTTLExpired`, `ErrorCodeReplayDetected`, `ErrorCodePrevHashMismatch`, `ErrorCodePayloadTooLarge`, `ErrorCodeRateLimited`, `ErrorCodeInternalError`, `ErrorCodeUnauthorized`, `ErrorCodeForbidden`, `ErrorCodeNotFound`, `ErrorCodeValidationError` |
 
 ## Error Handling
 

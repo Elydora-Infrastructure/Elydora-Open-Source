@@ -7,7 +7,6 @@ import {
 } from './claudecode-contract.js';
 import {
   commitManagedInstallation,
-  managedRuntimePaths,
   preflightManagedInstallation,
   prepareManagedInstallation,
   type ManagedRuntimePaths,
@@ -19,18 +18,10 @@ const DISPLAY_NAME = 'Claude Code';
 const SETTINGS_DIRECTORY_LABEL = 'Claude Code configuration directory';
 const SETTINGS_LABEL = 'Claude Code user settings';
 
-export type ClaudeRuntimePaths = ManagedRuntimePaths;
-export type PreparedClaudeInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
-export function claudeRuntimePaths(config: InstallConfig): ClaudeRuntimePaths {
-  return managedRuntimePaths(config, AGENT_KEY, GUARD_SCRIPT, AUDIT_SCRIPT);
-}
-
 export async function preflightClaudeInstallation(
   config: InstallConfig,
   settingsPath: string,
-): Promise<ClaudeRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: [{ directoryLabel: SETTINGS_DIRECTORY_LABEL, filePath: settingsPath }],
@@ -41,7 +32,7 @@ export async function preflightClaudeInstallation(
 export async function prepareClaudeInstallation(
   config: InstallConfig,
   rendered: RenderedClaudeDocument,
-): Promise<PreparedClaudeInstallation> {
+): Promise<PreparedManagedInstallation> {
   if (!rendered.changed && rendered.document.raw === undefined) {
     throw new Error('Claude Code hook installation did not produce a settings document');
   }
@@ -63,7 +54,7 @@ export async function prepareClaudeInstallation(
 }
 
 export async function commitClaudeInstallation(
-  prepared: PreparedClaudeInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

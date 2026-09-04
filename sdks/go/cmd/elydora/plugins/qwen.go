@@ -73,7 +73,7 @@ func (p *QwenPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	runtimeRoot, err := qwenRuntimeRoot()
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func (p *QwenPlugin) Status() (PluginStatus, error) {
 		return status, err
 	}
 	status.ConfigPath = sources.user.filePath
-	runtimeRoot, err := qwenRuntimeRoot()
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return status, err
 	}

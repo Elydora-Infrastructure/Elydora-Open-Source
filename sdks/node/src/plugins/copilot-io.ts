@@ -2,33 +2,25 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   AGENT_KEY,
-  AUDIT_SCRIPT,
   CONFIG_FILE,
-  GUARD_SCRIPT,
   type CopilotDocument,
   type CopilotSources,
   type RuntimeContract,
   createDocument,
   parseDocument,
-  sameAgentId,
-  samePath,
 } from './copilot-contract.js';
-import { generateGuardScript } from './guard-template.js';
-import { generateHookScript } from './hook-template.js';
+import { MAX_SOURCE_BYTES } from './common.js';
 import {
   inspectPhysicalDirectory,
   readPhysicalFile,
   type FileSnapshot,
 } from './managed-files.js';
+import { managedRuntimeFilesExist } from './managed-runtime-status.js';
 import {
   parseStrictJsonObject,
   parseStrictJsoncObject,
   type JsonObject,
 } from './strict-json.js';
-
-const MAX_SECRET_BYTES = 64 * 1024;
-const MAX_CONFIG_BYTES = 512 * 1024;
-const MAX_SETTINGS_BYTES = 2 * 1024 * 1024;
 
 export interface CopilotPaths {
   readonly copilotHome: string;
@@ -98,7 +90,7 @@ async function readHookDocument(
   filePath: string,
   label: string,
 ): Promise<CopilotDocument | undefined> {
-  const snapshot = await readPhysicalFile(filePath, label, MAX_SETTINGS_BYTES);
+  const snapshot = await readPhysicalFile(filePath, label, MAX_SOURCE_BYTES);
   return snapshot ? parseDocument(filePath, snapshot, label) : undefined;
 }
 
@@ -111,7 +103,7 @@ function parseSettings(raw: string, layer: SettingsLayer): JsonObject {
 }
 
 async function readSettingsLayer(layer: SettingsLayer): Promise<ParsedSettingsLayer> {
-  const snapshot = await readPhysicalFile(layer.filePath, layer.label, MAX_SETTINGS_BYTES);
+  const snapshot = await readPhysicalFile(layer.filePath, layer.label, MAX_SOURCE_BYTES);
   if (!snapshot) return layer;
   const root = parseSettings(snapshot.contents, layer);
   if (root.disableAllHooks !== undefined && typeof root.disableAllHooks !== 'boolean') {
@@ -167,86 +159,9 @@ export function requireHooksEnabled(sources: CopilotSources): void {
   }
 }
 
-function requireString(value: unknown, field: string, configPath: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`Elydora runtime config ${field} is invalid: ${configPath}`);
-  }
-  return value;
-}
-
-function validateRuntimeConfig(
-  config: JsonObject,
-  contract: RuntimeContract,
-  configPath: string,
-): void {
-  const supported = new Set(['org_id', 'agent_id', 'kid', 'base_url', 'token', 'agent_name']);
-  const extra = Object.keys(config).find((key) => !supported.has(key));
-  if (extra) throw new Error(`Elydora runtime config has unsupported field "${extra}": ${configPath}`);
-  requireString(config.org_id, 'org_id', configPath);
-  requireString(config.kid, 'kid', configPath);
-  const agentId = requireString(config.agent_id, 'agent_id', configPath);
-  if (!sameAgentId(agentId, contract.agentId) || config.agent_name !== AGENT_KEY) {
-    throw new Error(`Elydora runtime identity does not match Copilot hooks: ${configPath}`);
-  }
-  if (config.token !== undefined) requireString(config.token, 'token', configPath);
-  const rawBaseUrl = requireString(config.base_url, 'base_url', configPath);
-  let baseUrl: URL;
-  try {
-    baseUrl = new URL(rawBaseUrl);
-  } catch (error) {
-    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`, {
-      cause: error instanceof Error ? error : new Error(String(error)),
-    });
-  }
-  if (!['http:', 'https:'].includes(baseUrl.protocol)
-    || !baseUrl.hostname
-    || baseUrl.username
-    || baseUrl.password
-    || baseUrl.search
-    || baseUrl.hash) {
-    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`);
-  }
-}
-
-function validatePrivateKey(contents: string, keyPath: string): void {
-  const bytes = Buffer.from(contents, 'base64url');
-  if (bytes.length !== 32 || bytes.toString('base64url') !== contents) {
-    throw new Error(`Elydora private key is invalid: ${keyPath}`);
-  }
-}
-
-function validContractPaths(contract: RuntimeContract): boolean {
-  const agentDirectory = path.dirname(contract.guardPath);
-  return samePath(path.dirname(agentDirectory), path.join(os.homedir(), '.elydora'))
-    && samePath(contract.guardPath, path.join(agentDirectory, GUARD_SCRIPT))
-    && samePath(contract.auditPath, path.join(agentDirectory, AUDIT_SCRIPT));
-}
-
 export async function runtimeFilesExist(contracts: RuntimeContract[]): Promise<boolean> {
   for (const contract of contracts) {
-    if (!validContractPaths(contract)) continue;
-    const runtimeRoot = path.join(os.homedir(), '.elydora');
-    const agentDirectory = path.dirname(contract.guardPath);
-    if (!await inspectPhysicalDirectory(runtimeRoot, 'Elydora runtime directory')) continue;
-    if (!await inspectPhysicalDirectory(agentDirectory, 'Elydora agent runtime directory')) continue;
-    const configPath = path.join(agentDirectory, 'config.json');
-    const keyPath = path.join(agentDirectory, 'private.key');
-    const [config, key, guard, audit] = await Promise.all([
-      readPhysicalFile(configPath, 'Elydora runtime config', MAX_CONFIG_BYTES),
-      readPhysicalFile(keyPath, 'Elydora private key', MAX_SECRET_BYTES),
-      readPhysicalFile(contract.guardPath, 'Elydora guard runtime'),
-      readPhysicalFile(contract.auditPath, 'Elydora audit runtime'),
-    ]);
-    if (!config || !key || !guard || !audit) continue;
-    const parsed = parseStrictJsonObject(config.contents, `Elydora runtime config at ${configPath}`);
-    validateRuntimeConfig(parsed, contract, configPath);
-    validatePrivateKey(key.contents, keyPath);
-    if (guard.contents === generateGuardScript(AGENT_KEY, contract.agentId)
-      && audit.contents === generateHookScript(
-        AGENT_KEY,
-        contract.agentId,
-        { nativePayload: true },
-      )) return true;
+    if (await managedRuntimeFilesExist(contract, AGENT_KEY)) return true;
   }
   return false;
 }

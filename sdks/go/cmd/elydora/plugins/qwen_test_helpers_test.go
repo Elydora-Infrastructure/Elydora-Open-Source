@@ -211,8 +211,8 @@ func qwenManagedGroup(
 		for _, handlerValue := range requireQwenArray(t, group["hooks"]) {
 			handler := requireQwenObject(t, handlerValue)
 			command, _ := handler["command"].(string)
-			_, candidate, managed := parseQwenCommand(command)
-			if managed && handler["name"] == expectedName && sameQwenPath(candidate, scriptPath) {
+			_, candidate, managed := parseShellCommand(command)
+			if managed && handler["name"] == expectedName && sameManagedPath(candidate, scriptPath) {
 				return group
 			}
 		}
@@ -231,8 +231,8 @@ func qwenManagedHandler(
 	for _, handlerValue := range requireQwenArray(t, group["hooks"]) {
 		handler := requireQwenObject(t, handlerValue)
 		command, _ := handler["command"].(string)
-		_, candidate, managed := parseQwenCommand(command)
-		if managed && sameQwenPath(candidate, scriptPath) {
+		_, candidate, managed := parseShellCommand(command)
+		if managed && sameManagedPath(candidate, scriptPath) {
 			return handler
 		}
 	}

@@ -1,6 +1,4 @@
-/**
- * Agent routes — registration, lookup, freezing, and key revocation.
- */
+/** Agent routes: registration, lookup, freezing, and key revocation. */
 
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';

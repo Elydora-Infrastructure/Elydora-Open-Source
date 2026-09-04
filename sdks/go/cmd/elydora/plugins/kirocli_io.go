@@ -3,7 +3,6 @@ package plugins
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,27 +17,11 @@ func kiroConfigPaths() (string, string, error) {
 		filepath.Join(home, ".kiro", "hooks", "elydora-audit.json"), nil
 }
 
-func resolveNodeRuntime() (string, error) {
-	nodePath, err := exec.LookPath("node")
-	if err != nil {
-		return "", fmt.Errorf("resolve Node.js runtime: %w", err)
-	}
-	absolute, err := filepath.Abs(nodePath)
-	if err != nil {
-		return "", fmt.Errorf("resolve Node.js runtime path: %w", err)
-	}
-	return absolute, nil
-}
-
 func buildKiroCommand(runtimePath, scriptPath string) string {
 	if runtime.GOOS == "windows" {
 		return quoteWindowsArgument(runtimePath) + " " + quoteWindowsArgument(scriptPath)
 	}
 	return quotePOSIXArgument(runtimePath) + " " + quotePOSIXArgument(scriptPath)
-}
-
-func quotePOSIXArgument(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 func quoteWindowsArgument(value string) string {

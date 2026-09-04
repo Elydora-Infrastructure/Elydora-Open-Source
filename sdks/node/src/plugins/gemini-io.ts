@@ -2,7 +2,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   AGENT_KEY,
+  AUDIT_OPTIONS,
   CONFIG_FILE,
+  GUARD_OPTIONS,
   type GeminiRuntimeContract,
 } from './gemini-contract.js';
 import {
@@ -11,13 +13,12 @@ import {
   type GeminiDocument,
   type RenderedGeminiDocument,
 } from './gemini-config.js';
-import { sameGeminiAgentId, sameGeminiPath } from './gemini-command.js';
 import { inspectPhysicalDirectory, readPhysicalFile } from './managed-files.js';
+import { managedRuntimeFilesExist } from './managed-runtime-status.js';
 import {
   commitManagedTransaction,
   prepareManagedFileChange,
 } from './managed-transaction.js';
-import { parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
 export function geminiConfigurationDirectory(): string {
   const configuredHome = process.env.GEMINI_CLI_HOME;
@@ -64,86 +65,15 @@ export async function writeGeminiDocument(rendered: RenderedGeminiDocument): Pro
   });
 }
 
-function requireNonEmptyString(value: unknown, field: string, configPath: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`Elydora runtime config ${field} is invalid: ${configPath}`);
-  }
-  return value;
-}
-
-function validateRuntimeConfig(
-  config: JsonObject,
-  contract: GeminiRuntimeContract,
-  configPath: string,
-): void {
-  const supported = new Set(['org_id', 'agent_id', 'kid', 'base_url', 'token', 'agent_name']);
-  const extra = Object.keys(config).find((key) => !supported.has(key));
-  if (extra) {
-    throw new Error(`Elydora runtime config has unsupported field "${extra}": ${configPath}`);
-  }
-  requireNonEmptyString(config.org_id, 'org_id', configPath);
-  requireNonEmptyString(config.kid, 'kid', configPath);
-  const agentId = requireNonEmptyString(config.agent_id, 'agent_id', configPath);
-  if (!sameGeminiAgentId(agentId, contract.agentId) || config.agent_name !== AGENT_KEY) {
-    throw new Error(`Elydora runtime identity does not match Gemini CLI hooks: ${configPath}`);
-  }
-  if (config.token !== undefined) requireNonEmptyString(config.token, 'token', configPath);
-  const rawBaseUrl = requireNonEmptyString(config.base_url, 'base_url', configPath);
-  let baseUrl: URL;
-  try {
-    baseUrl = new URL(rawBaseUrl);
-  } catch (error) {
-    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`, {
-      cause: error instanceof Error ? error : new Error(String(error)),
-    });
-  }
-  if (!['http:', 'https:'].includes(baseUrl.protocol)
-    || !baseUrl.hostname
-    || baseUrl.username
-    || baseUrl.password
-    || baseUrl.search
-    || baseUrl.hash) {
-    throw new Error(`Elydora runtime config base_url is invalid: ${configPath}`);
-  }
-}
-
-function validatePrivateKey(contents: string, keyPath: string): void {
-  const bytes = Buffer.from(contents, 'base64url');
-  if (bytes.length !== 32 || bytes.toString('base64url') !== contents) {
-    throw new Error(`Elydora private key is invalid: ${keyPath}`);
-  }
-}
-
-async function runtimeContractExists(contract: GeminiRuntimeContract): Promise<boolean> {
-  const runtimeRoot = path.join(os.homedir(), '.elydora');
-  const agentDirectory = path.dirname(contract.guardPath);
-  if (!sameGeminiPath(path.dirname(agentDirectory), runtimeRoot)
-    || !sameGeminiPath(contract.auditPath, path.join(agentDirectory, 'hook.js'))) return false;
-  if (!await inspectPhysicalDirectory(runtimeRoot, 'Elydora runtime directory')) return false;
-  if (!await inspectPhysicalDirectory(agentDirectory, 'Elydora agent runtime directory')) {
-    return false;
-  }
-
-  const configPath = path.join(agentDirectory, 'config.json');
-  const keyPath = path.join(agentDirectory, 'private.key');
-  const [config, key, guard, audit] = await Promise.all([
-    readPhysicalFile(configPath, 'Elydora runtime config'),
-    readPhysicalFile(keyPath, 'Elydora private key'),
-    readPhysicalFile(contract.guardPath, 'Elydora guard runtime'),
-    readPhysicalFile(contract.auditPath, 'Elydora audit runtime'),
-  ]);
-  if (!config || !key || !guard || !audit) return false;
-  const parsed = parseStrictJsonObject(config.contents, `Elydora runtime config at ${configPath}`);
-  validateRuntimeConfig(parsed, contract, configPath);
-  validatePrivateKey(key.contents, keyPath);
-  return guard.contents.length > 0 && audit.contents.length > 0;
-}
-
 export async function geminiRuntimeFilesExist(
   contracts: readonly GeminiRuntimeContract[],
 ): Promise<boolean> {
   for (const contract of contracts) {
-    if (await runtimeContractExists(contract)) return true;
+    const exists = await managedRuntimeFilesExist(contract, AGENT_KEY, {
+      guardOptions: GUARD_OPTIONS,
+      auditOptions: AUDIT_OPTIONS,
+    });
+    if (exists) return true;
   }
   return false;
 }

@@ -1,73 +1,18 @@
 package plugins
 
 import (
-	"fmt"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 )
 
-type claudeRuntimeReference struct {
-	agentID    string
-	scriptPath string
-}
-
-func sameClaudePath(left, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if absolute, err := filepath.Abs(left); err == nil {
-		left = absolute
-	}
-	if absolute, err := filepath.Abs(right); err == nil {
-		right = absolute
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameClaudeAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func isClaudeNodeExecutable(path string) bool {
-	name := filepath.Base(path)
-	return name == "node" || strings.EqualFold(name, "node.exe")
-}
-
-func sameClaudeFileName(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
+type claudeRuntimeReference = managedScriptReference
 
 func claudeRuntimeReferenceForScript(
 	scriptPath string,
 	scriptName string,
 ) (*claudeRuntimeReference, error) {
-	if !filepath.IsAbs(scriptPath) ||
-		!sameClaudeFileName(filepath.Base(scriptPath), scriptName) {
-		return nil, nil
-	}
-	agentDirectory := filepath.Dir(scriptPath)
-	runtimeRoot, err := AgentRuntimeRoot()
-	if err != nil {
-		return nil, err
-	}
-	if !sameClaudePath(filepath.Dir(agentDirectory), runtimeRoot) {
-		return nil, nil
-	}
-	agentID := filepath.Base(agentDirectory)
-	if agentID == "" || agentID == "." || agentID == ".." {
-		return nil, nil
-	}
-	return &claudeRuntimeReference{agentID: agentID, scriptPath: scriptPath}, nil
+	return resolveManagedScript(scriptPath, scriptName)
 }
 
 func claudeLegacyReference(
@@ -95,7 +40,7 @@ func managedClaudeReference(
 		handler["statusMessage"] == statusMessage {
 		nodePath, nodeOK := handler["command"].(string)
 		args, argsOK := handler["args"].([]any)
-		if nodeOK && filepath.IsAbs(nodePath) && isClaudeNodeExecutable(nodePath) &&
+		if nodeOK && filepath.IsAbs(nodePath) && isNodeExecutable(nodePath) &&
 			argsOK && len(args) == 1 {
 			if scriptPath, ok := args[0].(string); ok {
 				return claudeRuntimeReferenceForScript(scriptPath, scriptName)
@@ -146,7 +91,7 @@ func removeManagedClaudeGroups(
 				return nil, false, err
 			}
 			owned := reference != nil &&
-				(agentID == "" || sameClaudeAgentID(reference.agentID, agentID))
+				(agentID == "" || sameManagedAgentID(reference.agentID, agentID))
 			if owned {
 				removed = true
 				continue
@@ -154,7 +99,7 @@ func removeManagedClaudeGroups(
 			kept = append(kept, handler)
 		}
 		if len(kept) > 0 || !exactManagedClaudeGroup(group) {
-			object := cloneClaudeObject(group.object)
+			object := cloneJSONObject(group.object)
 			object["hooks"] = group.object["hooks"]
 			result = append(result, claudeGroup{object: object, handlers: kept})
 		}
@@ -235,13 +180,6 @@ func entirelyManagedClaudeDocument(document *claudeDocument) bool {
 	return handlerCount > 0
 }
 
-func claudeReferenceKey(agentID string) string {
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(agentID)
-	}
-	return agentID
-}
-
 func claudeReferencesForEvent(
 	groups []claudeGroup,
 	scriptName string,
@@ -263,7 +201,7 @@ func claudeReferencesForEvent(
 				return nil, err
 			}
 			if reference != nil {
-				key := claudeReferenceKey(reference.agentID)
+				key := managedReferenceKey(reference.agentID)
 				result[key] = append(result[key], *reference)
 			}
 		}
@@ -307,7 +245,7 @@ func claudeRuntimeContracts(hooks claudeHooks) ([]claudeRuntimeContract, error) 
 		success := successes[key]
 		failure := failures[key]
 		if len(guard) != 1 || len(success) != 1 || len(failure) != 1 ||
-			!sameClaudePath(success[0].scriptPath, failure[0].scriptPath) {
+			!sameManagedPath(success[0].scriptPath, failure[0].scriptPath) {
 			continue
 		}
 		contracts = append(contracts, claudeRuntimeContract{
@@ -316,11 +254,4 @@ func claudeRuntimeContracts(hooks claudeHooks) ([]claudeRuntimeContract, error) 
 		})
 	}
 	return contracts, nil
-}
-
-func requireClaudeAbsoluteNode(nodePath string) error {
-	if !filepath.IsAbs(nodePath) || !isClaudeNodeExecutable(nodePath) {
-		return fmt.Errorf("Claude Code hooks require an absolute Node.js executable path")
-	}
-	return nil
 }

@@ -1,6 +1,14 @@
 import os from 'node:os';
 import path from 'node:path';
+import { sameAgentId, samePath } from './common.js';
 import type { FileSnapshot } from './managed-files.js';
+import {
+  isNodeExecutable,
+  parsePosixCommand,
+  parsePowerShellSource,
+  posixSource,
+  powerShellSource,
+} from './shell-command.js';
 import { validateHooks, type CopilotHooks } from './copilot-schema.js';
 import { parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
@@ -51,122 +59,38 @@ export interface RuntimeContract {
   readonly auditPath: string;
 }
 
-interface ParsedArgument {
-  readonly value: string;
-  readonly next: number;
-}
-
 interface ManagedEntry {
   readonly agentId: string;
   readonly scriptPath: string;
-}
-
-export function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-export function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32'
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right;
 }
 
 function agentKey(agentId: string): string {
   return process.platform === 'win32' ? agentId.toLowerCase() : agentId;
 }
 
-function quotePosix(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-function quotePowerShell(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
 export function buildHandler(scriptPath: string): JsonObject {
   return {
     type: 'command',
-    bash: `${quotePosix(process.execPath)} ${quotePosix(scriptPath)}`,
-    powershell: `& ${quotePowerShell(process.execPath)} ${quotePowerShell(scriptPath)}; exit $LASTEXITCODE`,
+    bash: posixSource(scriptPath),
+    powershell: powerShellSource(scriptPath),
     timeoutSec: HOOK_TIMEOUT_SECONDS,
   };
-}
-
-function readPosixArgument(command: string, start: number): ParsedArgument | undefined {
-  if (command[start] !== "'") return undefined;
-  const apostrophe = `'"'"'`;
-  let value = '';
-  for (let index = start + 1; index < command.length;) {
-    if (command.startsWith(apostrophe, index)) {
-      value += "'";
-      index += apostrophe.length;
-      continue;
-    }
-    if (command[index] === "'") return { value, next: index + 1 };
-    value += command[index];
-    index += 1;
-  }
-  return undefined;
-}
-
-function parseGeneratedBash(command: unknown): readonly [string, string] | undefined {
-  if (typeof command !== 'string') return undefined;
-  const executable = readPosixArgument(command, 0);
-  if (!executable || command[executable.next] !== ' ') return undefined;
-  const script = readPosixArgument(command, executable.next + 1);
-  if (!script || script.next !== command.length) return undefined;
-  return [executable.value, script.value];
-}
-
-function readPowerShellArgument(command: string, start: number): ParsedArgument | undefined {
-  if (command[start] !== "'") return undefined;
-  let value = '';
-  for (let index = start + 1; index < command.length; index += 1) {
-    if (command[index] !== "'") {
-      value += command[index];
-      continue;
-    }
-    if (command[index + 1] === "'") {
-      value += "'";
-      index += 1;
-      continue;
-    }
-    return { value, next: index + 1 };
-  }
-  return undefined;
-}
-
-function parseGeneratedPowerShell(command: unknown): readonly [string, string] | undefined {
-  if (typeof command !== 'string' || !command.startsWith('& ')) return undefined;
-  const executable = readPowerShellArgument(command, 2);
-  if (!executable || command[executable.next] !== ' ') return undefined;
-  const script = readPowerShellArgument(command, executable.next + 1);
-  if (!script || command.slice(script.next) !== '; exit $LASTEXITCODE') return undefined;
-  return [executable.value, script.value];
 }
 
 function exactHandlerKeys(handler: JsonObject): boolean {
   return Object.keys(handler).sort().join(',') === 'bash,powershell,timeoutSec,type';
 }
 
-function nodeExecutable(filePath: string): boolean {
-  if (!path.isAbsolute(filePath)) return false;
-  const name = path.basename(filePath).toLowerCase();
-  return name === 'node' || name === 'node.exe';
-}
-
 function currentManagedScriptPath(handler: JsonObject): string | undefined {
   if (!exactHandlerKeys(handler)
     || handler.type !== 'command'
     || handler.timeoutSec !== HOOK_TIMEOUT_SECONDS) return undefined;
-  const bash = parseGeneratedBash(handler.bash);
-  const powershell = parseGeneratedPowerShell(handler.powershell);
+  if (typeof handler.bash !== 'string' || typeof handler.powershell !== 'string') return undefined;
+  const bash = parsePosixCommand(handler.bash);
+  const powershell = parsePowerShellSource(handler.powershell);
   if (!bash || !powershell
-    || !nodeExecutable(bash[0])
+    || !path.isAbsolute(bash[0])
+    || !isNodeExecutable(bash[0])
     || !samePath(bash[0], powershell[0])
     || !samePath(bash[1], powershell[1])) return undefined;
   return bash[1];

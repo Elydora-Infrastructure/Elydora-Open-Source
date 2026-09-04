@@ -1,10 +1,4 @@
-/**
- * Request ID middleware.
- *
- * Generates a UUIDv7 for every incoming request and stores it in the
- * Hono context variables. The ID is also set as the X-Request-Id
- * response header so clients can reference it when reporting issues.
- */
+/** Request ID middleware. */
 
 import type { MiddlewareHandler } from 'hono';
 import type { Env, AppVariables } from '../types.js';

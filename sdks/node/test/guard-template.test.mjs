@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { generateGuardScript } from '../dist/plugins/hook-template.js';
+import { generateGuardScript } from '../dist/plugins/guard-template.js';
 
 const AGENT_ID = 'agent-1';
 
@@ -26,6 +26,7 @@ async function createFixture(status) {
   await writeFile(
     path.join(agentDir, 'config.json'),
     JSON.stringify({ agent_id: AGENT_ID, base_url: `http://127.0.0.1:${address.port}` }),
+    { mode: 0o600 },
   );
 
   const scriptPath = path.join(homeDir, 'guard.cjs');
@@ -91,6 +92,7 @@ test('cached frozen status keeps the blocking exit code', async () => {
     await writeFile(
       path.join(fixture.homeDir, '.elydora', AGENT_ID, 'status-cache.json'),
       JSON.stringify({ status: 'frozen', cached_at: Date.now() }),
+      { mode: 0o600 },
     );
 
     const result = await runGuard(fixture.scriptPath, fixture.homeDir);

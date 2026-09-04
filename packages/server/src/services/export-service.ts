@@ -1,12 +1,4 @@
-/**
- * Export service — business logic for compliance export job management.
- *
- * Exports are asynchronous jobs that package operations matching specified
- * criteria into a downloadable bundle (JSON or PDF). The job is enqueued
- * via a message queue and processed by the queue consumer. Once complete,
- * the result is stored in the object store and the database record is
- * updated with a reference to the object key.
- */
+/** Export service: business logic for compliance export job management. */
 
 import type { Export, CreateExportRequest, CreateExportResponse, GetExportResponse, ListExportsResponse } from '../shared/index.js';
 import { generateUUIDv7 } from '../utils/uuid.js';

@@ -1,14 +1,14 @@
 import os from 'node:os';
 import path from 'node:path';
+import { managedScriptReference, sameAgentId, samePath } from './common.js';
 import {
   buildKiroIdeCommand,
   kiroIdeRuntimeReference,
-  sameKiroIdeAgentId,
-  sameKiroIdePath,
   type KiroIdeRuntimeReference,
 } from './kiroide-command.js';
 import {
   buildKiroIdeHook,
+  exactKeys,
   kiroIdeRuntimeContracts,
   renderKiroIdeDocument,
   type KiroIdeDocument,
@@ -16,6 +16,7 @@ import {
   type RenderedKiroIdeDocument,
   type KiroIdeRuntimeContract,
 } from './kiroide-contract.js';
+import { isNodeExecutable, parseLegacyWindowsCommand } from './shell-command.js';
 import { isObject, parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'kirocli';
@@ -162,27 +163,14 @@ function eventHooks(document: KiroCliV2Document, event: string): readonly KiroCl
   return (document.hooks[event] as readonly KiroCliV2Hook[] | undefined) ?? [];
 }
 
-function exactKeys(value: JsonObject, keys: readonly string[]): boolean {
-  return Object.keys(value).sort().join('|') === [...keys].sort().join('|');
-}
-
 function legacyWindowsReference(
   command: unknown,
   scriptName: string,
 ): KiroIdeRuntimeReference | undefined {
   if (typeof command !== 'string') return undefined;
-  const match = /^"([^"\r\n]+)" "([^"\r\n]+)"$/.exec(command);
-  if (!match
-    || !path.isAbsolute(match[1])
-    || !['node', 'node.exe'].includes(path.basename(match[1]).toLowerCase())
-    || !path.isAbsolute(match[2])
-    || path.basename(match[2]) !== scriptName) return undefined;
-  const agentDirectory = path.dirname(match[2]);
-  if (!sameKiroIdePath(path.dirname(agentDirectory), path.join(os.homedir(), '.elydora'))) {
-    return undefined;
-  }
-  const agentId = path.basename(agentDirectory);
-  return agentId ? { agentId, scriptPath: match[2] } : undefined;
+  const parsed = parseLegacyWindowsCommand(command);
+  if (!parsed || !path.isAbsolute(parsed[0]) || !isNodeExecutable(parsed[0])) return undefined;
+  return managedScriptReference(parsed[1], scriptName);
 }
 
 function ownedReference(command: unknown, scriptName: string): KiroIdeRuntimeReference | undefined {
@@ -219,7 +207,7 @@ function hasOwnedV2Hooks(document: KiroCliV2Document, agentId?: string): boolean
   return ['preToolUse', 'postToolUse'].some((event) => eventHooks(document, event).some((hook) => {
     const reference = v2OwnedReference(hook, event);
     return reference !== undefined
-      && (agentId === undefined || sameKiroIdeAgentId(reference.agentId, agentId));
+      && (agentId === undefined || sameAgentId(reference.agentId, agentId));
   }));
 }
 
@@ -237,7 +225,7 @@ export function withoutManagedKiroCliV2Hooks(
   for (const event of ['preToolUse', 'postToolUse']) {
     const remaining = eventHooks(document, event).filter((hook) => {
       const reference = v2OwnedReference(hook, event);
-      return !reference || (agentId !== undefined && !sameKiroIdeAgentId(reference.agentId, agentId));
+      return !reference || (agentId !== undefined && !sameAgentId(reference.agentId, agentId));
     });
     if (remaining.length > 0) next[event] = remaining;
     else delete next[event];
@@ -288,7 +276,7 @@ function entirelyManagedV2Document(document: KiroCliV2Document, agentId?: string
     const hooks = eventHooks(document, event);
     if (hooks.length !== 1) return false;
     const reference = v2OwnedReference(hooks[0], event);
-    if (!reference || (agentId !== undefined && !sameKiroIdeAgentId(reference.agentId, agentId))) {
+    if (!reference || (agentId !== undefined && !sameAgentId(reference.agentId, agentId))) {
       return false;
     }
   }
@@ -324,7 +312,7 @@ export function kiroCliV2RuntimeContracts(
     .map((hook) => v2ManagedReference(hook, 'postToolUse'))
     .filter((value): value is KiroIdeRuntimeReference => value !== undefined);
   if (guards.length !== 1 || audits.length !== 1
-    || !sameKiroIdeAgentId(guards[0].agentId, audits[0].agentId)) return [];
+    || !sameAgentId(guards[0].agentId, audits[0].agentId)) return [];
   return [{ agentId: guards[0].agentId, guardPath: guards[0].scriptPath, auditPath: audits[0].scriptPath }];
 }
 
@@ -355,7 +343,7 @@ export function withoutManagedKiroCliV3Hooks(
 ): KiroIdeHook[] {
   return hooks.filter((hook) => {
     const reference = v3OwnedReference(hook);
-    return !reference || (agentId !== undefined && !sameKiroIdeAgentId(reference.agentId, agentId));
+    return !reference || (agentId !== undefined && !sameAgentId(reference.agentId, agentId));
   });
 }
 
@@ -363,7 +351,7 @@ function hasOwnedV3Hooks(hooks: readonly KiroIdeHook[], agentId?: string): boole
   return hooks.some((hook) => {
     const reference = v3OwnedReference(hook);
     return reference !== undefined
-      && (agentId === undefined || sameKiroIdeAgentId(reference.agentId, agentId));
+      && (agentId === undefined || sameAgentId(reference.agentId, agentId));
   });
 }
 
@@ -374,7 +362,7 @@ function entirelyManagedV3Document(document: KiroIdeDocument, agentId?: string):
     && document.hooks.every((hook) => {
       const reference = v3OwnedReference(hook);
       return reference !== undefined
-        && (agentId === undefined || sameKiroIdeAgentId(reference.agentId, agentId));
+        && (agentId === undefined || sameAgentId(reference.agentId, agentId));
     });
 }
 
@@ -409,8 +397,8 @@ export function commonKiroCliRuntimeContract(
   const v2 = kiroCliV2RuntimeContracts(v2Document);
   const v3 = kiroIdeRuntimeContracts(v3Hooks);
   if (v2.length !== 1 || v3.length !== 1
-    || !sameKiroIdeAgentId(v2[0].agentId, v3[0].agentId)
-    || !sameKiroIdePath(v2[0].guardPath, v3[0].guardPath)
-    || !sameKiroIdePath(v2[0].auditPath, v3[0].auditPath)) return undefined;
+    || !sameAgentId(v2[0].agentId, v3[0].agentId)
+    || !samePath(v2[0].guardPath, v3[0].guardPath)
+    || !samePath(v2[0].auditPath, v3[0].auditPath)) return undefined;
   return v2[0];
 }

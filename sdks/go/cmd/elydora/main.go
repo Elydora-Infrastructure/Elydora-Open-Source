@@ -11,7 +11,7 @@ import (
 	"github.com/Elydora-Infrastructure/Elydora-Go-SDK/v2/cmd/elydora/plugins"
 )
 
-const version = "2.0.1"
+const version = "2.1.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -56,10 +56,6 @@ Commands:
 Run "elydora <command> -h" for details on each command.
 `)
 }
-
-// ---------------------------------------------------------------------------
-// install
-// ---------------------------------------------------------------------------
 
 func cmdInstall(args []string) {
 	if err := rejectLegacySecretArguments(args); err != nil {
@@ -160,10 +156,6 @@ func cmdInstall(args []string) {
 	fmt.Printf("  Guard script: %s\n", guardScriptPath)
 }
 
-// ---------------------------------------------------------------------------
-// uninstall
-// ---------------------------------------------------------------------------
-
 func cmdUninstall(args []string) {
 	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
 	agent := fs.String("agent", "", "Agent name (required)")
@@ -209,10 +201,6 @@ func cmdUninstall(args []string) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// status
-// ---------------------------------------------------------------------------
-
 func cmdStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	agent := fs.String("agent", "", "Agent name (optional — omit to show all)")
@@ -256,10 +244,6 @@ func showAgentStatus(name string) {
 	fmt.Printf("  %-14s  %-20s  %s\n", name, status.DisplayName, state)
 }
 
-// ---------------------------------------------------------------------------
-// agents
-// ---------------------------------------------------------------------------
-
 func cmdAgents() {
 	fmt.Println("Supported agents:")
 	fmt.Println()
@@ -281,13 +265,4 @@ func sortedAgentNames() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// guardScriptPathForAgent returns the path to ~/.elydora/<agentId>/guard.js.
-func guardScriptPathForAgent(agentId string) (string, error) {
-	agentDirectory, err := plugins.ResolveAgentRuntimeDirectory(agentId)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(agentDirectory, "guard.js"), nil
 }

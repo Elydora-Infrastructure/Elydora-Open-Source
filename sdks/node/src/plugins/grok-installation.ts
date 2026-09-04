@@ -2,7 +2,9 @@ import path from 'node:path';
 import type { InstallConfig } from './base.js';
 import {
   AGENT_KEY,
+  AUDIT_OPTIONS,
   AUDIT_SCRIPT,
+  GUARD_OPTIONS,
   GUARD_SCRIPT,
   type RenderedGrokDocument,
 } from './grok-contract.js';
@@ -24,14 +26,10 @@ const DISPLAY_NAME = 'Grok Build';
 const HOOKS_DIRECTORY_LABEL = 'Grok hooks directory';
 const HOOKS_LABEL = 'Grok user hooks';
 
-export type GrokRuntimePaths = ManagedRuntimePaths;
-export type PreparedGrokInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
 export async function preflightGrokInstallation(
   config: InstallConfig,
   hooksPath: string,
-): Promise<GrokRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: [{ directoryLabel: HOOKS_DIRECTORY_LABEL, filePath: hooksPath }],
@@ -42,7 +40,7 @@ export async function preflightGrokInstallation(
 export async function prepareGrokInstallation(
   config: InstallConfig,
   rendered: RenderedGrokDocument,
-): Promise<PreparedGrokInstallation> {
+): Promise<PreparedManagedInstallation> {
   const hooksSource = rendered.next ?? rendered.document.raw;
   if (hooksSource === undefined) throw new Error('Grok hook configuration is missing');
   const prepared = await prepareManagedInstallation({
@@ -56,8 +54,8 @@ export async function prepareGrokInstallation(
       source: hooksSource,
     }],
     config,
-    guardOptions: { denyProtocol: 'grok' },
-    auditOptions: { nativePayload: true },
+    guardOptions: GUARD_OPTIONS,
+    auditOptions: AUDIT_OPTIONS,
   }, GUARD_SCRIPT, AUDIT_SCRIPT);
   const hooksDirectory = path.dirname(rendered.document.filePath);
   return {
@@ -73,7 +71,7 @@ export async function prepareGrokInstallation(
 }
 
 export async function commitGrokInstallation(
-  prepared: PreparedGrokInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

@@ -2,9 +2,7 @@ package plugins
 
 import (
 	"fmt"
-	"runtime"
 	"sort"
-	"strings"
 )
 
 const (
@@ -54,18 +52,8 @@ type kimiHook struct {
 }
 
 type kimiRuntimeContract struct {
-	agentID    string
-	guardPath  string
-	auditPath  string
+	managedRuntimeContract
 	configPath string
-}
-
-func stringSet(values ...string) map[string]struct{} {
-	result := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		result[value] = struct{}{}
-	}
-	return result
 }
 
 func mergeStringSets(sets ...map[string]struct{}) map[string]struct{} {
@@ -173,7 +161,7 @@ func managedKimiReference(
 	hook kimiHook,
 	event string,
 	scriptName string,
-) (*kimiRuntimeReference, error) {
+) (*managedScriptReference, error) {
 	if hook.fieldCount != 3 || hook.event != event || hook.matcher != nil ||
 		hook.timeout == nil || *hook.timeout != kimiHookTimeoutSeconds {
 		return nil, nil
@@ -196,7 +184,7 @@ func keptKimiHookIndices(hooks []kimiHook, agentID string) ([]int, error) {
 	indices := make([]int, 0, len(hooks))
 	for index, hook := range hooks {
 		event, scriptName, managedEvent := managedKimiEvent(hook.event)
-		var reference *kimiRuntimeReference
+		var reference *managedScriptReference
 		var err error
 		if managedEvent {
 			reference, err = managedKimiReference(hook, event, scriptName)
@@ -205,7 +193,7 @@ func keptKimiHookIndices(hooks []kimiHook, agentID string) ([]int, error) {
 			}
 		}
 		remove := reference != nil &&
-			(agentID == "" || sameKimiAgentID(reference.agentID, agentID))
+			(agentID == "" || sameManagedAgentID(reference.agentID, agentID))
 		if !remove {
 			indices = append(indices, index)
 		}
@@ -213,19 +201,12 @@ func keptKimiHookIndices(hooks []kimiHook, agentID string) ([]int, error) {
 	return indices, nil
 }
 
-func kimiReferenceKey(agentID string) string {
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(agentID)
-	}
-	return agentID
-}
-
 func kimiReferencesForEvent(
 	hooks []kimiHook,
 	event string,
 	scriptName string,
-) (map[string][]kimiRuntimeReference, error) {
-	result := map[string][]kimiRuntimeReference{}
+) (map[string][]managedScriptReference, error) {
+	result := map[string][]managedScriptReference{}
 	for _, hook := range hooks {
 		reference, err := managedKimiReference(hook, event, scriptName)
 		if err != nil {
@@ -234,7 +215,7 @@ func kimiReferencesForEvent(
 		if reference == nil {
 			continue
 		}
-		key := kimiReferenceKey(reference.agentID)
+		key := managedReferenceKey(reference.agentID)
 		result[key] = append(result[key], *reference)
 	}
 	return result, nil
@@ -267,12 +248,15 @@ func kimiRuntimeContracts(documents []kimiDocument) ([]kimiRuntimeContract, erro
 			success := successes[key]
 			failure := failures[key]
 			if len(guard) != 1 || len(success) != 1 || len(failure) != 1 ||
-				!sameKimiPath(success[0].scriptPath, failure[0].scriptPath) {
+				!sameManagedPath(success[0].scriptPath, failure[0].scriptPath) {
 				continue
 			}
 			contracts = append(contracts, kimiRuntimeContract{
-				agentID: guard[0].agentID, guardPath: guard[0].scriptPath,
-				auditPath: success[0].scriptPath, configPath: document.contract.configPath,
+				managedRuntimeContract: managedRuntimeContract{
+					agentID: guard[0].agentID, guardPath: guard[0].scriptPath,
+					auditPath: success[0].scriptPath,
+				},
+				configPath: document.contract.configPath,
 			})
 		}
 	}

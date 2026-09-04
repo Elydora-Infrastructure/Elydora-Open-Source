@@ -178,8 +178,7 @@ func loadDurableJournal(directory string) (*durableJournal, error) {
 	}
 	stateNames := make([]string, 0)
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "state-") &&
-			strings.HasSuffix(entry.Name(), ".json") {
+		if _, state := durableJournalStateSequence(entry.Name()); state && !entry.IsDir() {
 			stateNames = append(stateNames, entry.Name())
 		}
 	}
@@ -317,11 +316,11 @@ func validateDurableJournalProgress(journal *durableJournal) error {
 	return nil
 }
 
-func durableJournalStateSequence(name string) (uint64, bool) {
-	if !strings.HasPrefix(name, "state-") || !strings.HasSuffix(name, ".json") {
+func durableJournalSequence(name, suffix string) (uint64, bool) {
+	if !strings.HasPrefix(name, "state-") || !strings.HasSuffix(name, suffix) {
 		return 0, false
 	}
-	value := strings.TrimSuffix(strings.TrimPrefix(name, "state-"), ".json")
+	value := strings.TrimSuffix(strings.TrimPrefix(name, "state-"), suffix)
 	if len(value) != 20 {
 		return 0, false
 	}
@@ -329,14 +328,10 @@ func durableJournalStateSequence(name string) (uint64, bool) {
 	return sequence, err == nil
 }
 
+func durableJournalStateSequence(name string) (uint64, bool) {
+	return durableJournalSequence(name, ".json")
+}
+
 func durableJournalPendingSequence(name string) (uint64, bool) {
-	if !strings.HasPrefix(name, "state-") || !strings.HasSuffix(name, ".pending") {
-		return 0, false
-	}
-	value := strings.TrimSuffix(strings.TrimPrefix(name, "state-"), ".pending")
-	if len(value) != 20 {
-		return 0, false
-	}
-	sequence, err := strconv.ParseUint(value, 10, 64)
-	return sequence, err == nil
+	return durableJournalSequence(name, ".pending")
 }

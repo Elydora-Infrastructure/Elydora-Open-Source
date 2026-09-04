@@ -1,11 +1,7 @@
 import path from 'node:path';
 import type { InstallConfig } from './base.js';
-import {
-  AGENT_KEY,
-  AUDIT_SCRIPT,
-  GUARD_SCRIPT,
-  samePath,
-} from './droid-contract.js';
+import { MAX_SOURCE_BYTES, samePath } from './common.js';
+import { AGENT_KEY, AUDIT_SCRIPT, GUARD_SCRIPT } from './droid-contract.js';
 import {
   activeDocument,
   installationDocuments,
@@ -31,11 +27,6 @@ import {
 
 const DISPLAY_NAME = 'Factory Droid';
 const DIRECTORY_LABEL = 'Factory Droid user configuration directory';
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
-
-export type DroidRuntimePaths = ManagedRuntimePaths;
-export type PreparedDroidInstallation = PreparedManagedInstallation;
-export type { RenameFile };
 
 function sourceLabel(document: DroidDocument): string {
   if (document.kind === 'settings') return 'Factory Droid user settings';
@@ -56,7 +47,7 @@ function hookLocations(sources: DroidSources) {
 export async function preflightDroidInstallation(
   config: InstallConfig,
   sources: DroidSources,
-): Promise<DroidRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   requireHooksEnabled(sources);
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
@@ -92,7 +83,7 @@ export async function prepareDroidInstallation(
   config: InstallConfig,
   sources: DroidSources,
   rendered: readonly RenderedDocument[],
-): Promise<PreparedDroidInstallation> {
+): Promise<PreparedManagedInstallation> {
   await preflightDroidInstallation(config, sources);
   const changed = installationChanges(sources, rendered);
   const prepared = await prepareManagedInstallation({
@@ -124,7 +115,7 @@ export async function prepareDroidInstallation(
 }
 
 export async function commitDroidInstallation(
-  prepared: PreparedDroidInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

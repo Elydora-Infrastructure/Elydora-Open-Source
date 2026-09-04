@@ -1,6 +1,4 @@
-/**
- * Elydora API — Node.js entry point.
- */
+/** Elydora API: Node.js entry point. */
 
 import 'dotenv/config';
 import { serve } from '@hono/node-server';
@@ -90,7 +88,7 @@ app.use('/*', async (c, next) => {
   await next();
 });
 
-// CORS — always restrict to the configured allowlist
+// CORS: always restrict to the configured allowlist
 app.use(
   '/*',
   cors({

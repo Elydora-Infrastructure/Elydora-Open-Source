@@ -1,8 +1,4 @@
-/**
- * Epoch scheduler — runs every 5 minutes to create Merkle tree rollups.
- *
- * Run as a separate Node.js process: node dist/scheduler.js
- */
+/** Epoch scheduler: runs every 5 minutes to create Merkle tree rollups. */
 
 import 'dotenv/config';
 import cron from 'node-cron';

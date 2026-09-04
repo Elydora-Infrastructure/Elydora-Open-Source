@@ -1,15 +1,4 @@
-/**
- * Branded PDF generator for Elydora compliance exports.
- *
- * Produces professional multi-page PDF/1.4 documents with:
- *   - Elydora logo and brand header bar
- *   - Structured metadata section
- *   - Formatted operations table with alternating row stripes
- *   - Branded footer with page numbers
- *
- * Uses only built-in PDF Type1 fonts (Helvetica, Courier) —
- * no external dependencies, works entirely in the Node.js runtime.
- */
+/** Branded PDF generator for Elydora compliance exports. */
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,15 +35,15 @@ const CW = PW - ML - MR;  // 500pt content width
 
 // Header bar
 const HDR_H = 56;
-const HDR_Y = PH - HDR_H; // 736 — bottom edge of header
+const HDR_Y = PH - HDR_H; // 736: bottom edge of header
 
 // Footer
 const FTR_LINE = 44;      // y of separator line
 const FTR_TEXT = 28;       // y of footer text baseline
 
 // Content area
-const CT = HDR_Y - 20;    // 716 — content top
-const CB = FTR_LINE + 12; // 56  — content bottom
+const CT = HDR_Y - 20;    // 716: content top
+const CB = FTR_LINE + 12; // 56 : content bottom
 
 // Operations table
 const ROW_H = 12;         // row height
@@ -114,11 +103,7 @@ function txt(s: string, x: number, y: number, font: string, size: number, rgb: s
   return `BT ${rgb} rg ${font} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${esc(s)}) Tj ET`;
 }
 
-/**
- * Draw the Elydora "E" logo mark.
- * SVG source: M3 2H21V7H8V10H17V15H8V18H21V23H3V2Z  (viewBox 0 0 24 24)
- * Transform flips Y for PDF coordinate system.
- */
+/** Draw the Elydora "E" logo mark. */
 function drawLogo(x: number, y: number, size: number, rgb: string): string {
   const sc = size / 24;
   return [
@@ -131,7 +116,7 @@ function drawLogo(x: number, y: number, size: number, rgb: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Section renderers — each appends drawing instructions to the page array
+// Section renderers: each appends drawing instructions to the page array
 // ---------------------------------------------------------------------------
 
 /** Dark header bar with logo and brand text (every page). */
@@ -321,7 +306,7 @@ function assemblePDF(pageStreams: string[]): Uint8Array {
   // Obj 1: Catalog
   objContents.push('<< /Type /Catalog /Pages 2 0 R >>');
 
-  // Obj 2: Pages (placeholder — patched after page objects are created)
+  // Obj 2: Pages (placeholder: patched after page objects are created)
   objContents.push('');
 
   // Obj 3–5: Built-in fonts

@@ -20,35 +20,37 @@ export {
 } from './utils.js';
 
 export type {
-  // Enums
   AgentStatus,
   KeyStatus,
   ExportStatus,
   RbacRole,
   IntegrationType,
+  AdminAction,
   ErrorCode,
 
-  // Entities
   Agent,
   AgentKey,
   Operation,
   Receipt,
   Epoch,
   Organization,
+  AdminEvent,
+  AgentAssignment,
   User,
   Export,
 
-  // Protocol
   EOR,
   EAR,
 
-  // API request/response
   ElydoraClientConfig,
   CreateOperationParams,
   RegisterAgentRequest,
   RegisterAgentResponse,
   GetAgentResponse,
   ListAgentsResponse,
+  UpdateAgentRequest,
+  UpdateAgentResponse,
+  FreezeAgentResponse,
   UnfreezeAgentResponse,
   DeleteAgentResponse,
   SubmitOperationResponse,
@@ -64,9 +66,16 @@ export type {
   ListExportsResponse,
   GetMeResponse,
   IssueApiTokenResponse,
+  RotateApiTokenResponse,
   JWK,
   JWKSResponse,
   HealthResponse,
+  DeepHealthResponse,
+  Webhook,
+  ListWebhooksResponse,
+  RegisterWebhookResponse,
+  ListMembersResponse,
+  ListAdminEventsResponse,
   AuthRegisterResponse,
   AuthLoginResponse,
   ErrorResponse,

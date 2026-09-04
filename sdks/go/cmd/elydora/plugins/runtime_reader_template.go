@@ -142,4 +142,26 @@ function writeProtectedJson(filePath, label, value) {
     }
   }
 }
+
+function resolveConfigBaseURL(config) {
+  const value = config.base_url || 'https://api.elydora.com';
+  if (typeof value !== 'string' || /[\\\u0000-\u0020]/.test(value)) {
+    throw new Error('Agent config base_url must be an absolute HTTP or HTTPS URL');
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new Error('Agent config base_url must be an absolute HTTP or HTTPS URL');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+    throw new Error('Agent config base_url must be an absolute HTTP or HTTPS URL');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(
+      'Agent config base_url must exclude credentials, query parameters, and fragments',
+    );
+  }
+  return value.replace(/\/+$/, '');
+}
 `

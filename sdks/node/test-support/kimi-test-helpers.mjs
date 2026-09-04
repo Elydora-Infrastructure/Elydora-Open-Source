@@ -1,104 +1,48 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import http from 'node:http';
-import os from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { parse as parseToml } from '@decimalturn/toml-patch';
+import {
+  createFixtureRoot,
+  distUrl,
+  homeEnvironment,
+  installConfig as baseInstallConfig,
+  optionalEnvironment,
+  runNode as baseNode,
+  runPlugin as basePlugin,
+  runShell,
+} from './harness.mjs';
 
-export const VALID_PRIVATE_KEY = Buffer.alloc(32).toString('base64url');
-export const pluginModuleUrl = pathToFileURL(path.resolve('dist/plugins/kimi.js')).href;
-export const registryModuleUrl = pathToFileURL(path.resolve('dist/plugins/registry.js')).href;
-export const contractModuleUrl = pathToFileURL(path.resolve('dist/plugins/kimi-contract.js')).href;
-export const ioModuleUrl = pathToFileURL(path.resolve('dist/plugins/kimi-io.js')).href;
-export const installationModuleUrl = pathToFileURL(
-  path.resolve('dist/plugins/kimi-installation.js'),
-).href;
-export const cliPath = path.resolve('dist/cli.js');
+export { VALID_PRIVATE_KEY, cliPath, registryModuleUrl, startApiServer } from './harness.mjs';
+
+export const pluginModuleUrl = distUrl('plugins/kimi.js');
+export const contractModuleUrl = distUrl('plugins/kimi-contract.js');
+export const ioModuleUrl = distUrl('plugins/kimi-io.js');
+export const installationModuleUrl = distUrl('plugins/kimi-installation.js');
+const PLUGIN = { exportName: 'kimiPlugin', moduleUrl: pluginModuleUrl };
 
 export function runNode(args, env, cwd, input = '', unset = []) {
-  return new Promise((resolve, reject) => {
-    const childEnv = { ...process.env, ...env };
-    for (const key of unset) delete childEnv[key];
-    const child = spawn(process.execPath, args, {
-      cwd,
-      env: childEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
+  return baseNode(args, env, cwd, input, { unset });
 }
 
 export function runKimiHook(command, input, fixture, environment = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, {
-      shell: true,
-      cwd: fixture.projectDir,
-      env: {
-        ...process.env,
-        HOME: fixture.homeDir,
-        USERPROFILE: fixture.homeDir,
-        KIMI_CODE_HOME: fixture.kimiHomeOverride ?? '',
-        ...environment,
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
+  return runShell(command, {
+    ...homeEnvironment(fixture),
+    KIMI_CODE_HOME: fixture.kimiHomeOverride ?? '',
+    ...environment,
+  }, fixture.projectDir, input);
 }
 
 export function installConfig(fixture, overrides = {}) {
-  return {
-    agentName: 'kimi',
-    orgId: 'org-1',
-    agentId: 'agent-1',
-    privateKey: VALID_PRIVATE_KEY,
-    kid: 'kid-1',
-    token: 'token-1',
-    baseUrl: fixture.baseUrl,
-    guardScriptPath: fixture.guardScriptPath,
-    hookScriptPath: fixture.hookScriptPath,
-    ...overrides,
-  };
+  return baseInstallConfig('kimi', fixture, overrides);
 }
 
-export async function runPlugin(fixture, method, argument, environment = {}) {
-  const source = `
-    import { kimiPlugin } from ${JSON.stringify(pluginModuleUrl)};
-    const argument = JSON.parse(process.env.ELYDORA_TEST_ARGUMENT);
-    const result = await kimiPlugin[process.env.ELYDORA_TEST_METHOD](argument);
-    if (result !== undefined) console.log(JSON.stringify(result));
-  `;
-  const env = {
-    HOME: fixture.homeDir,
-    USERPROFILE: fixture.homeDir,
-    ELYDORA_TEST_ARGUMENT: JSON.stringify(argument),
-    ELYDORA_TEST_METHOD: method,
-    ...environment,
-  };
-  const unset = [];
-  if (fixture.kimiHomeOverride === undefined) unset.push('KIMI_CODE_HOME');
-  else env.KIMI_CODE_HOME = fixture.kimiHomeOverride;
-  return runNode(
-    ['--input-type=module', '--eval', source],
-    env,
-    fixture.projectDir,
-    '',
-    unset,
-  );
+export function runPlugin(fixture, method, argument, environment = {}) {
+  const home = optionalEnvironment('KIMI_CODE_HOME', fixture.kimiHomeOverride);
+  return basePlugin(PLUGIN, fixture, method, argument, {
+    env: { ...environment, ...home.env },
+    unset: home.unset,
+  });
 }
 
 async function writeOptional(filePath, contents) {
@@ -115,50 +59,37 @@ export async function createFixture({
   legacyDetected = true,
   explicitKimiHome = true,
 } = {}) {
-  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-kimi-'));
-  const homeDir = path.join(rootDir, "home with spaces and 'quote %ELYDORA_HOOK_PATH%");
-  const projectDir = path.join(rootDir, 'project with spaces');
+  const base = await createFixtureRoot(
+    'elydora-kimi-',
+    "home with spaces and 'quote %ELYDORA_HOOK_PATH%",
+  );
   const kimiHome = explicitKimiHome
-    ? path.join(homeDir, 'custom kimi-code')
-    : path.join(homeDir, '.kimi-code');
+    ? path.join(base.homeDir, 'custom kimi-code')
+    : path.join(base.homeDir, '.kimi-code');
   const stablePath = path.join(kimiHome, 'config.toml');
-  const legacyHome = path.join(homeDir, '.kimi');
+  const legacyHome = path.join(base.homeDir, '.kimi');
   const legacyPath = path.join(legacyHome, 'config.toml');
-  const agentDir = path.join(homeDir, '.elydora', 'agent-1');
-  const guardScriptPath = path.join(agentDir, 'guard.js');
-  const hookScriptPath = path.join(agentDir, 'hook.js');
-  await mkdir(projectDir, { recursive: true });
   if (stableDetected && !explicitKimiHome) await mkdir(kimiHome, { recursive: true });
   if (legacyDetected) await mkdir(legacyHome, { recursive: true });
   await writeOptional(stablePath, stableConfig);
   await writeOptional(legacyPath, legacyConfig);
-  const fixture = {
-    agentDir,
+  return {
+    ...base,
     baseUrl,
-    guardScriptPath,
-    homeDir,
-    hookScriptPath,
     kimiHome,
     kimiHomeOverride: explicitKimiHome ? kimiHome : undefined,
     legacyHome,
     legacyPath,
-    projectDir,
-    rootDir,
     stablePath,
     install(overrides = {}) {
       return runPlugin(this, 'install', installConfig(this, overrides));
     },
-    async close() {
-      await rm(rootDir, { recursive: true, force: true });
-    },
   };
-  return fixture;
 }
 
-export function readKimiConfig(filePath) {
-  return import('node:fs/promises')
-    .then(({ readFile }) => readFile(filePath, 'utf-8'))
-    .then((raw) => ({ raw, config: parseToml(raw) }));
+export async function readKimiConfig(filePath) {
+  const raw = await readFile(filePath, 'utf-8');
+  return { raw, config: parseToml(raw) };
 }
 
 export function managedHook(config, event) {
@@ -181,40 +112,4 @@ export function legacyCommand(scriptPath) {
   if (process.platform === 'win32') return `"${process.execPath}" "${scriptPath}"`;
   const quote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
   return `${quote(process.execPath)} ${quote(scriptPath)}`;
-}
-
-export async function startApiServer({ status = 'active', operationStatus = 201 } = {}) {
-  const requests = [];
-  const server = http.createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const raw = Buffer.concat(chunks).toString('utf-8');
-    requests.push({
-      headers: request.headers,
-      method: request.method,
-      url: request.url,
-      raw,
-    });
-    if (request.method === 'GET') {
-      response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ agent: { status } }));
-      return;
-    }
-    response.writeHead(operationStatus, { 'Content-Type': 'application/json' });
-    response.end(operationStatus >= 200 && operationStatus < 300
-      ? JSON.stringify({ operation: { accepted: true } })
-      : JSON.stringify({ error: { code: 'UPSTREAM_FAILURE', message: 'failed' } }));
-  });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    requests,
-    close: () => new Promise((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
-    }),
-  };
 }

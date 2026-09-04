@@ -1,13 +1,4 @@
-/**
- * JWKS route — public key discovery endpoint.
- *
- * Returns the JSON Web Key Set containing the Elydora server's public
- * keys used for signing attestation receipts (EAR) and epoch roots (EER).
- * External verifiers can use these keys to independently validate
- * signatures without contacting the Elydora API.
- *
- * This endpoint requires NO authentication (per OpenAPI spec and RFC 7517).
- */
+/** JWKS route: public key discovery endpoint. */
 
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';
@@ -17,7 +8,7 @@ import { deriveEd25519PublicKey } from '../utils/crypto.js';
 const jwks = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 // ---------------------------------------------------------------------------
-// GET /.well-known/elydora/jwks.json — Retrieve the platform JWKS
+// GET /.well-known/elydora/jwks.json: Retrieve the platform JWKS
 // ---------------------------------------------------------------------------
 jwks.get('/', async (c) => {
   // Derive the public key from the server signing key

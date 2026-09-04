@@ -2,13 +2,10 @@ package elydora
 
 import "fmt"
 
-// GenesisChainHash is the initial chain hash for an agent's first operation.
-// It is the base64url encoding of 32 zero bytes, matching the backend.
+// GenesisChainHash is the base64url encoding of 32 zero bytes.
 const GenesisChainHash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
-// CreateOperation builds a signed EOR from the given parameters.
-// It generates a UUIDv7 operation ID, a nonce, computes the payload hash and chain hash,
-// and signs the entire record with the client's private key.
+// CreateOperation builds and signs an EOR locally.
 func (c *Client) CreateOperation(params *CreateOperationParams) (*EOR, error) {
 	if params == nil {
 		return nil, fmt.Errorf("elydora: params must not be nil")
@@ -88,7 +85,11 @@ func (c *Client) GetOperation(operationID string) (*GetOperationResponse, error)
 // VerifyOperation verifies the integrity of an operation.
 func (c *Client) VerifyOperation(operationID string) (*VerifyOperationResponse, error) {
 	var result VerifyOperationResponse
-	if err := c.doPost(fmt.Sprintf("/v1/operations/%s/verify", operationID), nil, &result); err != nil {
+	if err := c.doPost(
+		fmt.Sprintf("/v1/operations/%s/verify", operationID),
+		map[string]interface{}{},
+		&result,
+	); err != nil {
 		return nil, err
 	}
 	return &result, nil

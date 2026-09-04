@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { InstallConfig } from './base.js';
-import { sameKiroIdeAgentId } from './kiroide-command.js';
+import { sameAgentId } from './common.js';
 import {
   AGENT_KEY,
   AUDIT_SCRIPT,
@@ -31,17 +31,13 @@ import {
 const DISPLAY_NAME = 'Kiro IDE';
 const DIRECTORY_LABEL = 'Kiro IDE hooks directory';
 
-export type KiroIdeRuntimePaths = ManagedRuntimePaths;
-export type PreparedKiroIdeInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
 function hookLocation(paths: KiroIdePaths) {
   return [{ directoryLabel: DIRECTORY_LABEL, filePath: paths.configPath }];
 }
 
 function removesLegacy(legacy: LegacyKiroIdeDocument, agentId?: string): boolean {
   return legacy.contract !== undefined
-    && (agentId === undefined || sameKiroIdeAgentId(legacy.contract.agentId, agentId));
+    && (agentId === undefined || sameAgentId(legacy.contract.agentId, agentId));
 }
 
 async function prepareLegacyRemoval(
@@ -64,7 +60,7 @@ async function prepareLegacyRemoval(
 export async function preflightKiroIdeInstallation(
   config: InstallConfig,
   paths: KiroIdePaths,
-): Promise<KiroIdeRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: hookLocation(paths),
@@ -76,7 +72,7 @@ export async function prepareKiroIdeInstallation(
   config: InstallConfig,
   sources: KiroIdeSources,
   rendered: RenderedKiroIdeDocument,
-): Promise<PreparedKiroIdeInstallation> {
+): Promise<PreparedManagedInstallation> {
   if (rendered.next === undefined) throw new Error('Kiro IDE installation requires a hook document');
   const prepared = await prepareManagedInstallation({
     agentKey: AGENT_KEY,
@@ -107,7 +103,7 @@ export async function prepareKiroIdeInstallation(
 }
 
 export async function commitKiroIdeInstallation(
-  prepared: PreparedKiroIdeInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

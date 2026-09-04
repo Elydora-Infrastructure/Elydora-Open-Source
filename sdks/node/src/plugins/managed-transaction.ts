@@ -2,13 +2,12 @@ import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
+import { asError, errorMessage, hasCode, MAX_SOURCE_BYTES } from './common.js';
 import {
   inspectPhysicalDirectory,
   readPhysicalFile,
   type FileSnapshot,
 } from './managed-files.js';
-
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 export interface ManagedChangeSpec {
   readonly filePath: string;
@@ -60,18 +59,6 @@ interface StagedChange {
 
 export type RenameFile = (source: string, destination: string) => Promise<void>;
 
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function hasCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-}
-
 function targetKey(filePath: string): string {
   const resolved = path.resolve(filePath);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
@@ -113,16 +100,20 @@ export async function prepareManagedFileChange(
   };
 }
 
-async function assertUnchanged(change: ManagedFileChange, operationName: string): Promise<void> {
-  const current = await readPhysicalFile(change.filePath, change.label, change.maximumBytes);
-  if ((!current && change.original)
-    || (current && !change.original)
-    || (current && change.original && (
-      current.contents !== change.original.contents
-      || current.device !== change.original.device
-      || current.inode !== change.original.inode
-    ))) {
-    throw new Error(`${change.label} changed during ${operationName}: ${change.filePath}`);
+function sameSnapshot(current: FileSnapshot | undefined, original: FileSnapshot | undefined): boolean {
+  if (!current || !original) return !current && !original;
+  return current.contents === original.contents
+    && current.device === original.device
+    && current.inode === original.inode;
+}
+
+async function assertUnchanged(
+  target: ManagedFilePrecondition,
+  operationName: string,
+): Promise<void> {
+  const current = await readPhysicalFile(target.filePath, target.label, target.maximumBytes);
+  if (!sameSnapshot(current, target.original)) {
+    throw new Error(`${target.label} changed during ${operationName}: ${target.filePath}`);
   }
 }
 
@@ -131,20 +122,7 @@ async function assertPreconditions(
   operationName: string,
 ): Promise<void> {
   for (const condition of transaction.preconditions ?? []) {
-    const current = await readPhysicalFile(
-      condition.filePath,
-      condition.label,
-      condition.maximumBytes,
-    );
-    if ((!current && condition.original)
-      || (current && !condition.original)
-      || (current && condition.original && (
-        current.contents !== condition.original.contents
-        || current.device !== condition.original.device
-        || current.inode !== condition.original.inode
-      ))) {
-      throw new Error(`${condition.label} changed during ${operationName}: ${condition.filePath}`);
-    }
+    await assertUnchanged(condition, operationName);
   }
 }
 
@@ -285,11 +263,7 @@ async function assertCommittedUnchanged(staged: StagedChange): Promise<void> {
     }
     return;
   }
-  const committed = staged.committedSnapshot;
-  if (!current || !committed
-    || current.contents !== committed.contents
-    || current.device !== committed.device
-    || current.inode !== committed.inode) {
+  if (!current || !sameSnapshot(current, staged.committedSnapshot)) {
     throw new Error(
       `${staged.change.label} changed during transaction recovery: ${staged.change.filePath}`,
     );

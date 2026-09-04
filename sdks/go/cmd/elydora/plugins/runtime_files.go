@@ -1,7 +1,6 @@
 package plugins
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,17 +12,7 @@ const (
 	maxRuntimeConfigBytes   = 512 * 1024
 )
 
-type agentRuntimeConfig struct {
-	OrgID     string `json:"org_id"`
-	AgentID   string `json:"agent_id"`
-	KID       string `json:"kid"`
-	BaseURL   string `json:"base_url"`
-	Token     string `json:"token"`
-	AgentName string `json:"agent_name"`
-}
-
-// WriteRuntimeFileAtomic replaces one managed runtime file through a flushed,
-// same-directory temporary file.
+// WriteRuntimeFileAtomic replaces one managed runtime file atomically.
 func WriteRuntimeFileAtomic(
 	path string,
 	label string,
@@ -40,8 +29,7 @@ func WriteRuntimeFileAtomic(
 	return writeChanges([]*fileChange{change}, "write "+label, nil)
 }
 
-// GenerateHookScript atomically commits the agent config, private key, and
-// self-contained Node.js audit runtime.
+// GenerateHookScript commits the config, private key, and audit runtime together.
 func GenerateHookScript(destPath string, config InstallConfig) error {
 	return generateHookScriptWithRename(destPath, config, nil)
 }
@@ -56,27 +44,12 @@ func generateHookScriptWithRename(
 		return err
 	}
 
-	baseURL := config.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.elydora.com"
+	if config.BaseURL == "" {
+		return fmt.Errorf("base URL is required")
 	}
-	encodedConfig, err := json.MarshalIndent(agentRuntimeConfig{
-		OrgID:     config.OrgID,
-		AgentID:   config.AgentID,
-		KID:       config.KID,
-		BaseURL:   baseURL,
-		Token:     config.Token,
-		AgentName: config.AgentName,
-	}, "", "  ")
+	encodedConfig, err := buildManagedRuntimeConfig(config, config.AgentName)
 	if err != nil {
-		return fmt.Errorf("encode Elydora runtime config: %w", err)
-	}
-	encodedConfig = append(encodedConfig, '\n')
-	if len(encodedConfig) > maxRuntimeConfigBytes {
-		return fmt.Errorf(
-			"Elydora runtime config exceeds %d bytes after JSON encoding",
-			maxRuntimeConfigBytes,
-		)
+		return err
 	}
 
 	items := []struct {

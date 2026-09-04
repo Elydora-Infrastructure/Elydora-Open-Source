@@ -7,8 +7,7 @@ type ClinePlugin struct {
 	rename renameFunc
 }
 
-// ManagesGuardRuntime reports that Cline commits both generated runtimes and
-// both native hook files in one transaction.
+// ManagesGuardRuntime reports that the guard is committed with the audit runtime.
 func (p *ClinePlugin) ManagesGuardRuntime() bool {
 	return true
 }

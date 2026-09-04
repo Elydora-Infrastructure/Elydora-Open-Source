@@ -3,17 +3,11 @@ package elydora
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // RegisterAgent registers a new AI agent within the organization.
 func (c *Client) RegisterAgent(req *RegisterAgentRequest) (*RegisterAgentResponse, error) {
-	if req == nil {
-		return nil, fmt.Errorf("elydora: register agent request must not be nil")
-	}
-	if !req.IntegrationType.IsValid() {
-		return nil, fmt.Errorf("elydora: invalid integration_type %q", req.IntegrationType)
-	}
-
 	var result RegisterAgentResponse
 	if err := c.doPost("/v1/agents/register", req, &result); err != nil {
 		return nil, err
@@ -24,22 +18,26 @@ func (c *Client) RegisterAgent(req *RegisterAgentRequest) (*RegisterAgentRespons
 // GetAgent retrieves an agent by ID.
 func (c *Client) GetAgent(agentID string) (*GetAgentResponse, error) {
 	var result GetAgentResponse
-	if err := c.doGet(fmt.Sprintf("/v1/agents/%s", agentID), &result); err != nil {
+	if err := c.doGet(fmt.Sprintf("/v1/agents/%s", url.PathEscape(agentID)), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // FreezeAgent freezes an agent, preventing it from submitting operations.
-func (c *Client) FreezeAgent(agentID, reason string) error {
-	return c.doPost(fmt.Sprintf("/v1/agents/%s/freeze", agentID), &FreezeAgentRequest{
+func (c *Client) FreezeAgent(agentID, reason string) (*FreezeAgentResponse, error) {
+	var result FreezeAgentResponse
+	if err := c.doPost(fmt.Sprintf("/v1/agents/%s/freeze", url.PathEscape(agentID)), &FreezeAgentRequest{
 		Reason: reason,
-	}, nil)
+	}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // RevokeKey revokes a specific key for an agent.
 func (c *Client) RevokeKey(agentID, kid, reason string) error {
-	return c.doPost(fmt.Sprintf("/v1/agents/%s/revoke", agentID), &RevokeAgentRequest{
+	return c.doPost(fmt.Sprintf("/v1/agents/%s/revoke", url.PathEscape(agentID)), &RevokeAgentRequest{
 		KID:    kid,
 		Reason: reason,
 	}, nil)
@@ -55,16 +53,31 @@ func (c *Client) ListAgents() (*ListAgentsResponse, error) {
 }
 
 // UnfreezeAgent unfreezes a previously frozen agent.
-func (c *Client) UnfreezeAgent(agentID, reason string) error {
-	return c.doPost(fmt.Sprintf("/v1/agents/%s/unfreeze", agentID), &UnfreezeAgentRequest{
+func (c *Client) UnfreezeAgent(agentID, reason string) (*UnfreezeAgentResponse, error) {
+	var result UnfreezeAgentResponse
+	if err := c.doPost(fmt.Sprintf("/v1/agents/%s/unfreeze", url.PathEscape(agentID)), &UnfreezeAgentRequest{
 		Reason: reason,
-	}, nil)
+	}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateAgent updates an agent's integration type.
+func (c *Client) UpdateAgent(agentID string, integrationType IntegrationType) (*UpdateAgentResponse, error) {
+	var result UpdateAgentResponse
+	if err := c.doRequest(http.MethodPatch, fmt.Sprintf("/v1/agents/%s", url.PathEscape(agentID)), &UpdateAgentRequest{
+		IntegrationType: integrationType,
+	}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // DeleteAgent permanently deletes an agent and all associated data.
 func (c *Client) DeleteAgent(agentID string) (*DeleteAgentResponse, error) {
 	var result DeleteAgentResponse
-	if err := c.doRequest(http.MethodDelete, fmt.Sprintf("/v1/agents/%s", agentID), nil, &result); err != nil {
+	if err := c.doRequest(http.MethodDelete, fmt.Sprintf("/v1/agents/%s", url.PathEscape(agentID)), nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

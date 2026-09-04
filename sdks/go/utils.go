@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// base64urlEncode encodes bytes to base64url without padding (RFC 4648 section 5).
+// base64urlEncode encodes bytes as unpadded base64url.
 func base64urlEncode(data []byte) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
@@ -18,7 +18,7 @@ func base64urlDecode(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(s)
 }
 
-// generateNonce generates a 16-byte cryptographically random nonce, base64url encoded.
+// generateNonce returns 16 random bytes as base64url.
 func generateNonce() (string, error) {
 	b := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
@@ -34,19 +34,15 @@ func generateUUIDv7() (string, error) {
 
 	var uuid [16]byte
 
-	// Timestamp: 48 bits in big-endian
 	binary.BigEndian.PutUint16(uuid[0:2], uint16(ms>>32))
 	binary.BigEndian.PutUint16(uuid[2:4], uint16(ms>>16))
 	binary.BigEndian.PutUint16(uuid[4:6], uint16(ms))
 
-	// Fill the rest with random data
 	if _, err := io.ReadFull(rand.Reader, uuid[6:]); err != nil {
 		return "", err
 	}
 
-	// Set version 7 (bits 48-51)
 	uuid[6] = (uuid[6] & 0x0F) | 0x70
-	// Set variant 10 (bits 64-65)
 	uuid[8] = (uuid[8] & 0x3F) | 0x80
 
 	return formatUUID(uuid), nil

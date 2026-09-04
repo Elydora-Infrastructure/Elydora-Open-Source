@@ -1,15 +1,4 @@
-/**
- * Internationalization (i18n) translation map.
- *
- * Provides bilingual (English / Chinese) translations for all user-facing
- * error and validation messages returned by the Elydora API.
- *
- * Message keys follow a dot-separated convention:
- *   <domain>.<specificMessage>
- *
- * Some messages accept parameters via simple {param} placeholders that
- * callers must replace before returning the message to the client.
- */
+/** Internationalization (i18n) translation map. */
 
 export type Lang = 'en' | 'zh';
 
@@ -28,6 +17,14 @@ const messages: Record<string, Record<Lang, string>> = {
   'error.keyRevoked': {
     en: 'The signing key has been revoked.',
     zh: '\u7b7e\u540d\u5bc6\u94a5\u5df2\u88ab\u64a4\u9500\u3002',
+  },
+  'error.keyRetired': {
+    en: 'The signing key has been retired.',
+    zh: '\u7b7e\u540d\u5bc6\u94a5\u5df2\u9000\u5f79\u3002',
+  },
+  'error.agentRevoked': {
+    en: 'The agent has been revoked.',
+    zh: '\u8be5\u4ee3\u7406\u5df2\u88ab\u540a\u9500\u3002',
   },
   'error.agentFrozen': {
     en: 'The agent is frozen and cannot submit operations.',
@@ -363,15 +360,7 @@ const messages: Record<string, Record<Lang, string>> = {
   },
 };
 
-/**
- * Retrieve a translated message by key.
- *
- * Supports simple {param} placeholder interpolation via the optional
- * `params` argument.
- *
- * Falls back to English if the requested language is missing, and
- * ultimately falls back to the raw key if no translation exists at all.
- */
+/** Retrieve a translated message by key. */
 export function getMessage(
   key: string,
   lang: Lang = 'en',
@@ -386,12 +375,7 @@ export function getMessage(
   return msg;
 }
 
-/**
- * Detect the preferred language from an Accept-Language header value.
- *
- * Returns 'zh' if the header contains any Chinese locale indicator,
- * otherwise defaults to 'en'.
- */
+/** Detect the preferred language from an Accept-Language header value. */
 export function detectLanguage(acceptLanguage: string | null | undefined): Lang {
   if (!acceptLanguage) return 'en';
   if (acceptLanguage.includes('zh')) return 'zh';

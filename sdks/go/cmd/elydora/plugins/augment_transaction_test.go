@@ -54,7 +54,7 @@ func TestAugmentInstallRollsBackAllSevenFiles(t *testing.T) {
 	)
 	failed := false
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameAugmentPath(destination, fixture.configPath) &&
+		if sameManagedPath(destination, fixture.configPath) &&
 			strings.HasSuffix(source, ".tmp") &&
 			!failed {
 			failed = true
@@ -87,13 +87,14 @@ func TestPreparedAugmentInstallRejectsConcurrentSettingsChange(t *testing.T) {
 	if err := os.WriteFile(fixture.configPath, concurrent, 0600); err != nil {
 		t.Fatalf("write concurrent settings: %v", err)
 	}
-	err := writeAugmentChanges(
+	err := writeManagedChanges(
 		changes,
 		"Install Augment Code CLI hooks",
 		nil,
 		paths.runtimeRoot,
 		paths.agentDirectory,
 		filepath.Dir(document.configPath),
+		"Auggie configuration directory",
 	)
 	if err == nil || !strings.Contains(err.Error(), "changed during installation") {
 		t.Fatalf("prepared install error = %v", err)
@@ -375,7 +376,7 @@ func TestAugmentUninstallPreservesSettingsAfterCommitFailure(t *testing.T) {
 		t.Fatalf("read installed settings: %v", err)
 	}
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameAugmentPath(destination, fixture.configPath) &&
+		if sameManagedPath(destination, fixture.configPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			return errors.New("injected Auggie uninstall failure")
 		}

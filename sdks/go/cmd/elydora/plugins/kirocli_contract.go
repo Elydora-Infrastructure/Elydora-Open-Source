@@ -28,12 +28,6 @@ type kiroConfigMutation struct {
 	remove  bool
 }
 
-func cloneKiroObject(value map[string]any) map[string]any {
-	clone := make(map[string]any, len(value))
-	copyKiroObject(clone, value)
-	return clone
-}
-
 func copyKiroObject(destination, source map[string]any) {
 	for key, value := range source {
 		destination[key] = value
@@ -49,7 +43,7 @@ func kiroHooksObject(settings map[string]any, label string) (map[string]any, err
 	if !ok || hooks == nil {
 		return nil, fmt.Errorf(`%s field "hooks" must be an object`, label)
 	}
-	return cloneKiroObject(hooks), nil
+	return cloneJSONObject(hooks), nil
 }
 
 func kiroHookEntries(hooks map[string]any, event, label string) ([]map[string]any, error) {
@@ -193,7 +187,7 @@ func prepareKiroV2Uninstall(
 	}
 	hooks["preToolUse"] = filteredPre
 	hooks["postToolUse"] = filteredPost
-	next := cloneKiroObject(settings)
+	next := cloneJSONObject(settings)
 	next["hooks"] = hooks
 	mutation.value = next
 	mutation.changed = true
@@ -250,7 +244,7 @@ func prepareKiroV3Uninstall(
 	if len(filtered) == len(hooks) {
 		return mutation, nil
 	}
-	next := cloneKiroObject(settings)
+	next := cloneJSONObject(settings)
 	next["hooks"] = filtered
 	owned := true
 	for key := range settings {

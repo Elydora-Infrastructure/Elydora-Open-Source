@@ -53,7 +53,7 @@ func TestDroidInstallRollsBackRuntimeAfterLateHookCommitFailure(t *testing.T) {
 	prepared := prepareDroidTestInstallation(t, fixture, fixture.config)
 	failed := false
 	rename := func(source, destination string) error {
-		if !failed && sameDroidPath(destination, fixture.configPath) {
+		if !failed && sameManagedPath(destination, fixture.configPath) {
 			failed = true
 			return errors.New("injected Droid hook commit failure")
 		}
@@ -85,7 +85,7 @@ func TestDroidConcurrentActiveHookReplacementPreventsRuntimeCommit(t *testing.T)
 		t.Fatalf("concurrent source error = %v", err)
 	}
 	for path, source := range before {
-		if sameDroidPath(path, fixture.configPath) {
+		if sameManagedPath(path, fixture.configPath) {
 			continue
 		}
 		if readDroidTestFile(t, path) != source {
@@ -205,7 +205,7 @@ func TestDroidSameContentReplacementIsRejectedByPhysicalIdentity(t *testing.T) {
 		t.Fatal("same-content replacement changed")
 	}
 	for path, source := range before {
-		if !sameDroidPath(path, fixture.configPath) && readDroidTestFile(t, path) != source {
+		if !sameManagedPath(path, fixture.configPath) && readDroidTestFile(t, path) != source {
 			t.Fatalf("runtime changed after inode replacement: %s", path)
 		}
 	}
@@ -226,7 +226,7 @@ func TestDroidUninstallRollsBackAllHookDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read uninstall sources: %v", err)
 	}
-	runtimeRoot, err := droidRuntimeRoot()
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		t.Fatalf("resolve runtime root: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestDroidUninstallRollsBackAllHookDocuments(t *testing.T) {
 	}
 	failed := false
 	rename := func(source, destination string) error {
-		if !failed && sameDroidPath(destination, fixture.settingsPath) {
+		if !failed && sameManagedPath(destination, fixture.settingsPath) {
 			failed = true
 			return errors.New("injected Droid uninstall failure")
 		}

@@ -1,6 +1,4 @@
-/**
- * Opaque API tokens: the raw value is returned once; only its SHA-256 hash is stored.
- */
+/** Opaque API tokens: the raw value is returned once; only its SHA-256 hash is stored. */
 
 import { createHash, randomBytes } from 'node:crypto';
 import type { Database } from '../adapters/interfaces.js';

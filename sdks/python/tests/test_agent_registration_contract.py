@@ -101,7 +101,7 @@ def test_sync_registration_requires_and_sends_integration_type(registration_serv
     host, port = registration_server.server_address
     client = ElydoraClient(
         "org-1", "admin-agent", "unused",
-        base_url=f"http://{host}:{port}", max_retries=1, token="api-token",
+        base_url=f"http://{host}:{port}", max_retries=0, token="api-token",
     )
     with pytest.raises(ValueError, match="Invalid integration_type None"):
         client.register_agent({"agent_id": "agent-1", "keys": []})
@@ -109,6 +109,8 @@ def test_sync_registration_requires_and_sends_integration_type(registration_serv
         client.register_agent({
             "agent_id": "agent-1", "integration_type": "future-cli", "keys": [],
         })
+    with pytest.raises(ValueError, match="Invalid integration_type 'future-cli'"):
+        client.update_agent("agent-1", "future-cli")
     assert registration_server.requests == []
 
     response = client.register_agent(registration_request())
@@ -122,11 +124,13 @@ async def test_async_registration_requires_and_sends_integration_type(registrati
     host, port = registration_server.server_address
     client = AsyncElydoraClient(
         "org-1", "admin-agent", "unused",
-        base_url=f"http://{host}:{port}", max_retries=1, token="api-token",
+        base_url=f"http://{host}:{port}", max_retries=0, token="api-token",
     )
     try:
         with pytest.raises(ValueError, match="Invalid integration_type None"):
             await client.register_agent({"agent_id": "agent-1", "keys": []})
+        with pytest.raises(ValueError, match="Invalid integration_type 'future-cli'"):
+            await client.update_agent("agent-1", "future-cli")
         assert registration_server.requests == []
 
         response = await client.register_agent(registration_request())

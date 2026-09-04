@@ -1,6 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
-import { parseStrictJsonObject } from './strict-json.js';
+import { sameAgentId, samePath } from './common.js';
+import { quotePosix, readPosixArgument, type ParsedArgument } from './shell-command.js';
+import { isObject, parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'augment';
 export const GUARD_SCRIPT = 'guard.js';
@@ -19,8 +21,6 @@ const SESSION_EVENTS = new Set([
   'Notification',
   'PromptSubmit',
 ]);
-
-export type JsonObject = Record<string, unknown>;
 
 export interface AugmentHandler extends JsonObject {
   readonly type: 'command';
@@ -58,21 +58,8 @@ export interface RuntimeContract {
   readonly auditWrapperPath: string;
 }
 
-interface ParsedArgument {
-  readonly value: string;
-  readonly next: number;
-}
-
-export function isObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function hasOwn(value: JsonObject, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function quotePosix(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function quoteWindows(value: string): string {
@@ -98,40 +85,10 @@ function readWindowsArgument(command: string, start: number): ParsedArgument | u
   return undefined;
 }
 
-const POSIX_APOSTROPHE = `'"'"'`;
-
-function readPosixArgument(command: string, start: number): ParsedArgument | undefined {
-  if (command[start] !== "'") return undefined;
-  let value = '';
-  for (let index = start + 1; index < command.length;) {
-    if (command.startsWith(POSIX_APOSTROPHE, index)) {
-      value += "'";
-      index += POSIX_APOSTROPHE.length;
-      continue;
-    }
-    if (command[index] === "'") return { value, next: index + 1 };
-    value += command[index];
-    index += 1;
-  }
-  return undefined;
-}
-
 function parseWrapperCommand(command: string): string | undefined {
   const readArgument = process.platform === 'win32' ? readWindowsArgument : readPosixArgument;
   const parsed = readArgument(command, 0);
   return parsed?.next === command.length && parsed.value ? parsed.value : undefined;
-}
-
-function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 export function wrapperPaths(agentDirectory: string): {

@@ -35,7 +35,7 @@ func prepareGeminiTestChanges(
 	t *testing.T,
 	fixture *geminiFixture,
 	document *geminiDocument,
-) ([]*fileChange, *geminiRuntimePaths) {
+) ([]*fileChange, *managedRuntimePaths) {
 	t.Helper()
 	paths, nodePath, err := preflightGeminiInstallation(fixture.config, document)
 	if err != nil {
@@ -110,7 +110,7 @@ func TestGeminiInstallRollsBackAllFiveFilesAfterSettingsFailure(t *testing.T) {
 	fixture.config.OrgID = "org-updated"
 	fixture.config.Token = "token-updated"
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameGeminiPath(destination, fixture.settingsPath) &&
+		if sameManagedPath(destination, fixture.settingsPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			return errors.New("injected Gemini settings failure")
 		}
@@ -139,13 +139,14 @@ func TestPreparedGeminiInstallRejectsConcurrentSettingsChange(t *testing.T) {
 	if err := os.WriteFile(fixture.settingsPath, concurrent, 0600); err != nil {
 		t.Fatalf("write concurrent settings: %v", err)
 	}
-	err = writeGeminiChanges(
+	err = writeManagedChanges(
 		changes,
 		"Install Gemini CLI hooks",
 		nil,
 		paths.runtimeRoot,
 		paths.agentDirectory,
 		filepath.Dir(document.filePath),
+		"Gemini CLI configuration directory",
 	)
 	if err == nil || !strings.Contains(err.Error(), "changed during installation") {
 		t.Fatalf("prepared install error = %v", err)
@@ -204,7 +205,7 @@ func TestGeminiUninstallPreservesSettingsAfterCommitFailure(t *testing.T) {
 		t.Fatalf("read installed Gemini settings: %v", err)
 	}
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameGeminiPath(destination, fixture.settingsPath) &&
+		if sameManagedPath(destination, fixture.settingsPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			return errors.New("injected Gemini uninstall failure")
 		}

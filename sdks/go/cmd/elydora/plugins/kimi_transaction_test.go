@@ -38,7 +38,7 @@ func TestKimiInstallRollsBackRuntimeAndBothConfigs(t *testing.T) {
 		modernConfig: kimiString(string(stable)), legacyConfig: kimiString(string(legacy)),
 	})
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameKimiPath(destination, fixture.legacyPath) {
+		if sameManagedPath(destination, fixture.legacyPath) {
 			return errors.New("injected legacy config failure")
 		}
 		return os.Rename(source, destination)
@@ -160,11 +160,11 @@ func TestPreparedKimiInstallDetectsSourceChangeBeforeCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preflight Kimi installation: %v", err)
 	}
-	guardCommand, err := buildKimiCommand(nodePath, paths.guardPath)
+	guardCommand, err := buildEncodedCommand("kimi", nodePath, paths.guardPath)
 	if err != nil {
 		t.Fatalf("build guard command: %v", err)
 	}
-	auditCommand, err := buildKimiCommand(nodePath, paths.auditPath)
+	auditCommand, err := buildEncodedCommand("kimi", nodePath, paths.auditPath)
 	if err != nil {
 		t.Fatalf("build audit command: %v", err)
 	}
@@ -204,12 +204,9 @@ func TestPreparedKimiInstallDetectsSourceChangeBeforeCommit(t *testing.T) {
 		t.Fatalf("write concurrent source: %v", err)
 	}
 
-	err = writeKimiChanges(
-		changes,
-		"Install Kimi hooks",
-		nil,
-		paths.runtimeRoot,
-		paths.agentDirectory,
+	err = writeManagedChanges(
+		changes, "Install Kimi hooks", nil,
+		paths.runtimeRoot, paths.agentDirectory, "", "",
 	)
 	if err == nil || !strings.Contains(err.Error(), "changed during installation") {
 		t.Fatalf("prepared install error = %v", err)

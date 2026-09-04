@@ -57,7 +57,7 @@ func TestDroidInstallWritesCurrentContainerAndCompleteRuntime(t *testing.T) {
 	requireDroidNativeGroup(t, auditGroup)
 	guardCommand := droidManagedHandler(t, hooks["PreToolUse"], fixture.guardPath)["command"].(string)
 	if runtime.GOOS == "windows" &&
-		(!strings.HasPrefix(guardCommand, "& '") || !strings.HasSuffix(guardCommand, droidWindowsExitSuffix)) {
+		(!strings.HasPrefix(guardCommand, "& '") || !strings.HasSuffix(guardCommand, powerShellExitSuffix)) {
 		t.Fatalf("Windows Factory command = %q", guardCommand)
 	}
 	runtimeConfig := readDroidTestObject(t, fixture.runtimeConfig)

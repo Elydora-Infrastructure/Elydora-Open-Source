@@ -12,10 +12,9 @@ import {
   type KiroIdeDocument,
   type KiroIdeRuntimeContract,
 } from './kiroide-contract.js';
+import { MAX_CONFIG_BYTES } from './common.js';
 import { inspectPhysicalDirectory, readPhysicalFile } from './managed-files.js';
 import { managedRuntimeFilesExist } from './managed-runtime-status.js';
-
-const MAX_HOOK_BYTES = 512 * 1024;
 
 export interface KiroCliSources {
   readonly paths: KiroCliPaths;
@@ -36,7 +35,7 @@ async function readV2Document(paths: KiroCliPaths): Promise<KiroCliV2Document> {
   const snapshot = await readPhysicalFile(
     paths.v2Path,
     'Kiro CLI v2 agent config',
-    MAX_HOOK_BYTES,
+    MAX_CONFIG_BYTES,
   );
   return snapshot
     ? parseKiroCliV2Document(paths.v2Path, snapshot.contents)
@@ -47,7 +46,7 @@ async function readV3Document(paths: KiroCliPaths): Promise<KiroIdeDocument> {
   const snapshot = await readPhysicalFile(
     paths.v3Path,
     'Kiro CLI v3 global hooks',
-    MAX_HOOK_BYTES,
+    MAX_CONFIG_BYTES,
   );
   return snapshot
     ? parseKiroIdeDocument(paths.v3Path, snapshot.contents, 'Kiro CLI v3 global hooks')

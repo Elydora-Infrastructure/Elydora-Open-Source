@@ -9,10 +9,9 @@ import {
   type OpenCodePaths,
   type OpenCodeRuntimeContract,
 } from './opencode-contract.js';
+import { errorMessage, hasCode, MAX_CONFIG_BYTES } from './common.js';
 import { inspectPhysicalDirectory, readPhysicalFile, type FileSnapshot } from './managed-files.js';
 import { managedRuntimeFilesExist } from './managed-runtime-status.js';
-
-const MAX_PLUGIN_BYTES = 512 * 1024;
 
 export interface OpenCodePluginFile<TContract> {
   readonly exists: boolean;
@@ -40,7 +39,7 @@ async function readPluginFile<TContract>(
   label: string,
   parse: (filePath: string, source: string) => TContract | undefined,
 ): Promise<OpenCodePluginFile<TContract>> {
-  const snapshot = await readPhysicalFile(filePath, label, MAX_PLUGIN_BYTES);
+  const snapshot = await readPhysicalFile(filePath, label, MAX_CONFIG_BYTES);
   if (!snapshot) return { exists: false, filePath };
   return {
     exists: true,
@@ -73,18 +72,14 @@ export function requireAvailableOpenCodePlugin(
   }
 }
 
-function hasCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-}
-
 async function executableExists(filePath: string): Promise<boolean> {
   try {
     return (await fsp.stat(filePath)).isFile();
   } catch (error) {
     if (hasCode(error, 'ENOENT') || hasCode(error, 'ENOTDIR')) return false;
-    throw new Error(`Inspect OpenCode Node.js runtime at ${filePath}: ${
-      error instanceof Error ? error.message : String(error)
-    }`, { cause: error instanceof Error ? error : new Error(String(error)) });
+    throw new Error(`Inspect OpenCode Node.js runtime at ${filePath}: ${errorMessage(error)}`, {
+      cause: error instanceof Error ? error : new Error(String(error)),
+    });
   }
 }
 

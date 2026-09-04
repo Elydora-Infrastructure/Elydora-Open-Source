@@ -207,6 +207,8 @@ Agent                         SDK                           Server
 
 All endpoints are prefixed with the configured base URL (default: `https://api.elydora.com`). All authenticated endpoints require a `Bearer` token in the `Authorization` header.
 
+This self-hosted server mounts `/.well-known/elydora/jwks.json`, `/api/auth/*`, `/v1/auth`, `/v1/agents`, `/v1/operations`, `/v1/audit`, `/v1/epochs`, and `/v1/exports`. The SDKs also expose `/v1/auth/rotate`, `/v1/health/deep`, `/v1/webhooks`, `/v1/members`, and `/v1/admin/events`, which only the hosted API implements; those methods return 404 here. SDK response types follow the hosted API, so fields such as `token_id`, `current_organization`, `onboarding_completed`, `capabilities`, `previous_status`, and the organization's `description` and `ba_org_id` can be absent in self-hosted responses.
+
 Errors are returned as:
 
 ```json
@@ -287,7 +289,7 @@ Register a new agent. Required role: **integration_engineer**.
   "responsible_entity": "engineering-team@example.com",
   "keys": [
     {
-      "kid": "my-agent-v1-key-v1",
+      "kid": "my-agent-v1-key-1",
       "public_key": "<base64url Ed25519 public key>",
       "algorithm": "ed25519"
     }
@@ -353,7 +355,7 @@ Re-activate a frozen agent. Required role: **security_admin**.
 
 Revoke a specific signing key. The agent remains registered but the key can no longer be used to sign new operations. Required role: **security_admin**.
 
-**Request body:** `{ "kid": "my-agent-v1-key-v1", "reason": "Key rotation" }`
+**Request body:** `{ "kid": "my-agent-v1-key-1", "reason": "Key rotation" }`
 
 ---
 
@@ -571,7 +573,7 @@ await client.registerAgent({
   agent_id: 'order-processor-v1',
   integration_type: 'sdk',
   display_name: 'Order Processor',
-  keys: [{ kid: 'order-processor-v1-key-v1', public_key: client.getPublicKey(), algorithm: 'ed25519' }],
+  keys: [{ kid: 'order-processor-v1-key-1', public_key: client.getPublicKey(), algorithm: 'ed25519' }],
 });
 
 // 4. Submit an operation
@@ -633,7 +635,7 @@ client.register_agent({
     "agent_id": "order-processor-v1",
     "integration_type": "sdk",
     "display_name": "Order Processor",
-    "keys": [{"kid": "order-processor-v1-key-v1",
+    "keys": [{"kid": "order-processor-v1-key-1",
                "public_key": derive_public_key(os.environ["AGENT_PRIVATE_KEY"]),
                "algorithm": "ed25519"}],
 })

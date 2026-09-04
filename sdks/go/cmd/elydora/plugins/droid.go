@@ -7,14 +7,12 @@ type DroidPlugin struct {
 	rename renameFunc
 }
 
-// ManagesGuardRuntime reports that Droid commits its guard, audit runtime,
-// credentials, and hook documents in one transaction.
+// ManagesGuardRuntime reports that the guard is committed with the audit runtime.
 func (p *DroidPlugin) ManagesGuardRuntime() bool {
 	return true
 }
 
-// PreflightInstall validates every hook source, policy layer, credential,
-// matcher, and runtime identity before any write.
+// PreflightInstall validates every source before the CLI creates runtime state.
 func (p *DroidPlugin) PreflightInstall(config InstallConfig) error {
 	sources, err := readDroidSources()
 	if err != nil {
@@ -107,7 +105,7 @@ func (p *DroidPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	runtimeRoot, err := droidRuntimeRoot()
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return err
 	}
@@ -133,7 +131,7 @@ func (p *DroidPlugin) Status() (PluginStatus, error) {
 	if droidHookBlocked(sources) != nil {
 		return status, nil
 	}
-	runtimeRoot, err := droidRuntimeRoot()
+	runtimeRoot, err := AgentRuntimeRoot()
 	if err != nil {
 		return status, err
 	}

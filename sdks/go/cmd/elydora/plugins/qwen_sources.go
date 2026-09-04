@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
+
+var qwenPathSeparatorPattern = regexp.MustCompile(`[/\\]+`)
 
 var qwenHomeEnvironmentKeys = [...]string{"QWEN_HOME", "QWEN_RUNTIME_DIR"}
 
@@ -154,7 +157,7 @@ func resolveQwenRouting() (*qwenRoutingResult, error) {
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		if !sameQwenPath(discoveredDirectory, initialDirectory) {
+		if !sameManagedPath(discoveredDirectory, initialDirectory) {
 			if err := readCandidate(filepath.Join(discoveredDirectory, ".env")); err != nil {
 				return nil, err
 			}

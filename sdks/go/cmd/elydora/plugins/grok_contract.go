@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"runtime"
 	"sort"
-	"strings"
 )
 
 const (
@@ -46,20 +44,6 @@ type grokRenderedDocument struct {
 	changed  bool
 	next     []byte
 	remove   bool
-}
-
-type grokRuntimeContract struct {
-	agentID   string
-	guardPath string
-	auditPath string
-}
-
-func cloneGrokObject(value map[string]any) map[string]any {
-	clone := make(map[string]any, len(value))
-	for key, item := range value {
-		clone[key] = item
-	}
-	return clone
 }
 
 func cloneGrokHooks(source grokHooks) grokHooks {
@@ -128,7 +112,7 @@ func validateGrokHandler(
 			}
 		}
 	}
-	return cloneGrokObject(handler), nil
+	return cloneJSONObject(handler), nil
 }
 
 func validateGrokGroup(value any, event string, groupIndex int) (grokGroup, error) {
@@ -166,7 +150,7 @@ func validateGrokGroup(value any, event string, groupIndex int) (grokGroup, erro
 		}
 		handlers = append(handlers, handler)
 	}
-	return grokGroup{object: cloneGrokObject(object), handlers: handlers}, nil
+	return grokGroup{object: cloneJSONObject(object), handlers: handlers}, nil
 }
 
 func readGrokHooks(root map[string]any) (grokHooks, error) {
@@ -229,7 +213,7 @@ func renderGrokHooks(hooks grokHooks) map[string]any {
 	for event, groups := range hooks {
 		values := make([]any, 0, len(groups))
 		for _, group := range groups {
-			object := cloneGrokObject(group.object)
+			object := cloneJSONObject(group.object)
 			handlers := make([]any, 0, len(group.handlers))
 			for _, handler := range group.handlers {
 				handlers = append(handlers, handler)
@@ -262,7 +246,7 @@ func exactManagedGrokGroup(group grokGroup) bool {
 func managedGrokReference(
 	handler map[string]any,
 	scriptName string,
-) (*grokRuntimeReference, error) {
+) (*managedScriptReference, error) {
 	if len(handler) != 3 || handler["type"] != "command" ||
 		handler["timeout"] != grokHookTimeout {
 		return nil, nil
@@ -303,7 +287,7 @@ func removeManagedGrokGroups(
 				return nil, err
 			}
 			remove := reference != nil &&
-				(agentID == "" || sameGrokAgentID(reference.agentID, agentID))
+				(agentID == "" || sameManagedAgentID(reference.agentID, agentID))
 			if !remove {
 				kept = append(kept, handler)
 			}
@@ -386,7 +370,7 @@ func renderGrokDocument(
 			document: document, changed: true, remove: true,
 		}, nil
 	}
-	root := cloneGrokObject(document.root)
+	root := cloneJSONObject(document.root)
 	if len(hooks) == 0 {
 		delete(root, "hooks")
 	} else {
@@ -407,18 +391,11 @@ func renderGrokDocument(
 	}, nil
 }
 
-func grokReferenceKey(agentID string) string {
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(agentID)
-	}
-	return agentID
-}
-
 func grokReferencesForEvent(
 	groups []grokGroup,
 	scriptName string,
-) (map[string][]grokRuntimeReference, error) {
-	result := map[string][]grokRuntimeReference{}
+) (map[string][]managedScriptReference, error) {
+	result := map[string][]managedScriptReference{}
 	for _, group := range groups {
 		if !exactManagedGrokGroup(group) {
 			continue
@@ -431,14 +408,14 @@ func grokReferencesForEvent(
 			if reference == nil {
 				continue
 			}
-			key := grokReferenceKey(reference.agentID)
+			key := managedReferenceKey(reference.agentID)
 			result[key] = append(result[key], *reference)
 		}
 	}
 	return result, nil
 }
 
-func grokRuntimeContracts(hooks grokHooks) ([]grokRuntimeContract, error) {
+func grokRuntimeContracts(hooks grokHooks) ([]managedRuntimeContract, error) {
 	guards, err := grokReferencesForEvent(hooks["PreToolUse"], grokGuardScript)
 	if err != nil {
 		return nil, err
@@ -459,16 +436,16 @@ func grokRuntimeContracts(hooks grokHooks) ([]grokRuntimeContract, error) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	contracts := make([]grokRuntimeContract, 0, len(keys))
+	contracts := make([]managedRuntimeContract, 0, len(keys))
 	for _, key := range keys {
 		guard := guards[key]
 		success := successes[key]
 		failure := failures[key]
 		if len(guard) != 1 || len(success) != 1 || len(failure) != 1 ||
-			!sameGrokPath(success[0].scriptPath, failure[0].scriptPath) {
+			!sameManagedPath(success[0].scriptPath, failure[0].scriptPath) {
 			continue
 		}
-		contracts = append(contracts, grokRuntimeContract{
+		contracts = append(contracts, managedRuntimeContract{
 			agentID: guard[0].agentID, guardPath: guard[0].scriptPath,
 			auditPath: success[0].scriptPath,
 		})

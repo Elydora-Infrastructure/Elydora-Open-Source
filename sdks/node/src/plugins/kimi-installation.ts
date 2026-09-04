@@ -23,10 +23,6 @@ import {
 
 const DISPLAY_NAME = 'Kimi';
 
-export type KimiRuntimePaths = ManagedRuntimePaths;
-export type PreparedKimiInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
 function hookLocations(documents: readonly KimiConfigDocument[]) {
   return documents.map((document) => ({
     directoryLabel: document.contract.directoryLabel,
@@ -37,7 +33,7 @@ function hookLocations(documents: readonly KimiConfigDocument[]) {
 export async function preflightKimiInstallation(
   config: InstallConfig,
   documents: readonly KimiConfigDocument[],
-): Promise<KimiRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: hookLocations(documents),
@@ -56,7 +52,7 @@ function renderedSource(rendered: RenderedKimiDocument): string {
 export async function prepareKimiInstallation(
   config: InstallConfig,
   rendered: readonly RenderedKimiDocument[],
-): Promise<PreparedKimiInstallation> {
+): Promise<PreparedManagedInstallation> {
   return prepareManagedInstallation({
     agentKey: AGENT_KEY,
     displayName: DISPLAY_NAME,
@@ -73,7 +69,7 @@ export async function prepareKimiInstallation(
 }
 
 export async function commitKimiInstallation(
-  prepared: PreparedKimiInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

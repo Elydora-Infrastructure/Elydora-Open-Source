@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { sameAgentId, samePath } from './common.js';
 import { isObject, parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'claudecode';
@@ -74,20 +75,6 @@ export interface ClaudeRuntimeContract {
 interface RuntimeReference {
   readonly agentId: string;
   readonly scriptPath: string;
-}
-
-function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32'
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right;
 }
 
 function requireKnownKeys(value: JsonObject, allowed: readonly string[], label: string): void {

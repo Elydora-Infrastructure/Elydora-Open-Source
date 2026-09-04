@@ -1,11 +1,4 @@
-/**
- * Epoch service — business logic for retrieving epoch root records.
- *
- * Epochs are periodic Merkle-tree rollups that anchor a set of operations
- * to a single root hash. Optionally, the epoch may carry a TSA
- * (Timestamping Authority) anchor that binds the root to an external
- * trusted timestamp for non-repudiation.
- */
+/** Epoch service: business logic for retrieving epoch root records. */
 
 import type { Epoch, EER, GetEpochResponse, ListEpochsResponse } from '../shared/index.js';
 import { AppError } from '../middleware/error-handler.js';
@@ -82,13 +75,7 @@ export async function getEpoch(
 // Create epoch
 // ---------------------------------------------------------------------------
 
-/**
- * Create a new epoch by building a Merkle tree over operations in a time
- * window, signing the Epoch Record, and persisting to D1 + R2.
- *
- * Returns null if the epoch already exists, or if no operations fall within
- * the given time range.
- */
+/** Create a new epoch by building a Merkle tree over operations in a time window, signing the Epoch Record, and p */
 export async function createEpoch(
   db: Database,
   r2: ObjectStore,
@@ -97,7 +84,7 @@ export async function createEpoch(
   startTime: number,
   endTime: number,
 ): Promise<Epoch | null> {
-  // 1. Idempotency check — skip if epoch already exists for this window
+  // 1. Idempotency check: skip if epoch already exists for this window
   const existing = await db
     .prepare(
       'SELECT epoch_id FROM epochs WHERE org_id = ? AND start_time = ? AND end_time = ?',

@@ -1,16 +1,4 @@
-/**
- * Better Auth configuration for ElydoraOpenSource.
- *
- * Creates a Better Auth instance backed by PostgreSQL. The instance is
- * configured to:
- *
- *   - Use the existing `users` table via field-mapping (no schema change)
- *   - Support legacy PBKDF2-SHA256 password hashes alongside Better Auth's
- *     default scrypt so existing users can sign in without re-hashing
- *   - Expose bearer-token auth for API clients
- *   - Provide organization support with Elydora's 5-role RBAC hierarchy
- *   - Provide admin user-management endpoints
- */
+/** Better Auth configuration for ElydoraOpenSource. */
 
 import { betterAuth } from 'better-auth';
 import { verifyPassword as verifyScryptPassword } from 'better-auth/crypto';
@@ -60,7 +48,7 @@ async function verifyLegacyPbkdf2(password: string, stored: string): Promise<boo
 }
 
 // ---------------------------------------------------------------------------
-// RBAC access control — maps Elydora's 5-role hierarchy to Better Auth
+// RBAC access control: maps Elydora's 5-role hierarchy to Better Auth
 // ---------------------------------------------------------------------------
 
 const elydoraAc = createAccessControl({
@@ -121,7 +109,7 @@ const readonlyInvestigatorRole = elydoraAc.newRole({
 });
 
 // ---------------------------------------------------------------------------
-// Singleton — creates a Better Auth instance for the server process
+// Singleton: creates a Better Auth instance for the server process
 // ---------------------------------------------------------------------------
 
 export function createAuth(databaseUrl: string, secret: string, baseUrl: string, allowedOrigins: string) {

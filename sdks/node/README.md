@@ -15,17 +15,17 @@ Requires Node.js 18+ (uses built-in `crypto` module with Ed25519 support).
 ```typescript
 import { ElydoraClient } from '@elydora/sdk';
 
-// Initialize the client with your API token.
-// Obtain an API token by signing in via the Elydora console or:
-//   POST /api/auth/sign-in/email  →  get session token
-//   POST /v1/auth/token           →  exchange for long-lived API token
+// Authenticate
+const auth = await ElydoraClient.login('https://api.elydora.com', 'user@example.com', 'password');
+
+// Create client
 const client = new ElydoraClient({
-  orgId: 'org-123',
+  orgId: auth.user.org_id,
   agentId: 'my-agent-id',
   privateKey: '<base64url-encoded-32-byte-ed25519-seed>',
   baseUrl: 'https://api.elydora.com',
-  token: 'your-api-token',
 });
+client.setToken(auth.token);
 
 // Create and submit an operation
 const eor = client.createOperation({
@@ -124,14 +124,14 @@ const client = new ElydoraClient({
   baseUrl?: string,     // API base URL (default: https://api.elydora.com)
   ttlMs?: number,       // Operation TTL in ms (default: 30000)
   maxRetries?: number,  // Max retries on transient failures (default: 3)
-  kid?: string,         // Key ID (default: {agentId}-key-v1)
+  kid?: string,         // Key ID (default: {agentId}-key-1)
 });
 ```
 
 ### Authentication
 
 ```typescript
-// Register a new user and organization
+// Register a new user and organization (returns session token)
 const reg = await ElydoraClient.register(baseUrl, email, password, displayName?, orgName?);
 
 // Login and receive a session token
@@ -143,8 +143,13 @@ client.setToken(auth.token);
 // Get current authenticated user profile
 const { user } = await client.getMe();
 
-// Issue a new API token (with optional TTL in seconds)
+// Issue an API token (optional TTL in seconds) and use it for later calls
 const { token, expires_at } = await client.issueApiToken(3600);
+client.setToken(token);
+
+// Rotate the API token the client currently holds
+const rotated = await client.rotateApiToken();
+client.setToken(rotated.token);
 ```
 
 ### Operations
@@ -182,6 +187,9 @@ const agent = await client.registerAgent({
 
 // Get agent details
 const details = await client.getAgent(agentId);
+
+// Change the integration type
+await client.updateAgent(agentId, 'cursor');
 
 // Freeze an agent
 await client.freezeAgent(agentId, 'security review');
@@ -245,7 +253,21 @@ const { keys } = await client.getJWKS();
 ```typescript
 // Check API health (no authentication required)
 const health = await client.health();
-// health.status, health.version, health.protocol_version, health.timestamp
+// health.status, health.version, health.protocol_version, health.capabilities, health.timestamp
+
+// Check dependency health (D1, auth storage, R2, KV)
+const deep = await client.deepHealth();
+```
+
+### Webhooks, Members, Admin Events
+
+```typescript
+const { webhooks } = await client.listWebhooks();
+const { webhook } = await client.registerWebhook(url, ['agent.status_changed'], secret);
+await client.deleteWebhook(webhook.webhook_id);
+
+const { members } = await client.listMembers();
+const { events } = await client.listAdminEvents(50);
 ```
 
 ### Client State

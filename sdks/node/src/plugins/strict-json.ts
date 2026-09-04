@@ -66,6 +66,13 @@ export function parseStrictJsonObject(raw: string, label: string): JsonObject {
   });
 }
 
+export function parseCommentedJsonObject(raw: string, label: string): JsonObject {
+  return parseJsonObject(raw, label, {
+    allowTrailingComma: false,
+    disallowComments: false,
+  });
+}
+
 export function parseStrictJsoncObject(raw: string, label: string): JsonObject {
   return parseJsonObject(raw, label, {
     allowTrailingComma: true,

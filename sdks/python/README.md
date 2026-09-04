@@ -15,16 +15,16 @@ Requires Python 3.10+.
 ```python
 from elydora import ElydoraClient
 
-# Initialize the client with your API token.
-# Obtain an API token by signing in via the Elydora console or:
-#   POST /api/auth/sign-in/email  ->  get session token
-#   POST /v1/auth/token           ->  exchange for long-lived API token
+# Authenticate
+auth = ElydoraClient.login("https://api.elydora.com", "user@example.com", "password")
+
+# Create client
 client = ElydoraClient(
-    org_id="org-123",
+    org_id=auth["user"]["org_id"],
     agent_id="my-agent-id",
     private_key="<base64url-encoded-ed25519-seed>",
     base_url="https://api.elydora.com",
-    token="your-api-token",
+    token=auth["token"],
 )
 
 # Create and submit an operation
@@ -157,20 +157,24 @@ Retryable responses honor both `Retry-After` seconds and HTTP-date values.
 
 ### Authentication
 
-Authentication uses Better Auth. Register and sign in via the Elydora console or the Better Auth endpoints, then issue a long-lived API token for SDK use:
-
 ```python
-# Sign up (Better Auth) — use the console or call directly:
-#   POST /api/auth/sign-up/email  { email, password, name }
-#
-# Sign in (Better Auth) — get a session token:
-#   POST /api/auth/sign-in/email  { email, password }
-#
-# Issue a long-lived API token from an active session:
-token_resp = client.issue_token(ttl_seconds=3600)
+# Register a new user and organization
+reg = ElydoraClient.register(base_url, email, password, display_name=None, org_name=None)
 
-# Update the token on an existing client instance
-client.set_token("new-api-token")
+# Login and use the session token
+auth = ElydoraClient.login(base_url, email, password)
+client.token = auth["token"]
+
+# Get current authenticated user profile
+me = client.get_me()
+
+# Issue an API token from the session token (optional TTL in seconds)
+token_resp = client.issue_api_token(ttl_seconds=3600)
+client.token = token_resp["token"]
+
+# Rotate the API token the client now uses
+rotated = client.rotate_api_token()
+client.token = rotated["token"]
 ```
 
 ### Operations
@@ -221,6 +225,9 @@ agents_resp = client.list_agents()
 # Unfreeze a previously frozen agent
 client.unfreeze_agent(agent_id, reason="review complete")
 
+# Change the integration type
+client.update_agent(agent_id, integration_type="cursor")
+
 # Delete an agent permanently
 deleted_resp = client.delete_agent(agent_id)
 ```
@@ -262,6 +269,25 @@ detail = client.get_export(export_id)
 data = client.download_export(export_id)
 ```
 
+### Webhooks
+
+```python
+webhooks = client.list_webhooks()
+created = client.register_webhook(
+    endpoint_url="https://example.com/elydora",
+    events=["operation.accepted", "agent.status_changed"],
+    secret="<signing-secret>",
+)
+client.delete_webhook(created["webhook"]["webhook_id"])
+```
+
+### Organization
+
+```python
+members = client.list_members()
+events = client.list_admin_events(limit=50)
+```
+
 ### JWKS
 
 ```python
@@ -271,9 +297,12 @@ jwks = client.get_jwks()
 ### Health
 
 ```python
-# Check API health (no authentication required)
+# No authentication required
 health = client.health()
-# health["status"], health["version"], health["protocol_version"], health["timestamp"]
+# health["status"], health["version"], health["protocol_version"], health["capabilities"]
+
+deep = client.deep_health()
+# deep["dependencies"]["d1"]["status"], deep["dependencies"]["d1"]["latency_ms"]
 ```
 
 ### Crypto Functions
@@ -305,7 +334,7 @@ from elydora import (
 
 ### Type Definitions
 
-All types are `TypedDict` classes for structural typing:
+Records are `TypedDict` classes; enumerations are `Literal` aliases, and `INTEGRATION_TYPES` is a tuple:
 
 ```python
 from elydora import (
@@ -314,18 +343,28 @@ from elydora import (
     EAR,                       # Elydora Acknowledgment Receipt
 
     # Entity types
-    Agent, AgentKey, Operation, Receipt, Epoch, Export, Organization, User,
+    Agent, AgentAssignment, AgentKey, AdminEvent, AuthMeUser,
+    CurrentOrganization, DependencyHealth, EpochAnchor, MemberEntry,
+    Operation, Receipt, Epoch, Export, Organization, User, WebhookEntry,
+
+    # Enumerations
+    AdminAction, AgentStatus, ErrorCode, ExportStatus, IntegrationType,
+    KeyStatus, RbacRole, INTEGRATION_TYPES,
 
     # API response types
-    RegisterAgentResponse, GetAgentResponse, ListAgentsResponse,
-    DeleteAgentResponse, SubmitOperationResponse, GetOperationResponse,
+    RegisterAgentResponse, UpdateAgentResponse, GetAgentResponse,
+    ListAgentsResponse, DeleteAgentResponse, FreezeAgentResponse,
+    UnfreezeAgentResponse, SubmitOperationResponse, GetOperationResponse,
     VerifyOperationResponse, AuditQueryResponse, GetEpochResponse,
     ListEpochsResponse, CreateExportResponse, GetExportResponse,
-    ListExportsResponse, JWKSResponse, AuthRegisterResponse,
-    AuthLoginResponse, GetMeResponse, IssueTokenResponse, HealthResponse,
+    ListExportsResponse, ListWebhooksResponse, RegisterWebhookResponse,
+    ListMembersResponse, ListAdminEventsResponse, JWKSResponse,
+    AuthRegisterResponse, AuthLoginResponse, GetMeResponse,
+    IssueApiTokenResponse, RotateApiTokenResponse, HealthResponse,
+    DeepHealthResponse,
 
     # Request types
-    RegisterAgentRequest,
+    RegisterAgentRequest, UpdateAgentRequest,
 )
 ```
 

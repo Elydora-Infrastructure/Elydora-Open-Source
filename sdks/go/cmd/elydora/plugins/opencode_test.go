@@ -50,6 +50,7 @@ func TestOpenCodePluginUsesCurrentAPIAndBlocksFrozenAgent(t *testing.T) {
 		t.Fatalf("write guard: %v", err)
 	}
 	modulePath := writeOpenCodeModule(t, filepath.Join(tempDir, "hook.cjs"), guardPath)
+
 	runOpenCodeModule(t, modulePath, `
 const hooks = await pluginModule.ElydoraAuditPlugin({ project: { name: 'project' } });
 if (typeof hooks['tool.execute.before'] !== 'function') process.exit(10);
@@ -84,6 +85,7 @@ process.stdin.on('end', () => fs.writeFileSync(` + string(captureJSON) + `, Buff
 		t.Fatalf("write hook: %v", err)
 	}
 	modulePath := writeOpenCodeModule(t, hookPath, filepath.Join(tempDir, "guard.cjs"))
+
 	runOpenCodeModule(t, modulePath, `
 const hooks = await pluginModule.ElydoraAuditPlugin({ project: { name: 'project' } });
 await hooks['tool.execute.after'](
@@ -96,6 +98,7 @@ await hooks['tool.execute.after'](
   { title: 'Shell', output: 'test' },
 );
 `)
+
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(capturePath); err == nil {

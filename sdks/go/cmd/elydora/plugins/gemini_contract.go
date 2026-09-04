@@ -1,10 +1,7 @@
 package plugins
 
 import (
-	"path/filepath"
-	"runtime"
 	"sort"
-	"strings"
 )
 
 const (
@@ -27,11 +24,7 @@ type geminiManagedRemoval struct {
 	removeGroup    bool
 }
 
-type geminiRuntimeContract struct {
-	agentID   string
-	guardPath string
-	auditPath string
-}
+type geminiRuntimeContract = managedRuntimeContract
 
 func buildGeminiGroup(runtimePath, scriptPath, name string) (map[string]any, error) {
 	command, err := buildGeminiCommand(runtimePath, scriptPath)
@@ -151,7 +144,7 @@ func managedGeminiRemovals(
 					return nil, err
 				}
 				if reference != nil &&
-					(agentID == "" || sameGeminiAgentID(reference.agentID, agentID)) {
+					(agentID == "" || sameManagedAgentID(reference.agentID, agentID)) {
 					indexes = append(indexes, handlerIndex)
 				}
 			}
@@ -166,13 +159,6 @@ func managedGeminiRemovals(
 		}
 	}
 	return removals, nil
-}
-
-func geminiReferenceKey(agentID string) string {
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(agentID)
-	}
-	return agentID
 }
 
 func geminiReferencesForEvent(
@@ -196,7 +182,7 @@ func geminiReferencesForEvent(
 				return nil, err
 			}
 			if reference != nil {
-				key := geminiReferenceKey(reference.agentID)
+				key := managedReferenceKey(reference.agentID)
 				result[key] = append(result[key], *reference)
 			}
 		}
@@ -242,12 +228,4 @@ func geminiRuntimeContracts(
 		})
 	}
 	return contracts, nil
-}
-
-func geminiRuntimeRoot() (string, error) {
-	root, err := AgentRuntimeRoot()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(root), nil
 }

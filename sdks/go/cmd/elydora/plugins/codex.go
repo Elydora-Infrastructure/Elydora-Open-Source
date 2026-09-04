@@ -10,14 +10,12 @@ type CodexPlugin struct {
 	rename renameFunc
 }
 
-// ManagesGuardRuntime reports that Codex commits its provider guard with the
-// audit runtime and user hook document.
+// ManagesGuardRuntime reports that the guard is committed with the audit runtime.
 func (p *CodexPlugin) ManagesGuardRuntime() bool {
 	return true
 }
 
-// PreflightInstall validates every existing source before the CLI creates
-// runtime state.
+// PreflightInstall validates every source before the CLI creates runtime state.
 func (p *CodexPlugin) PreflightInstall(config InstallConfig) error {
 	document, err := readCodexDocument()
 	if err != nil {
@@ -61,13 +59,14 @@ func (p *CodexPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := writeCodexChanges(
+	if err := writeManagedChanges(
 		changes,
 		"Install Codex hooks",
 		p.rename,
 		paths.runtimeRoot,
 		paths.agentDirectory,
 		filepath.Dir(document.filePath),
+		"Codex hooks directory",
 	); err != nil {
 		return err
 	}
@@ -90,13 +89,14 @@ func (p *CodexPlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	return writeCodexChanges(
+	return writeManagedChanges(
 		[]*fileChange{change},
 		"Uninstall Codex hooks",
 		p.rename,
 		"",
 		"",
 		filepath.Dir(document.filePath),
+		"Codex hooks directory",
 	)
 }
 

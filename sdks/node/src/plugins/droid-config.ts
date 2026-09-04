@@ -1,9 +1,5 @@
-import {
-  applyEdits,
-  modify,
-  type FormattingOptions,
-  type JSONPath,
-} from 'jsonc-parser';
+import type { JSONPath } from 'jsonc-parser';
+import { changeJsonc } from './jsonc-edit.js';
 import type { FileSnapshot } from './managed-files.js';
 import type { DroidPolicyState } from './droid-policy.js';
 import {
@@ -158,23 +154,6 @@ function eventPath(document: DroidDocument, event: string): JSONPath {
   return [...document.basePath, event];
 }
 
-function formatting(raw: string): FormattingOptions {
-  const indentation = /\r?\n([ \t]+)\S/.exec(raw)?.[1];
-  const insertSpaces = !indentation?.includes('\t');
-  return {
-    eol: raw.includes('\r\n') ? '\r\n' : '\n',
-    insertSpaces,
-    tabSize: insertSpaces ? Math.max(1, indentation?.length ?? 2) : 1,
-  };
-}
-
-function change(raw: string, path: JSONPath, value: unknown, isArrayInsertion = false): string {
-  return applyEdits(raw, modify(raw, path, value, {
-    formattingOptions: formatting(raw),
-    isArrayInsertion,
-  }));
-}
-
 function currentDocument(document: DroidDocument, raw: string): DroidDocument {
   return parseDocument({
     exists: document.exists,
@@ -194,17 +173,17 @@ function removeManagedEntries(document: DroidDocument, raw: string, agentId?: st
     for (const removal of eventRemovals) {
       const groupPath = [...eventPath(document, event), removal.groupIndex];
       if (removal.removeGroup) {
-        raw = change(raw, groupPath, undefined);
+        raw = changeJsonc(raw, groupPath, undefined);
         continue;
       }
       for (const handlerIndex of [...removal.handlerIndexes].sort((left, right) => right - left)) {
-        raw = change(raw, [...groupPath, 'hooks', handlerIndex], undefined);
+        raw = changeJsonc(raw, [...groupPath, 'hooks', handlerIndex], undefined);
       }
     }
     if (eventRemovals.length > 0) {
       const current = currentDocument(document, raw);
       if ((current.hooks[event] ?? []).length === 0) {
-        raw = change(raw, eventPath(document, event), undefined);
+        raw = changeJsonc(raw, eventPath(document, event), undefined);
       }
     }
   }
@@ -220,9 +199,9 @@ function appendGroup(
   const current = currentDocument(document, raw);
   if (Object.prototype.hasOwnProperty.call(current.hooks, event)) {
     const groups = current.hooks[event] ?? [];
-    return change(raw, [...eventPath(document, event), groups.length], group, true);
+    return changeJsonc(raw, [...eventPath(document, event), groups.length], group, true);
   }
-  return change(raw, eventPath(document, event), [group]);
+  return changeJsonc(raw, eventPath(document, event), [group]);
 }
 
 function hookFileIsEmpty(document: DroidDocument, raw: string): boolean {

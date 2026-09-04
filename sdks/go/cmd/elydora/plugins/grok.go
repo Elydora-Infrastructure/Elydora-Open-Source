@@ -36,11 +36,11 @@ func (p *GrokPlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	guardCommand, err := buildGrokCommand(nodePath, paths.guardPath)
+	guardCommand, err := buildEncodedCommand("Grok", nodePath, paths.guardPath)
 	if err != nil {
 		return err
 	}
-	auditCommand, err := buildGrokCommand(nodePath, paths.auditPath)
+	auditCommand, err := buildEncodedCommand("Grok", nodePath, paths.auditPath)
 	if err != nil {
 		return err
 	}

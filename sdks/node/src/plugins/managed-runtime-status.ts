@@ -2,12 +2,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { generateGuardScript, type GuardScriptOptions } from './guard-template.js';
 import { generateHookScript, type HookScriptOptions } from './hook-template.js';
+import { MAX_CONFIG_BYTES, MAX_SECRET_BYTES, sameAgentId, samePath } from './common.js';
 import { inspectPhysicalDirectory, readPhysicalFile } from './managed-files.js';
-import { samePath } from './managed-installation.js';
 import { parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
-const MAX_SECRET_BYTES = 64 * 1024;
-const MAX_CONFIG_BYTES = 512 * 1024;
 const GUARD_SCRIPT = 'guard.js';
 const AUDIT_SCRIPT = 'hook.js';
 
@@ -20,10 +18,6 @@ export interface ManagedRuntimeContract {
 export interface ManagedRuntimeStatusOptions {
   readonly guardOptions?: GuardScriptOptions;
   readonly auditOptions?: HookScriptOptions;
-}
-
-function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 function requireString(value: unknown, field: string, configPath: string): string {
@@ -116,4 +110,25 @@ export async function managedRuntimeFilesExist(
       contract.agentId,
       options.auditOptions ?? { nativePayload: true },
     );
+}
+
+// Presence-only check: identity mismatch reports false; parse failures still throw.
+export async function managedRuntimePresent(
+  contract: ManagedRuntimeContract,
+  agentKey: string,
+): Promise<boolean> {
+  const agentDirectory = path.dirname(contract.guardPath);
+  const configPath = path.join(agentDirectory, 'config.json');
+  const snapshot = await readPhysicalFile(configPath, 'Elydora runtime config', MAX_CONFIG_BYTES);
+  if (!snapshot) return false;
+  const config = parseStrictJsonObject(snapshot.contents, `Elydora runtime config at ${configPath}`);
+  if (config.agent_name !== agentKey || !sameAgentId(config.agent_id, contract.agentId)) {
+    return false;
+  }
+  const files = await Promise.all([
+    readPhysicalFile(contract.guardPath, 'Elydora guard runtime'),
+    readPhysicalFile(contract.auditPath, 'Elydora audit runtime'),
+    readPhysicalFile(path.join(agentDirectory, 'private.key'), 'Elydora private key', MAX_SECRET_BYTES),
+  ]);
+  return files.every(Boolean);
 }

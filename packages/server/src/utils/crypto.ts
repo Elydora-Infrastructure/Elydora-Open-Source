@@ -1,9 +1,4 @@
-/**
- * Cryptographic utilities for the Elydora API.
- *
- * All operations use the Web Crypto API (SubtleCrypto) which is available
- * natively in Node.js 20+ with full Ed25519 support.
- */
+/** Cryptographic utilities for the Elydora API. */
 
 // ---------------------------------------------------------------------------
 // Base64url helpers (RFC 4648 section 5)
@@ -52,11 +47,7 @@ export async function sha256Base64url(data: BufferSource | string): Promise<stri
 // Ed25519 signature verification
 // ---------------------------------------------------------------------------
 
-/**
- * Import a raw Ed25519 public key (32 bytes) as a CryptoKey.
- *
- * @param publicKeyBytes - 32-byte raw Ed25519 public key
- */
+/** Import a raw Ed25519 public key (32 bytes) as a CryptoKey. */
 export async function importEd25519PublicKey(publicKeyBytes: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
@@ -67,14 +58,7 @@ export async function importEd25519PublicKey(publicKeyBytes: Uint8Array): Promis
   );
 }
 
-/**
- * Verify an Ed25519 signature over data.
- *
- * @param publicKeyBytes - 32-byte raw public key
- * @param signatureBytes - 64-byte Ed25519 signature
- * @param data           - The signed data
- * @returns true if the signature is valid
- */
+/** Verify an Ed25519 signature over data. */
 export async function verifyEd25519Signature(
   publicKeyBytes: Uint8Array,
   signatureBytes: Uint8Array,
@@ -97,15 +81,7 @@ export async function verifyEd25519Signature(
 // Ed25519 signing (server-side receipt signing)
 // ---------------------------------------------------------------------------
 
-/**
- * PKCS8 DER prefix for wrapping a 32-byte Ed25519 seed into a valid PKCS8 key.
- *
- * SEQUENCE {
- *   INTEGER 0
- *   SEQUENCE { OID 1.3.101.112 }
- *   OCTET STRING { OCTET STRING { <32 bytes> } }
- * }
- */
+/** PKCS8 DER prefix for wrapping a 32-byte Ed25519 seed into a valid PKCS8 key. */
 const ED25519_PKCS8_PREFIX = new Uint8Array([
   0x30, 0x2e, // SEQUENCE (46 bytes)
   0x02, 0x01, 0x00, // INTEGER 0
@@ -123,14 +99,7 @@ function wrapSeedAsPkcs8(seed: Uint8Array): Uint8Array {
   return pkcs8;
 }
 
-/**
- * Import a raw Ed25519 private key for signing.
- *
- * Node.js expects PKCS8 format for Ed25519 private keys.
- * We wrap the 32-byte seed in a minimal PKCS8 envelope.
- *
- * @param privateKeyBase64url - base64url-encoded 32-byte Ed25519 private key seed
- */
+/** Import a raw Ed25519 private key for signing. */
 export async function importEd25519PrivateKey(privateKeyBase64url: string): Promise<CryptoKey> {
   const seed = base64urlDecode(privateKeyBase64url);
   const pkcs8 = wrapSeedAsPkcs8(seed);
@@ -144,13 +113,7 @@ export async function importEd25519PrivateKey(privateKeyBase64url: string): Prom
   );
 }
 
-/**
- * Sign data with an Ed25519 private key.
- *
- * @param privateKeyBase64url - base64url-encoded 32-byte private key seed
- * @param data - data to sign
- * @returns base64url-encoded 64-byte signature
- */
+/** Sign data with an Ed25519 private key. */
 export async function signEd25519(
   privateKeyBase64url: string,
   data: Uint8Array,
@@ -164,12 +127,7 @@ export async function signEd25519(
   return base64urlEncode(new Uint8Array(signature));
 }
 
-/**
- * Export the public key from an Ed25519 private key (for JWKS).
- *
- * @param privateKeyBase64url - base64url-encoded 32-byte private key seed
- * @returns base64url-encoded 32-byte public key
- */
+/** Export the public key from an Ed25519 private key (for JWKS). */
 export async function deriveEd25519PublicKey(privateKeyBase64url: string): Promise<string> {
   const seed = base64urlDecode(privateKeyBase64url);
   const pkcs8 = wrapSeedAsPkcs8(seed);
@@ -178,7 +136,7 @@ export async function deriveEd25519PublicKey(privateKeyBase64url: string): Promi
     'pkcs8',
     pkcs8 as unknown as Uint8Array<ArrayBuffer>,
     { name: 'Ed25519' },
-    true, // extractable — needed to export the public key
+    true, // extractable: needed to export the public key
     ['sign'],
   );
   // Export as JWK to get the public 'x' parameter
@@ -191,15 +149,7 @@ export async function deriveEd25519PublicKey(privateKeyBase64url: string): Promi
 // JCS (JSON Canonicalization Scheme - RFC 8785)
 // ---------------------------------------------------------------------------
 
-/**
- * Canonicalize a JSON value according to JCS (RFC 8785).
- *
- * JCS specifies:
- * - Object keys sorted lexicographically by UTF-16 code units
- * - No whitespace
- * - Numbers serialized using ES2015 Number serialization
- * - Strings serialized with minimal escaping per JSON spec
- */
+/** Canonicalize a JSON value according to JCS (RFC 8785). */
 export function jcsCanonicalise(value: unknown): string {
   if (value === null || value === undefined) {
     return 'null';
@@ -237,13 +187,7 @@ export function jcsCanonicalise(value: unknown): string {
 // Chain hash computation
 // ---------------------------------------------------------------------------
 
-/**
- * Compute the chain hash for an operation.
- *
- * chain_hash = SHA-256(prev_chain_hash + payload_hash + operation_id + issued_at)
- *
- * All inputs are concatenated as UTF-8 strings separated by '|'.
- */
+/** Compute the chain hash for an operation. */
 export async function computeChainHash(
   prevChainHash: string,
   payloadHash: string,
@@ -258,11 +202,7 @@ export async function computeChainHash(
 // Receipt hash computation
 // ---------------------------------------------------------------------------
 
-/**
- * Compute the hash of an EAR receipt for signing.
- *
- * Hashes the canonicalized receipt fields (excluding the signature fields themselves).
- */
+/** Compute the hash of an EAR receipt for signing. */
 export async function computeReceiptHash(receiptFields: {
   receipt_version: string;
   receipt_id: string;

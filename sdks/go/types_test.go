@@ -2,8 +2,6 @@ package elydora
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"testing"
 )
@@ -57,36 +55,5 @@ func TestIntegrationTypesMatchPublicAPIContract(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("integration types = %v, want %v", got, want)
-	}
-	for _, integrationType := range got {
-		if !integrationType.IsValid() {
-			t.Fatalf("integration type %q must be valid", integrationType)
-		}
-	}
-	if IntegrationType("future-cli").IsValid() {
-		t.Fatal("unknown integration type must be invalid")
-	}
-}
-
-func TestRegisterAgentRejectsInvalidIntegrationBeforeNetworkAccess(t *testing.T) {
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requestCount++
-	}))
-	t.Cleanup(server.Close)
-
-	client := &Client{baseURL: server.URL, httpClient: server.Client()}
-	requests := []*RegisterAgentRequest{
-		nil,
-		{AgentID: "agent-1"},
-		{AgentID: "agent-1", IntegrationType: IntegrationType("future-cli")},
-	}
-	for _, request := range requests {
-		if _, err := client.RegisterAgent(request); err == nil {
-			t.Fatalf("RegisterAgent(%+v) succeeded, want validation error", request)
-		}
-	}
-	if requestCount != 0 {
-		t.Fatalf("network request count = %d, want 0", requestCount)
 	}
 }

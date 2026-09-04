@@ -1,7 +1,4 @@
-"""Type definitions matching the Elydora backend API contract.
-
-All types use TypedDict for structural typing, compatible with Python 3.10+.
-"""
+"""TypedDict definitions matching the Elydora Backend API contract."""
 
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,10 +8,6 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Literal, NotRequired, TypedDict
 
-
-# ---------------------------------------------------------------------------
-# Enums (as Literal types)
-# ---------------------------------------------------------------------------
 
 AgentStatus = Literal["active", "frozen", "revoked"]
 KeyStatus = Literal["active", "retired", "revoked"]
@@ -52,11 +45,33 @@ INTEGRATION_TYPES: Tuple[IntegrationType, ...] = (
     "gemini", "grok", "kimi", "kirocli", "kiroide", "letta", "opencode", "qwen",
     "enterprise", "gui", "sdk", "other",
 )
+AdminAction = Literal[
+    "agent.register",
+    "agent.update",
+    "agent.freeze",
+    "agent.unfreeze",
+    "agent.revoke",
+    "agent.delete",
+    "key.revoke",
+    "export.create",
+    "org.create",
+    "org.update",
+    "member.invite",
+    "invitation.cancel",
+    "member.remove",
+    "member.role_change",
+    "agent.assign",
+    "agent.unassign",
+    "webhook.register",
+    "webhook.delete",
+]
 ErrorCode = Literal[
     "INVALID_SIGNATURE",
     "UNKNOWN_AGENT",
     "KEY_REVOKED",
+    "KEY_RETIRED",
     "AGENT_FROZEN",
+    "AGENT_REVOKED",
     "TTL_EXPIRED",
     "REPLAY_DETECTED",
     "PREV_HASH_MISMATCH",
@@ -69,18 +84,13 @@ ErrorCode = Literal[
     "VALIDATION_ERROR",
 ]
 
-# ---------------------------------------------------------------------------
-# Entity types
-# ---------------------------------------------------------------------------
-
-
 class Agent(TypedDict):
     agent_id: str
     org_id: str
     display_name: str
     responsible_entity: str
-    integration_type: IntegrationType
     status: AgentStatus
+    integration_type: IntegrationType
     created_at: int
     updated_at: int
 
@@ -136,6 +146,8 @@ class Epoch(TypedDict):
 class Organization(TypedDict):
     org_id: str
     name: str
+    description: Optional[str]
+    ba_org_id: Optional[str]
     created_at: int
     updated_at: int
 
@@ -159,11 +171,6 @@ class Export(TypedDict):
     r2_export_key: Optional[str]
     created_at: int
     completed_at: Optional[int]
-
-
-# ---------------------------------------------------------------------------
-# Protocol types
-# ---------------------------------------------------------------------------
 
 
 class EOR(TypedDict):
@@ -201,11 +208,6 @@ class EAR(TypedDict):
     elydora_signature: str
 
 
-# ---------------------------------------------------------------------------
-# API request types
-# ---------------------------------------------------------------------------
-
-
 class RegisterAgentKeyParam(TypedDict):
     kid: str
     public_key: str
@@ -218,21 +220,6 @@ class RegisterAgentRequest(TypedDict):
     keys: List[RegisterAgentKeyParam]
     display_name: NotRequired[str]
     responsible_entity: NotRequired[str]
-
-
-class AuditQueryParams(TypedDict, total=False):
-    org_id: str
-    agent_id: str
-    operation_type: str
-    start_time: int
-    end_time: int
-    cursor: str
-    limit: int
-
-
-# ---------------------------------------------------------------------------
-# API response types
-# ---------------------------------------------------------------------------
 
 
 class RegisterAgentResponse(TypedDict):
@@ -252,6 +239,7 @@ class SubmitOperationResponse(TypedDict):
 class GetOperationResponse(TypedDict, total=False):
     operation: Operation
     receipt: Receipt
+    payload: Any
 
 
 class VerifyChecks(TypedDict, total=False):
@@ -273,9 +261,16 @@ class AuditQueryResponse(TypedDict):
     total_count: int
 
 
+class EpochAnchor(TypedDict, total=False):
+    tsa_url: str
+    anchored_at: int
+    tsa_token: str
+    root_hash: str
+
+
 class GetEpochResponse(TypedDict, total=False):
     epoch: Epoch
-    anchor: Dict[str, Any]
+    anchor: EpochAnchor
 
 
 class ListEpochsResponse(TypedDict):
@@ -327,17 +322,137 @@ class DeleteAgentResponse(TypedDict):
     deleted: bool
 
 
+class AuthMeUser(TypedDict):
+    user_id: str
+    org_id: Optional[str]
+    email: str
+    display_name: str
+    role: RbacRole
+    status: Literal["active", "suspended"]
+    created_at: int
+    updated_at: int
+    onboarding_completed: bool
+
+
+class CurrentOrganization(TypedDict):
+    org_id: Optional[str]
+    ba_org_id: Optional[str]
+    role: RbacRole
+
+
 class GetMeResponse(TypedDict):
-    user: User
+    user: AuthMeUser
+    current_organization: CurrentOrganization
 
 
-class IssueTokenResponse(TypedDict):
+class IssueApiTokenResponse(TypedDict):
     token: str
     expires_at: Optional[int]
+    token_id: str
+
+
+# Deprecated alias for IssueApiTokenResponse.
+IssueTokenResponse = IssueApiTokenResponse
+
+
+class RotateApiTokenResponse(TypedDict):
+    token: str
+    expires_at: Optional[int]
+    token_id: str
+    previous_token_grace_until: int
 
 
 class HealthResponse(TypedDict):
     status: str
     version: str
     protocol_version: str
+    capabilities: Dict[str, str]
     timestamp: int
+
+
+class AdminEvent(TypedDict):
+    event_id: str
+    org_id: str
+    actor: str
+    action: str
+    target_type: str
+    target_id: str
+    details: Optional[str]
+    created_at: int
+
+
+class AgentAssignment(TypedDict):
+    id: str
+    agent_id: str
+    user_id: str
+    org_id: str
+    assigned_by: str
+    created_at: int
+
+
+class WebhookEntry(TypedDict):
+    webhook_id: str
+    org_id: str
+    endpoint_url: str
+    events: List[str]
+    status: Literal["active", "disabled"]
+    created_at: int
+    updated_at: int
+
+
+class MemberEntry(TypedDict):
+    member_id: str
+    user_id: str
+    role: str
+    joined_at: str
+    email: str
+    display_name: str
+
+
+class UpdateAgentRequest(TypedDict):
+    integration_type: IntegrationType
+
+
+class UpdateAgentResponse(TypedDict):
+    agent: Agent
+
+
+class FreezeAgentResponse(TypedDict):
+    agent: Agent
+    previous_status: AgentStatus
+
+
+class UnfreezeAgentResponse(TypedDict):
+    agent: Agent
+    previous_status: AgentStatus
+
+
+class ListWebhooksResponse(TypedDict):
+    webhooks: List[WebhookEntry]
+
+
+class RegisterWebhookResponse(TypedDict):
+    webhook: WebhookEntry
+
+
+class ListMembersResponse(TypedDict):
+    members: List[MemberEntry]
+
+
+class ListAdminEventsResponse(TypedDict):
+    events: List[AdminEvent]
+
+
+class DependencyHealth(TypedDict):
+    status: Literal["ok", "failed"]
+    latency_ms: int
+    contract_phase: NotRequired[Literal["expand", "contract"]]
+
+
+class DeepHealthResponse(TypedDict):
+    status: Literal["healthy", "degraded"]
+    version: str
+    protocol_version: str
+    capabilities: Dict[str, str]
+    timestamp: int
+    dependencies: Dict[str, DependencyHealth]

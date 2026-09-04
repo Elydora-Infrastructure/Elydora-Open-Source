@@ -15,13 +15,11 @@ import (
 )
 
 const (
-	droidAgentKey          = "droid"
-	droidGuardScript       = "guard.js"
-	droidAuditScript       = "hook.js"
-	droidHookTimeout       = float64(10)
-	droidOwnedFileMarker   = "// Managed by Elydora"
-	droidPOSIXApostrophe   = `'"'"'`
-	droidWindowsExitSuffix = "; exit $LASTEXITCODE"
+	droidAgentKey        = "droid"
+	droidGuardScript     = "guard.js"
+	droidAuditScript     = "hook.js"
+	droidHookTimeout     = float64(10)
+	droidOwnedFileMarker = "// Managed by Elydora"
 )
 
 var droidToolEvents = [...]string{"PreToolUse", "PostToolUse"}
@@ -35,11 +33,7 @@ type droidManagedRemoval struct {
 	removeGroup    bool
 }
 
-type droidRuntimeContract struct {
-	agentID   string
-	guardPath string
-	auditPath string
-}
+type droidRuntimeContract = managedRuntimeContract
 
 type droidRegexEntry struct {
 	Label   string `json:"label"`
@@ -178,145 +172,21 @@ for (const entry of entries) {
 	return nil
 }
 
-func buildDroidCommand(nodePath, scriptPath string) string {
-	if runtime.GOOS == "windows" {
-		return "& " + quoteDroidPowerShellArgument(nodePath) + " " +
-			quoteDroidPowerShellArgument(scriptPath) + droidWindowsExitSuffix
-	}
-	return quotePOSIXArgument(nodePath) + " " + quotePOSIXArgument(scriptPath)
-}
-
-func quoteDroidPowerShellArgument(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-}
-
 func buildDroidGroup(nodePath, scriptPath string) map[string]any {
 	return map[string]any{
 		"matcher": "*",
 		"hooks": []any{map[string]any{
-			"type": "command", "command": buildDroidCommand(nodePath, scriptPath), "timeout": droidHookTimeout,
+			"type": "command", "command": buildShellCommand(nodePath, scriptPath), "timeout": droidHookTimeout,
 		}},
 	}
 }
 
 func parseDroidCommand(command string, includeLegacy ...bool) (string, string, bool) {
-	if runtime.GOOS != "windows" {
-		return parseDroidPOSIXCommand(command)
-	}
-	executable, script, ok := parseDroidPowerShellCommand(command)
-	if ok || len(includeLegacy) == 0 || !includeLegacy[0] {
+	executable, script, ok := parseShellCommand(command)
+	if ok || runtime.GOOS != "windows" || len(includeLegacy) == 0 || !includeLegacy[0] {
 		return executable, script, ok
 	}
-	return parseDroidLegacyWindowsCommand(command)
-}
-
-func parseDroidPOSIXCommand(command string) (string, string, bool) {
-	executable, next, ok := readDroidPOSIXArgument(command, 0)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := readDroidPOSIXArgument(command, next+1)
-	return executable, script, ok && end == len(command) && executable != "" && script != ""
-}
-
-func parseDroidPowerShellCommand(command string) (string, string, bool) {
-	if !strings.HasPrefix(command, "& ") {
-		return "", "", false
-	}
-	executable, next, ok := readDroidPowerShellArgument(command, 2)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := readDroidPowerShellArgument(command, next+1)
-	return executable, script, ok && command[end:] == droidWindowsExitSuffix && executable != "" && script != ""
-}
-
-func parseDroidLegacyWindowsCommand(command string) (string, string, bool) {
-	executable, next, ok := readDroidLegacyWindowsArgument(command, 0)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := readDroidLegacyWindowsArgument(command, next+1)
-	return executable, script, ok && end == len(command) && executable != "" && script != ""
-}
-
-func readDroidPowerShellArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '\'' {
-		return "", start, false
-	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); index++ {
-		if command[index] != '\'' {
-			value.WriteByte(command[index])
-			continue
-		}
-		if index+1 < len(command) && command[index+1] == '\'' {
-			value.WriteByte('\'')
-			index++
-			continue
-		}
-		return value.String(), index + 1, true
-	}
-	return "", start, false
-}
-
-func readDroidLegacyWindowsArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '"' {
-		return "", start, false
-	}
-	end := strings.IndexByte(command[start+1:], '"')
-	if end < 0 {
-		return "", start, false
-	}
-	end += start + 1
-	value := command[start+1 : end]
-	return value, end + 1, value != "" && !strings.ContainsAny(value, "\r\n")
-}
-
-func readDroidPOSIXArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '\'' {
-		return "", start, false
-	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); {
-		if strings.HasPrefix(command[index:], droidPOSIXApostrophe) {
-			value.WriteByte('\'')
-			index += len(droidPOSIXApostrophe)
-			continue
-		}
-		if command[index] == '\'' {
-			return value.String(), index + 1, true
-		}
-		value.WriteByte(command[index])
-		index++
-	}
-	return "", start, false
-}
-
-func sameDroidPath(left, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if absolute, err := filepath.Abs(left); err == nil {
-		left = absolute
-	}
-	if absolute, err := filepath.Abs(right); err == nil {
-		right = absolute
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameDroidAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func droidRuntimeRoot() (string, error) {
-	return AgentRuntimeRoot()
+	return parseQuotedWindowsCommand(command)
 }
 
 func managedDroidAgentID(
@@ -333,27 +203,15 @@ func managedDroidAgentID(
 	}
 	executable, scriptPath, ok := parseDroidCommand(command, includeLegacy...)
 	if !ok || !filepath.IsAbs(executable) || !filepath.IsAbs(scriptPath) ||
-		!isDroidNodeExecutable(executable) || !sameDroidFileName(filepath.Base(scriptPath), scriptName) {
+		!isNodeExecutable(executable) || !sameManagedName(filepath.Base(scriptPath), scriptName) {
 		return "", false
 	}
 	agentDirectory := filepath.Dir(scriptPath)
-	if !sameDroidPath(filepath.Dir(agentDirectory), runtimeRoot) {
+	if !sameManagedPath(filepath.Dir(agentDirectory), runtimeRoot) {
 		return "", false
 	}
 	agentID := filepath.Base(agentDirectory)
 	return agentID, agentID != "" && agentID != "." && agentID != ".."
-}
-
-func isDroidNodeExecutable(path string) bool {
-	name := filepath.Base(path)
-	return name == "node" || strings.EqualFold(name, "node.exe")
-}
-
-func sameDroidFileName(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
 }
 
 func managedDroidRemovals(settings droidHookSettings, agentID, runtimeRoot string) []droidManagedRemoval {
@@ -370,7 +228,7 @@ func managedDroidRemovals(settings droidHookSettings, agentID, runtimeRoot strin
 				managedID, managed := managedDroidAgentID(
 					handlerValue.(map[string]any), contract.script, runtimeRoot, true,
 				)
-				if managed && (agentID == "" || sameDroidAgentID(managedID, agentID)) {
+				if managed && (agentID == "" || sameManagedAgentID(managedID, agentID)) {
 					indexes = append(indexes, handlerIndex)
 				}
 			}
@@ -400,7 +258,7 @@ func droidRuntimeContracts(settings droidHookSettings, runtimeRoot string) []dro
 	contracts := make([]droidRuntimeContract, 0, len(guardIDs))
 	for _, guardID := range guardIDs {
 		for auditID := range audits {
-			if !sameDroidAgentID(guardID, auditID) {
+			if !sameManagedAgentID(guardID, auditID) {
 				continue
 			}
 			root := filepath.Join(runtimeRoot, guardID)

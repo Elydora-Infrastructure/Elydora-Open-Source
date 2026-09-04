@@ -183,7 +183,7 @@ func TestCursorInstallCreatesRuntimeDirectoryTransactionally(t *testing.T) {
 		fixture.guardPath,
 		fixture.hookPath,
 	} {
-		if exists, err := cursorPhysicalFileExists(path, "Cursor runtime"); err != nil || !exists {
+		if exists, err := managedPhysicalFileExists(path, "Cursor runtime", maxManagedSourceBytes); err != nil || !exists {
 			t.Fatalf("runtime file %s exists = %v, %v", path, exists, err)
 		}
 	}
@@ -200,7 +200,7 @@ func TestCursorInstallRollsBackEveryFileOnConfigCommitFailure(t *testing.T) {
 	}
 	failed := false
 	fixture.plugin.rename = func(source, destination string) error {
-		if !failed && sameCursorPath(destination, fixture.configPath) {
+		if !failed && sameManagedPath(destination, fixture.configPath) {
 			failed = true
 			return errors.New("injected Cursor config commit failure")
 		}

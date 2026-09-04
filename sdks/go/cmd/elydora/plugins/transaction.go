@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 type renameFunc func(source, destination string) error
@@ -165,84 +163,60 @@ func writeChangesWithFileOps(
 	if ops.moveNoReplace == nil {
 		return fmt.Errorf("%s is missing atomic file operations", label)
 	}
-	filtered := make([]fileChange, 0, len(changes))
-	targets := map[string]bool{}
-	for _, change := range changes {
-		if change == nil || (change.existed && !change.remove &&
-			bytes.Equal(change.original, change.next) &&
-			sameManagedFileMode(change.originalMode, change.mode)) {
-			continue
-		}
-		target := filepath.Clean(change.filePath)
-		if runtime.GOOS == "windows" {
-			target = strings.ToLower(target)
-		}
-		if targets[target] {
-			return fmt.Errorf("%s contains duplicate file target %s", label, change.filePath)
-		}
-		targets[target] = true
-		filtered = append(filtered, *change)
+	filtered, err := filterDurableChanges(changes, label)
+	if err != nil {
+		return err
 	}
-	if err := assertFilePreconditions(preconditions, label); err != nil {
-		return fmt.Errorf("%s: %w", label, err)
+	checkPreconditions := func() error {
+		if err := assertFilePreconditions(preconditions, label); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+		return nil
+	}
+	if err := checkPreconditions(); err != nil {
+		return err
 	}
 	if len(filtered) == 0 {
 		return nil
 	}
 	staged := make([]stagedChange, 0, len(filtered))
+	abortStaging := func(cause error) error {
+		return joinTransactionFailure(cause, cleanupStaging(staged), "cleanup failed")
+	}
 	for _, change := range filtered {
-		if err := assertFilePreconditions(preconditions, label); err != nil {
-			cleanupErrors := cleanupStaging(staged)
-			return joinTransactionFailure(
-				fmt.Errorf("%s: %w", label, err),
-				cleanupErrors,
-				"cleanup failed",
-			)
+		if err := checkPreconditions(); err != nil {
+			return abortStaging(err)
 		}
 		item, err := stageChange(change)
 		if err != nil {
-			cleanupErrors := cleanupStaging(staged)
-			return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), cleanupErrors, "cleanup failed")
+			return abortStaging(fmt.Errorf("%s: %w", label, err))
 		}
 		staged = append(staged, item)
-		if err := assertFilePreconditions(preconditions, label); err != nil {
-			cleanupErrors := cleanupStaging(staged)
-			return joinTransactionFailure(
-				fmt.Errorf("%s: %w", label, err),
-				cleanupErrors,
-				"cleanup failed",
-			)
-		}
 	}
-	if err := assertFilePreconditions(preconditions, label); err != nil {
-		cleanupErrors := cleanupStaging(staged)
-		return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), cleanupErrors, "cleanup failed")
+	if err := checkPreconditions(); err != nil {
+		return abortStaging(err)
+	}
+	recoverStaged := func(cause error) error {
+		failures := rollbackChanges(staged, ops)
+		failures = append(failures, cleanupStaging(staged)...)
+		return joinTransactionFailure(cause, failures, "recovery failed")
 	}
 	for index := range staged {
-		if err := assertFilePreconditions(preconditions, label); err != nil {
-			recoveryErrors := rollbackChanges(staged, ops)
-			recoveryErrors = append(recoveryErrors, cleanupStaging(staged)...)
-			return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), recoveryErrors, "recovery failed")
+		if err := checkPreconditions(); err != nil {
+			return recoverStaged(err)
 		}
 		if err := commitChange(&staged[index], ops); err != nil {
-			recoveryErrors := rollbackChanges(staged, ops)
-			recoveryErrors = append(recoveryErrors, cleanupStaging(staged)...)
-			return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), recoveryErrors, "recovery failed")
+			return recoverStaged(fmt.Errorf("%s: %w", label, err))
 		}
 	}
-	if err := assertFilePreconditions(preconditions, label); err != nil {
-		recoveryErrors := rollbackChanges(staged, ops)
-		recoveryErrors = append(recoveryErrors, cleanupStaging(staged)...)
-		return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), recoveryErrors, "recovery failed")
+	if err := checkPreconditions(); err != nil {
+		return recoverStaged(err)
 	}
 	if err := assertCommittedChanges(staged); err != nil {
-		recoveryErrors := rollbackChanges(staged, ops)
-		recoveryErrors = append(recoveryErrors, cleanupStaging(staged)...)
-		return joinTransactionFailure(fmt.Errorf("%s: %w", label, err), recoveryErrors, "recovery failed")
+		return recoverStaged(fmt.Errorf("%s: %w", label, err))
 	}
-	cleanupErrors := cleanupStaging(staged)
-	if len(cleanupErrors) > 0 {
-		return joinTransactionFailure(fmt.Errorf("%s cleanup failed", label), cleanupErrors, "cleanup failed")
+	if failures := cleanupStaging(staged); len(failures) > 0 {
+		return joinTransactionFailure(fmt.Errorf("%s cleanup failed", label), failures, "cleanup failed")
 	}
 	return nil
 }

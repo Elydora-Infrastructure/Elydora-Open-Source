@@ -355,10 +355,10 @@ func TestCodexUninstallPreservesUnrelatedHooksAndExactAgent(t *testing.T) {
 	if len(requireArray(t, hooks["PreToolUse"])) != 2 || len(requireArray(t, hooks["PostToolUse"])) != 1 {
 		t.Fatalf("unexpected remaining hooks: %#v", hooks)
 	}
-	_, remainingScript, parsed := parseCodexPOSIXCommand(
-		requireCodexHandler(t, remaining, "PostToolUse", codexAuditStatus)["command"],
+	_, remainingScript, parsed := parsePOSIXCommand(
+		requireCodexHandler(t, remaining, "PostToolUse", codexAuditStatus)["command"].(string),
 	)
-	if !parsed || !sameCodexPath(remainingScript, filepath.Join(otherDir, codexAuditScript)) {
+	if !parsed || !sameManagedPath(remainingScript, filepath.Join(otherDir, codexAuditScript)) {
 		t.Fatalf("other agent handler was removed: %#v", hooks)
 	}
 }

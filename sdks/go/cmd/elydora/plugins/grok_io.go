@@ -85,23 +85,8 @@ func writeGrokChanges(
 	agentDirectory string,
 	hooksDirectory string,
 ) error {
-	hasChanges := false
-	for _, change := range changes {
-		if change != nil {
-			hasChanges = true
-			break
-		}
-	}
-	if !hasChanges {
+	if !hasFileChanges(changes) {
 		return nil
-	}
-	if agentDirectory != "" {
-		if err := EnsurePrivateDirectory(runtimeRoot); err != nil {
-			return err
-		}
-		if err := EnsurePrivateDirectory(agentDirectory); err != nil {
-			return err
-		}
 	}
 	if err := ensureManagedDirectory(
 		filepath.Dir(hooksDirectory),
@@ -109,8 +94,8 @@ func writeGrokChanges(
 	); err != nil {
 		return err
 	}
-	if err := ensureManagedDirectory(hooksDirectory, "Grok hooks directory"); err != nil {
-		return err
-	}
-	return writeChanges(changes, label, rename)
+	return writeManagedChanges(
+		changes, label, rename, runtimeRoot, agentDirectory,
+		hooksDirectory, "Grok hooks directory",
+	)
 }

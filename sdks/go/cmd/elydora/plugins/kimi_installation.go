@@ -2,107 +2,32 @@ package plugins
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
-
-type kimiRuntimePaths struct {
-	runtimeRoot    string
-	agentDirectory string
-	configPath     string
-	keyPath        string
-	guardPath      string
-	auditPath      string
-}
 
 type kimiRenderedDocument struct {
 	document kimiDocument
 	next     []byte
 }
 
-func validateKimiInstallConfig(config InstallConfig) error {
-	for _, field := range []struct{ name, value string }{
-		{"agent name", config.AgentName},
-		{"organization ID", config.OrgID},
-		{"agent ID", config.AgentID},
-		{"key ID", config.KID},
-		{"private key", config.PrivateKey},
-		{"base URL", config.BaseURL},
-		{"guard script path", config.GuardScriptPath},
-	} {
-		if field.value == "" {
-			return fmt.Errorf("%s is required", field.name)
-		}
-	}
-	if config.AgentName != kimiAgentKey {
-		return fmt.Errorf("kimi installation requires agent name %s", kimiAgentKey)
-	}
-	if strings.TrimSpace(config.OrgID) == "" {
-		return fmt.Errorf("organization ID is required")
-	}
-	if strings.TrimSpace(config.KID) == "" {
-		return fmt.Errorf("key ID is required")
-	}
-	if config.Token != "" && strings.TrimSpace(config.Token) == "" {
-		return fmt.Errorf("token must contain a non-whitespace value when provided")
-	}
-	if err := validateManagedPrivateKey(config.PrivateKey); err != nil {
-		return err
-	}
-	return validateManagedBaseURL(config.BaseURL)
-}
-
-func kimiAgentPaths(config InstallConfig) (*kimiRuntimePaths, error) {
-	if err := validateKimiInstallConfig(config); err != nil {
-		return nil, err
-	}
-	runtimeRoot, err := AgentRuntimeRoot()
-	if err != nil {
-		return nil, err
-	}
-	agentDirectory, err := ResolveAgentRuntimeDirectory(config.AgentID)
-	if err != nil {
-		return nil, err
-	}
-	paths := &kimiRuntimePaths{
-		runtimeRoot: runtimeRoot, agentDirectory: agentDirectory,
-		configPath: filepath.Join(agentDirectory, "config.json"),
-		keyPath:    filepath.Join(agentDirectory, "private.key"),
-		guardPath:  filepath.Join(agentDirectory, kimiGuardScript),
-		auditPath:  filepath.Join(agentDirectory, kimiAuditScript),
-	}
-	if !filepath.IsAbs(config.GuardScriptPath) ||
-		!sameKimiPath(config.GuardScriptPath, paths.guardPath) {
-		return nil, fmt.Errorf(
-			"guard runtime must use the managed Elydora agent directory: %s",
-			paths.guardPath,
-		)
-	}
-	if config.HookScript != "" && (!filepath.IsAbs(config.HookScript) ||
-		!sameKimiPath(config.HookScript, paths.auditPath)) {
-		return nil, fmt.Errorf(
-			"audit runtime must use the managed Elydora agent directory: %s",
-			paths.auditPath,
-		)
-	}
-	return paths, nil
-}
-
 func preflightKimiInstallation(
 	config InstallConfig,
 	documents []kimiDocument,
-) (*kimiRuntimePaths, string, error) {
+) (*managedRuntimePaths, string, error) {
 	if len(documents) == 0 {
 		return nil, "", fmt.Errorf("kimi installation requires at least one hook contract")
 	}
-	paths, err := kimiAgentPaths(config)
+	if err := validateManagedInstallConfig(config, kimiAgentKey, "kimi"); err != nil {
+		return nil, "", err
+	}
+	paths, err := resolveManagedRuntimePaths(config, kimiGuardScript, kimiAuditScript)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := validateKimiRuntimeIdentity(paths.agentDirectory, config.AgentID); err != nil {
+	if err := validateManagedRuntimeIdentity(
+		paths.agentDirectory, config.AgentID, kimiAgentKey, "Kimi",
+	); err != nil {
 		return nil, "", err
 	}
 	nodePath, err := resolveNodeRuntime()
@@ -112,26 +37,9 @@ func preflightKimiInstallation(
 	return paths, nodePath, nil
 }
 
-func buildKimiRuntimeConfig(config InstallConfig) ([]byte, error) {
-	value := map[string]any{
-		"org_id": config.OrgID, "agent_id": config.AgentID, "kid": config.KID,
-		"base_url": config.BaseURL, "agent_name": kimiAgentKey,
-	}
-	if config.Token != "" {
-		value["token"] = config.Token
-	}
-	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("encode Elydora runtime config: %w", err)
-	}
-	encoded = append(encoded, '\n')
-	if len(encoded) > maxRuntimeConfigBytes {
-		return nil, fmt.Errorf(
-			"elydora runtime config exceeds %d bytes after JSON encoding",
-			maxRuntimeConfigBytes,
-		)
-	}
-	return encoded, nil
+func kimiExpectedScripts(agentID string, _ map[string]any) ([]byte, []byte) {
+	return []byte(generateGuardScript(kimiAgentKey, agentID, "", false, "")),
+		[]byte(buildHookScriptWithOutput(kimiAgentKey, agentID, "", false, true))
 }
 
 func renderKimiChange(
@@ -172,47 +80,21 @@ func prepareRenderedKimiChange(rendered kimiRenderedDocument) (*fileChange, erro
 
 func prepareKimiInstallationChanges(
 	config InstallConfig,
-	paths *kimiRuntimePaths,
+	paths *managedRuntimePaths,
 	rendered []kimiRenderedDocument,
 ) ([]*fileChange, error) {
-	runtimeConfig, err := buildKimiRuntimeConfig(config)
+	guardScript, auditScript := kimiExpectedScripts(config.AgentID, nil)
+	changes, err := managedRuntimeFileChanges(
+		config, paths, kimiAgentKey, string(guardScript), string(auditScript),
+	)
 	if err != nil {
 		return nil, err
 	}
-	items := []struct {
-		path, label string
-		content     []byte
-		mode        os.FileMode
-	}{
-		{
-			paths.guardPath, "Elydora guard runtime",
-			[]byte(generateGuardScript(kimiAgentKey, config.AgentID, "", false, "")), 0700,
-		},
-		{paths.configPath, "Elydora runtime config", runtimeConfig, 0600},
-		{paths.keyPath, "Elydora private key", []byte(config.PrivateKey), 0600},
-		{
-			paths.auditPath, "Elydora audit runtime",
-			[]byte(buildHookScriptWithOutput(
-				kimiAgentKey, config.AgentID, "", false, true,
-			)), 0700,
-		},
+	documentChanges, err := prepareKimiUninstallChanges(rendered)
+	if err != nil {
+		return nil, err
 	}
-	changes := make([]*fileChange, 0, len(items)+len(rendered))
-	for _, item := range items {
-		change, err := prepareFileChange(item.path, item.label, item.content, item.mode)
-		if err != nil {
-			return nil, err
-		}
-		changes = append(changes, change)
-	}
-	for _, document := range rendered {
-		change, err := prepareRenderedKimiChange(document)
-		if err != nil {
-			return nil, err
-		}
-		changes = append(changes, change)
-	}
-	return changes, nil
+	return append(changes, documentChanges...), nil
 }
 
 func prepareKimiUninstallChanges(
@@ -227,32 +109,4 @@ func prepareKimiUninstallChanges(
 		changes = append(changes, change)
 	}
 	return changes, nil
-}
-
-func writeKimiChanges(
-	changes []*fileChange,
-	label string,
-	rename renameFunc,
-	runtimeRoot string,
-	agentDirectory string,
-) error {
-	hasChanges := false
-	for _, change := range changes {
-		if change != nil {
-			hasChanges = true
-			break
-		}
-	}
-	if !hasChanges {
-		return nil
-	}
-	if agentDirectory != "" {
-		if err := EnsurePrivateDirectory(runtimeRoot); err != nil {
-			return err
-		}
-		if err := EnsurePrivateDirectory(agentDirectory); err != nil {
-			return err
-		}
-	}
-	return writeChanges(changes, label, rename)
 }

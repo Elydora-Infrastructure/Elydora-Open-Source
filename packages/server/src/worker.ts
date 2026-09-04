@@ -1,8 +1,4 @@
-/**
- * BullMQ queue worker — processes operation, export, and TSA jobs.
- *
- * Run as a separate Node.js process: node dist/worker.js
- */
+/** BullMQ queue worker: processes operation, export, and TSA jobs. */
 
 import 'dotenv/config';
 import { Worker, type Job } from 'bullmq';

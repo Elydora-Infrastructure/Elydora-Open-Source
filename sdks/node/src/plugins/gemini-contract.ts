@@ -1,9 +1,11 @@
+import { sameAgentId } from './common.js';
 import {
   buildGeminiCommand,
   geminiRuntimeReference,
-  sameGeminiAgentId,
   type GeminiRuntimeReference,
 } from './gemini-command.js';
+import type { GuardScriptOptions } from './guard-template.js';
+import type { HookScriptOptions } from './hook-template.js';
 import { isObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'gemini';
@@ -14,6 +16,8 @@ export const GUARD_HOOK_NAME = 'elydora-guard';
 export const AUDIT_HOOK_NAME = 'elydora-audit';
 export const HOOK_TIMEOUT_MS = 10_000;
 export const MANAGED_EVENTS = ['BeforeTool', 'AfterTool'] as const;
+export const GUARD_OPTIONS: GuardScriptOptions = { successOutput: '{}\n' };
+export const AUDIT_OPTIONS: HookScriptOptions = { nativePayload: true, successOutput: '{}\n' };
 
 const KNOWN_EVENTS = new Set([
   'BeforeTool',
@@ -248,7 +252,7 @@ export function managedGeminiRemovals(
       const handlerIndexes = group.hooks.flatMap((handler, handlerIndex) => {
         const reference = managedReference(handler, scriptName, hookName, true);
         return reference
-          && (agentId === undefined || sameGeminiAgentId(reference.agentId, agentId))
+          && (agentId === undefined || sameAgentId(reference.agentId, agentId))
           ? [handlerIndex]
           : [];
       });

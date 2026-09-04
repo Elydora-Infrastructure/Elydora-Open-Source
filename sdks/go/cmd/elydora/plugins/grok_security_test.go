@@ -164,10 +164,10 @@ func TestGrokValidatesManagedRuntimeInputsBeforeWrites(t *testing.T) {
 		}, "query parameters"},
 		{"guard path", func(f *grokFixture) {
 			f.config.GuardScriptPath = filepath.Join(f.homeDir, "outside", "guard.js")
-		}, "managed Elydora agent directory"},
+		}, "managed agent directory"},
 		{"audit path", func(f *grokFixture) {
 			f.config.HookScript = filepath.Join(f.homeDir, "outside", "hook.js")
-		}, "managed Elydora agent directory"},
+		}, "managed agent directory"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := prepareGrokFixture(t, grokFixtureOptions{})

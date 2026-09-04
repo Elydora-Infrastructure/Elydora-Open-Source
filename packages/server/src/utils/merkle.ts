@@ -1,10 +1,4 @@
-/**
- * SHA-256 Merkle tree implementation for epoch rollups.
- *
- * Leaf hashes are sorted lexicographically before tree construction.
- * Internal nodes are computed by concatenating the raw bytes (not base64url
- * strings) of their children and hashing the result with SHA-256.
- */
+/** SHA-256 Merkle tree implementation for epoch rollups. */
 
 import { sha256Base64url, base64urlDecode } from './crypto.js';
 
@@ -38,10 +32,7 @@ export interface MerkleProof {
 // Internal helper
 // ---------------------------------------------------------------------------
 
-/**
- * Compute the parent hash from two child hashes.
- * Decodes both base64url hashes to raw bytes, concatenates, then SHA-256.
- */
+/** Compute the parent hash from two child hashes. */
 async function hashPair(left: string, right: string): Promise<string> {
   const leftBytes = base64urlDecode(left);
   const rightBytes = base64urlDecode(right);
@@ -55,12 +46,7 @@ async function hashPair(left: string, right: string): Promise<string> {
 // Build
 // ---------------------------------------------------------------------------
 
-/**
- * Build a Merkle tree from leaf hashes and their corresponding operation IDs.
- *
- * Leaves are sorted lexicographically (with operationIds reordered to match).
- * If a layer has an odd number of nodes the last node is duplicated.
- */
+/** Build a Merkle tree from leaf hashes and their corresponding operation IDs. */
 export async function buildMerkleTree(
   leafHashes: string[],
   operationIds: string[],
@@ -103,11 +89,7 @@ export async function buildMerkleTree(
 // Proof generation
 // ---------------------------------------------------------------------------
 
-/**
- * Generate a Merkle inclusion proof for a given leaf hash.
- *
- * Returns null if the leaf is not found in the tree.
- */
+/** Generate a Merkle inclusion proof for a given leaf hash. */
 export function getMerkleProof(
   tree: MerkleTree,
   leafHash: string,
@@ -142,9 +124,7 @@ export function getMerkleProof(
 // Proof verification
 // ---------------------------------------------------------------------------
 
-/**
- * Verify a Merkle inclusion proof by recomputing the root.
- */
+/** Verify a Merkle inclusion proof by recomputing the root. */
 export async function verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
   let current = proof.leaf;
 

@@ -1,11 +1,4 @@
-/**
- * Authentication middleware for opaque API tokens and Better Auth sessions.
- *
- * A bearer value is resolved as a hashed API token first; anything else is
- * validated as a Better Auth session (cookie or bearer session token).
- * On success the org_id, role, actor, and credential kind are stored in the
- * Hono context variables for downstream handlers.
- */
+/** Authentication middleware for opaque API tokens and Better Auth sessions. */
 
 import type { MiddlewareHandler } from 'hono';
 import type { RbacRole } from '../shared/index.js';

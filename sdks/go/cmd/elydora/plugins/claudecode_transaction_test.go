@@ -60,7 +60,7 @@ func TestClaudeInstallRollsBackAllRuntimesAfterSettingsFailure(t *testing.T) {
 	}
 	before := snapshotClaudeFiles(t, paths...)
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameClaudePath(destination, fixture.configPath) &&
+		if sameManagedPath(destination, fixture.configPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			return errors.New("injected Claude settings failure")
 		}
@@ -114,13 +114,14 @@ func TestPreparedClaudeInstallRejectsConcurrentSettingsChange(t *testing.T) {
 	if err := os.WriteFile(fixture.configPath, concurrent, 0600); err != nil {
 		t.Fatalf("write concurrent settings: %v", err)
 	}
-	err = writeClaudeChanges(
+	err = writeManagedChanges(
 		changes,
 		"Install Claude Code hooks",
 		nil,
 		paths.runtimeRoot,
 		paths.agentDirectory,
 		filepath.Dir(document.filePath),
+		"Claude Code configuration directory",
 	)
 	if err == nil || !strings.Contains(err.Error(), "changed during installation") {
 		t.Fatalf("prepared install error = %v", err)
@@ -176,7 +177,7 @@ func TestClaudeUninstallPreservesSettingsAfterCommitFailure(t *testing.T) {
 		t.Fatalf("read installed settings: %v", err)
 	}
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameClaudePath(destination, fixture.configPath) &&
+		if sameManagedPath(destination, fixture.configPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			return errors.New("injected Claude uninstall failure")
 		}

@@ -1,9 +1,4 @@
-/**
- * Elydora Operation Record (EOR)
- *
- * The fundamental unit of auditable activity in the Elydora protocol.
- * Signed by the agent's Ed25519 key and chained via prev_chain_hash.
- */
+/** Elydora Operation Record (EOR) The fundamental unit of auditable activity in the Elydora protocol. */
 export interface EOR {
   /** Protocol version, always "1.0" */
   readonly op_version: '1.0';
@@ -37,11 +32,7 @@ export interface EOR {
   readonly signature: string;
 }
 
-/**
- * Elydora Chain Hash (ECH)
- *
- * Represents the chain hash computation linking operations together.
- */
+/** Elydora Chain Hash (ECH) Represents the chain hash computation linking operations together. */
 export interface ECH {
   /** Previous chain hash (base64url) */
   readonly prev_ech: string;
@@ -55,11 +46,7 @@ export interface ECH {
   readonly chain_hash: string;
 }
 
-/**
- * Elydora Acknowledgment Receipt (EAR)
- *
- * Server-issued receipt confirming acceptance of an operation.
- */
+/** Elydora Acknowledgment Receipt (EAR) Server-issued receipt confirming acceptance of an operation. */
 export interface EAR {
   /** Receipt version */
   readonly receipt_version: string;
@@ -87,11 +74,7 @@ export interface EAR {
   readonly elydora_signature: string;
 }
 
-/**
- * Elydora Epoch Record (EER)
- *
- * Periodic Merkle-tree rollup anchoring operations to a root hash.
- */
+/** Elydora Epoch Record (EER) Periodic Merkle-tree rollup anchoring operations to a root hash. */
 export interface EER {
   /** Unique epoch identifier */
   readonly epoch_id: string;

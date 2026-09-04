@@ -274,7 +274,7 @@ func validateCopilotHooks(value any, label string) (copilotHooks, error) {
 			if err := validateCopilotHandler(handler, event, itemLabel); err != nil {
 				return nil, err
 			}
-			handlers = append(handlers, cloneCopilotObject(handler))
+			handlers = append(handlers, cloneJSONObject(handler))
 		}
 		hooks[event] = handlers
 	}

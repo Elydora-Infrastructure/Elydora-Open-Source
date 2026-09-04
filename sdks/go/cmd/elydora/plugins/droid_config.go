@@ -239,7 +239,7 @@ func droidAdditionsFor(
 	document, target *droidDocument,
 	groups map[string]map[string]any,
 ) map[string]map[string]any {
-	if sameDroidPath(document.filePath, target.filePath) {
+	if sameManagedPath(document.filePath, target.filePath) {
 		return groups
 	}
 	return map[string]map[string]any{}

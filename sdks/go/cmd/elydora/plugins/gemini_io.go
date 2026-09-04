@@ -67,38 +67,3 @@ func prepareRenderedGeminiChange(
 		rendered.remove,
 	)
 }
-
-func writeGeminiChanges(
-	changes []*fileChange,
-	label string,
-	rename renameFunc,
-	runtimeRoot string,
-	agentDirectory string,
-	settingsDirectory string,
-) error {
-	hasChanges := false
-	for _, change := range changes {
-		if change != nil {
-			hasChanges = true
-			break
-		}
-	}
-	if !hasChanges {
-		return nil
-	}
-	if agentDirectory != "" {
-		if err := EnsurePrivateDirectory(runtimeRoot); err != nil {
-			return err
-		}
-		if err := EnsurePrivateDirectory(agentDirectory); err != nil {
-			return err
-		}
-	}
-	if err := ensureManagedDirectory(
-		settingsDirectory,
-		"Gemini CLI configuration directory",
-	); err != nil {
-		return err
-	}
-	return writeChanges(changes, label, rename)
-}

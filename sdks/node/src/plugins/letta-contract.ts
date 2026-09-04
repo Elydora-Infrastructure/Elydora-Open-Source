@@ -1,9 +1,8 @@
+import { sameAgentId, samePath } from './common.js';
 import {
   buildLettaCommand,
   lettaLegacyRuntimeReference,
   lettaRuntimeReference,
-  sameLettaAgentId,
-  sameLettaPath,
   type LettaRuntimeReference,
 } from './letta-command.js';
 import { isObject, type JsonObject } from './strict-json.js';
@@ -220,7 +219,7 @@ export function managedLettaRemovals(
     eventGroups(hooks, event).forEach((group, groupIndex) => {
       const handlerIndexes = group.hooks.flatMap((handler, handlerIndex) => {
         const reference = managedReference(handler, scriptName);
-        return reference && (agentId === undefined || sameLettaAgentId(reference.agentId, agentId))
+        return reference && (agentId === undefined || sameAgentId(reference.agentId, agentId))
           ? [handlerIndex]
           : [];
       });
@@ -248,7 +247,7 @@ function referencesForEvent(
       const reference = exactCurrentReference(handler, scriptName);
       if (!reference
         || !reference.executablePath
-        || !sameLettaPath(reference.executablePath, process.execPath)) continue;
+        || !samePath(reference.executablePath, process.execPath)) continue;
       const key = process.platform === 'win32'
         ? reference.agentId.toLowerCase()
         : reference.agentId;
@@ -270,7 +269,7 @@ export function lettaRuntimeContracts(hooks: LettaHooks): LettaRuntimeContract[]
     const post = posts.get(key);
     const failure = failures.get(key);
     if (guard.length !== 1 || post?.length !== 1 || failure?.length !== 1) continue;
-    if (!sameLettaPath(post[0].scriptPath, failure[0].scriptPath)) continue;
+    if (!samePath(post[0].scriptPath, failure[0].scriptPath)) continue;
     contracts.push({
       agentId: guard[0].agentId,
       guardPath: guard[0].scriptPath,

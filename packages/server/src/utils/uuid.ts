@@ -1,24 +1,6 @@
-/**
- * UUIDv7 generator conforming to RFC 9562.
- *
- * UUIDv7 embeds a Unix-millisecond timestamp in the most-significant 48 bits,
- * making identifiers lexicographically sortable and eliminating the need for
- * a separate created_at column in many cases.
- *
- * This implementation uses the Web Crypto API (crypto.getRandomValues) which
- * is available natively in Node.js 20+.
- */
+/** UUIDv7 generator conforming to RFC 9562. */
 
-/**
- * Generate a UUIDv7 string.
- *
- * Layout (128 bits total):
- *   bits  0-47 : Unix timestamp in milliseconds
- *   bits 48-51 : version (0b0111 = 7)
- *   bits 52-63 : random_a (12 bits)
- *   bits 64-65 : variant  (0b10)
- *   bits 66-127: random_b (62 bits)
- */
+/** Generate a UUIDv7 string. */
 export function generateUUIDv7(): string {
   const now = Date.now();
   const bytes = new Uint8Array(16);
@@ -46,9 +28,7 @@ export function generateUUIDv7(): string {
   return formatUUID(bytes);
 }
 
-/**
- * Format a 16-byte array as a standard UUID string (8-4-4-4-12).
- */
+/** Format a 16-byte array as a standard UUID string (8-4-4-4-12). */
 function formatUUID(bytes: Uint8Array): string {
   const hex = Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))

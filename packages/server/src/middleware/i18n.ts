@@ -1,11 +1,4 @@
-/**
- * i18n middleware — language detection from Accept-Language header.
- *
- * Reads the Accept-Language request header, detects the preferred
- * language (English or Chinese), and stores it in the Hono context
- * so that all downstream handlers and services can access it via
- * `c.get('lang')`.
- */
+/** i18n middleware: language detection from Accept-Language header. */
 
 import type { MiddlewareHandler } from 'hono';
 import type { Env, AppVariables } from '../types.js';

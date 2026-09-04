@@ -7,7 +7,6 @@ import {
 } from './codex-contract.js';
 import {
   commitManagedInstallation,
-  managedRuntimePaths,
   preflightManagedInstallation,
   prepareManagedInstallation,
   type ManagedRuntimePaths,
@@ -19,18 +18,10 @@ const DISPLAY_NAME = 'Codex';
 const HOOKS_DIRECTORY_LABEL = 'Codex hooks directory';
 const HOOKS_LABEL = 'Codex user hooks';
 
-export type CodexRuntimePaths = ManagedRuntimePaths;
-export type PreparedCodexInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
-export function codexRuntimePaths(config: InstallConfig): CodexRuntimePaths {
-  return managedRuntimePaths(config, AGENT_KEY, GUARD_SCRIPT, AUDIT_SCRIPT);
-}
-
 export async function preflightCodexInstallation(
   config: InstallConfig,
   hooksPath: string,
-): Promise<CodexRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: [{ directoryLabel: HOOKS_DIRECTORY_LABEL, filePath: hooksPath }],
@@ -41,7 +32,7 @@ export async function preflightCodexInstallation(
 export async function prepareCodexInstallation(
   config: InstallConfig,
   rendered: RenderedDocument,
-): Promise<PreparedCodexInstallation> {
+): Promise<PreparedManagedInstallation> {
   if (!rendered.changed && rendered.document.raw === undefined) {
     throw new Error('Codex hook installation did not produce a configuration document');
   }
@@ -63,7 +54,7 @@ export async function prepareCodexInstallation(
 }
 
 export async function commitCodexInstallation(
-  prepared: PreparedCodexInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

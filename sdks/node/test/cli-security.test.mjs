@@ -18,6 +18,7 @@ async function runCli(args, homeDir) {
         ...process.env,
         HOME: homeDir,
         USERPROFILE: homeDir,
+        XDG_CONFIG_HOME: path.join(homeDir, '.config'),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

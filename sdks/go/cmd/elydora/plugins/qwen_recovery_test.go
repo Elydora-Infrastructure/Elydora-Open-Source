@@ -244,7 +244,7 @@ func TestQwenTransactionRollsBackAllFilesAndCleansStaging(t *testing.T) {
 	original := readQwenTestFile(t, fixture.configPath)
 	failed := false
 	fixture.plugin.rename = func(source, destination string) error {
-		if !failed && sameQwenPath(destination, fixture.configPath) {
+		if !failed && sameManagedPath(destination, fixture.configPath) {
 			failed = true
 			return errors.New("simulated settings commit failure")
 		}

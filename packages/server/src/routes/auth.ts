@@ -1,12 +1,4 @@
-/**
- * Auth routes — registration, login, profile retrieval, and token refresh.
- *
- * /register and /login are public (no auth required).
- * /me and /refresh require a valid Better Auth session or API token; /token requires a session.
- *
- * Uses Better Auth for session management while preserving the existing
- * API surface (endpoint paths and response formats).
- */
+/** Auth routes: registration, login, profile retrieval, and token refresh. */
 
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';
@@ -20,7 +12,7 @@ import { getMessage } from '../i18n/messages.js';
 const auth = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 // ---------------------------------------------------------------------------
-// POST /v1/auth/register — Create a new user and organization
+// POST /v1/auth/register: Create a new user and organization
 // ---------------------------------------------------------------------------
 auth.post('/register', async (c) => {
   const body = await c.req.json();
@@ -93,7 +85,7 @@ auth.post('/register', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /v1/auth/login — Authenticate and receive a session token
+// POST /v1/auth/login: Authenticate and receive a session token
 // ---------------------------------------------------------------------------
 auth.post('/login', async (c) => {
   const body = await c.req.json();
@@ -134,7 +126,7 @@ auth.post('/login', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /v1/auth/me — Get current user profile (auth required)
+// GET /v1/auth/me: Get current user profile (auth required)
 // ---------------------------------------------------------------------------
 auth.get('/me', authMiddleware, async (c) => {
   const userId = c.get('actor');
@@ -144,7 +136,7 @@ auth.get('/me', authMiddleware, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /v1/auth/refresh — Issue a new session token (auth required)
+// POST /v1/auth/refresh: Issue a new session token (auth required)
 // ---------------------------------------------------------------------------
 auth.post('/refresh', authMiddleware, async (c) => {
   const betterAuthInstance = createAuth(
@@ -154,7 +146,7 @@ auth.post('/refresh', authMiddleware, async (c) => {
     c.env.ALLOWED_ORIGINS,
   );
 
-  // Get the current session and return its token — Better Auth handles
+  // Get the current session and return its token: Better Auth handles
   // session refresh automatically based on the updateAge setting
   const session = await betterAuthInstance.api.getSession({
     headers: c.req.raw.headers,
@@ -171,7 +163,7 @@ auth.post('/refresh', authMiddleware, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /v1/auth/token — Issue an opaque API token (session required)
+// POST /v1/auth/token: Issue an opaque API token (session required)
 // ---------------------------------------------------------------------------
 auth.post('/token', authMiddleware, async (c) => {
   if (c.get('auth_token_type') !== 'session') {

@@ -10,14 +10,12 @@ type CopilotPlugin struct {
 	rename renameFunc
 }
 
-// ManagesGuardRuntime reports that Copilot commits its provider guard with the
-// audit runtime and hook documents.
+// ManagesGuardRuntime reports that the guard is committed with the audit runtime.
 func (p *CopilotPlugin) ManagesGuardRuntime() bool {
 	return true
 }
 
-// PreflightInstall validates hook sources, settings, matchers, credentials,
-// and runtime identity before any write.
+// PreflightInstall validates every source before the CLI creates runtime state.
 func (p *CopilotPlugin) PreflightInstall(config InstallConfig) error {
 	sources, _, err := readCopilotSources()
 	if err != nil {
@@ -165,7 +163,7 @@ func mergedCopilotContracts(
 	}
 	unique := map[string]copilotRuntimeContract{}
 	for _, contract := range contracts {
-		unique[copilotEntryKey(contract.agentID)] = contract
+		unique[managedReferenceKey(contract.agentID)] = contract
 	}
 	result := make([]copilotRuntimeContract, 0, len(unique))
 	for _, contract := range unique {

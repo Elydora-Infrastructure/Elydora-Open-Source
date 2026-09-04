@@ -1,24 +1,13 @@
 package plugins
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 )
-
-type droidRuntimePaths struct {
-	runtimeRoot    string
-	agentDirectory string
-	guardPath      string
-	auditPath      string
-}
 
 type preparedDroidInstallation struct {
 	changes       []*fileChange
 	preconditions []filePrecondition
-	paths         *droidRuntimePaths
+	paths         *managedRuntimePaths
 }
 
 type preparedDroidUninstall struct {
@@ -39,80 +28,10 @@ func droidSourceLabel(document *droidDocument) string {
 	}
 }
 
-func validateDroidInstallConfig(config InstallConfig) error {
-	for _, field := range []struct{ name, value string }{
-		{"agent name", config.AgentName},
-		{"organization ID", config.OrgID},
-		{"agent ID", config.AgentID},
-		{"key ID", config.KID},
-		{"private key", config.PrivateKey},
-		{"base URL", config.BaseURL},
-		{"guard script path", config.GuardScriptPath},
-	} {
-		if field.value == "" {
-			return fmt.Errorf("%s is required", field.name)
-		}
-	}
-	if config.AgentName != droidAgentKey {
-		return fmt.Errorf(
-			"Factory Droid installation requires agent name %s",
-			droidAgentKey,
-		)
-	}
-	if strings.TrimSpace(config.OrgID) == "" {
-		return fmt.Errorf("organization ID is required")
-	}
-	if strings.TrimSpace(config.KID) == "" {
-		return fmt.Errorf("key ID is required")
-	}
-	if config.Token != "" && strings.TrimSpace(config.Token) == "" {
-		return fmt.Errorf("token must contain a non-whitespace value when provided")
-	}
-	if err := validateManagedPrivateKey(config.PrivateKey); err != nil {
-		return err
-	}
-	return validateManagedBaseURL(config.BaseURL)
-}
-
-func droidAgentPaths(config InstallConfig) (*droidRuntimePaths, error) {
-	if err := validateDroidInstallConfig(config); err != nil {
-		return nil, err
-	}
-	runtimeRoot, err := AgentRuntimeRoot()
-	if err != nil {
-		return nil, err
-	}
-	agentDirectory, err := ResolveAgentRuntimeDirectory(config.AgentID)
-	if err != nil {
-		return nil, err
-	}
-	paths := &droidRuntimePaths{
-		runtimeRoot:    runtimeRoot,
-		agentDirectory: agentDirectory,
-		guardPath:      filepath.Join(agentDirectory, droidGuardScript),
-		auditPath:      filepath.Join(agentDirectory, droidAuditScript),
-	}
-	if !filepath.IsAbs(config.GuardScriptPath) ||
-		!sameDroidPath(config.GuardScriptPath, paths.guardPath) {
-		return nil, fmt.Errorf(
-			"Elydora guard runtime must use the managed agent directory: %s",
-			paths.guardPath,
-		)
-	}
-	if config.HookScript != "" && (!filepath.IsAbs(config.HookScript) ||
-		!sameDroidPath(config.HookScript, paths.auditPath)) {
-		return nil, fmt.Errorf(
-			"Elydora audit runtime must use the managed agent directory: %s",
-			paths.auditPath,
-		)
-	}
-	return paths, nil
-}
-
 func preflightDroidInstallation(
 	config InstallConfig,
 	sources *droidSources,
-) (*droidRuntimePaths, string, error) {
+) (*managedRuntimePaths, string, error) {
 	if sources == nil || sources.root == nil || sources.policy == nil {
 		return nil, "", fmt.Errorf("Factory Droid installation sources are required")
 	}
@@ -126,48 +45,23 @@ func preflightDroidInstallation(
 	if err := validateDroidRegexes(hooks...); err != nil {
 		return nil, "", err
 	}
-	paths, err := droidAgentPaths(config)
+	if err := validateManagedInstallConfig(config, droidAgentKey, "Factory Droid"); err != nil {
+		return nil, "", err
+	}
+	paths, err := resolveManagedRuntimePaths(config, droidGuardScript, droidAuditScript)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := validateDroidRuntimeIdentity(paths.agentDirectory, config.AgentID); err != nil {
+	if err := validateManagedRuntimeIdentity(
+		paths.agentDirectory, config.AgentID, droidAgentKey, "Factory Droid",
+	); err != nil {
 		return nil, "", err
 	}
-	nodePath, err := resolveNodeRuntime()
+	nodePath, err := resolveAbsoluteNodeRuntime("Factory Droid")
 	if err != nil {
 		return nil, "", err
-	}
-	if !filepath.IsAbs(nodePath) || !isDroidNodeExecutable(nodePath) {
-		return nil, "", fmt.Errorf(
-			"Factory Droid hooks require an absolute Node.js executable path",
-		)
 	}
 	return paths, nodePath, nil
-}
-
-func buildDroidRuntimeConfig(config InstallConfig) ([]byte, error) {
-	value := map[string]any{
-		"org_id":     config.OrgID,
-		"agent_id":   config.AgentID,
-		"kid":        config.KID,
-		"base_url":   config.BaseURL,
-		"agent_name": droidAgentKey,
-	}
-	if config.Token != "" {
-		value["token"] = config.Token
-	}
-	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("encode Elydora runtime config: %w", err)
-	}
-	encoded = append(encoded, '\n')
-	if len(encoded) > maxRuntimeConfigBytes {
-		return nil, fmt.Errorf(
-			"Elydora runtime config exceeds %d bytes after JSON encoding",
-			maxRuntimeConfigBytes,
-		)
-	}
-	return encoded, nil
 }
 
 func prepareRenderedDroidChange(
@@ -198,7 +92,7 @@ func validateDroidRenderedSet(
 		matches := 0
 		for _, item := range rendered {
 			if item != nil && item.document != nil &&
-				sameDroidPath(item.document.filePath, document.filePath) {
+				sameManagedPath(item.document.filePath, document.filePath) {
 				matches++
 			}
 		}
@@ -217,7 +111,7 @@ func droidSourcePreconditions(
 	for _, document := range droidSourceDocuments(sources) {
 		changed := false
 		for _, path := range changedPaths {
-			if sameDroidPath(document.filePath, path) {
+			if sameManagedPath(document.filePath, path) {
 				changed = true
 				break
 			}
@@ -246,37 +140,12 @@ func prepareDroidInstallation(
 	if err := validateDroidRenderedSet(sources, rendered); err != nil {
 		return nil, err
 	}
-	runtimeConfig, err := buildDroidRuntimeConfig(config)
+	guardScript, auditScript := droidExpectedScripts(config.AgentID, nil)
+	changes, err := managedRuntimeFileChanges(
+		config, paths, droidAgentKey, string(guardScript), string(auditScript),
+	)
 	if err != nil {
 		return nil, err
-	}
-	items := []struct {
-		path, label string
-		content     []byte
-		mode        os.FileMode
-	}{
-		{
-			paths.guardPath,
-			"Elydora guard runtime",
-			[]byte(generateGuardScript(droidAgentKey, config.AgentID, "", false, "")),
-			0700,
-		},
-		{filepath.Join(paths.agentDirectory, "config.json"), "Elydora runtime config", runtimeConfig, 0600},
-		{filepath.Join(paths.agentDirectory, "private.key"), "Elydora private key", []byte(config.PrivateKey), 0600},
-		{
-			paths.auditPath,
-			"Elydora audit runtime",
-			[]byte(buildHookScriptWithOutput(droidAgentKey, config.AgentID, "", false, true)),
-			0700,
-		},
-	}
-	changes := make([]*fileChange, 0, len(items)+len(rendered))
-	for _, item := range items {
-		change, changeErr := prepareFileChange(item.path, item.label, item.content, item.mode)
-		if changeErr != nil {
-			return nil, changeErr
-		}
-		changes = append(changes, change)
 	}
 	changedPaths := make([]string, 0, len(rendered))
 	for _, document := range rendered {
@@ -305,14 +174,7 @@ func writeDroidChanges(
 	runtimeRoot, agentDirectory string,
 	preconditions []filePrecondition,
 ) error {
-	hasChanges := false
-	for _, change := range changes {
-		if change != nil {
-			hasChanges = true
-			break
-		}
-	}
-	if !hasChanges {
+	if !hasFileChanges(changes) {
 		return writeChanges(changes, label, rename, preconditions...)
 	}
 	if err := assertFilePreconditions(preconditions, label); err != nil {
@@ -365,7 +227,7 @@ func prepareDroidUninstall(
 	for _, item := range rendered {
 		changed := false
 		for _, path := range changedPaths {
-			if sameDroidPath(item.document.filePath, path) {
+			if sameManagedPath(item.document.filePath, path) {
 				changed = true
 				break
 			}
@@ -397,4 +259,9 @@ func commitDroidUninstall(
 		"",
 		prepared.preconditions,
 	)
+}
+
+func droidExpectedScripts(agentID string, _ map[string]any) ([]byte, []byte) {
+	return []byte(generateGuardScript(droidAgentKey, agentID, "", false, "")),
+		[]byte(buildHookScriptWithOutput(droidAgentKey, agentID, "", false, true))
 }

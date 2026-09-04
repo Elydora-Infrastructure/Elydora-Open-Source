@@ -1,104 +1,58 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import http from 'node:http';
-import os from 'node:os';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { parse } from 'jsonc-parser';
+import {
+  createFixtureRoot,
+  distUrl,
+  homeEnvironment,
+  installConfig as baseInstallConfig,
+  runPlugin as basePlugin,
+  runProcess as baseProcess,
+  writeOptionalJson,
+} from './harness.mjs';
 
-export const VALID_PRIVATE_KEY = Buffer.alloc(32, 13).toString('base64url');
-export const pluginModuleUrl = pathToFileURL(path.resolve('dist/plugins/droid.js')).href;
-export const configModuleUrl = pathToFileURL(path.resolve('dist/plugins/droid-config.js')).href;
-export const contractModuleUrl = pathToFileURL(path.resolve('dist/plugins/droid-contract.js')).href;
-export const installationModuleUrl = pathToFileURL(
-  path.resolve('dist/plugins/droid-installation.js'),
-).href;
-export const ioModuleUrl = pathToFileURL(path.resolve('dist/plugins/droid-io.js')).href;
-export const registryModuleUrl = pathToFileURL(path.resolve('dist/plugins/registry.js')).href;
-export const cliPath = path.resolve('dist/cli.js');
+export {
+  VALID_PRIVATE_KEY,
+  cliPath,
+  homeEnvironment as environment,
+  registryModuleUrl,
+  runNode,
+  startApiServer,
+  writeJson as writeConfig,
+} from './harness.mjs';
+
+export const pluginModuleUrl = distUrl('plugins/droid.js');
+export const configModuleUrl = distUrl('plugins/droid-config.js');
+export const contractModuleUrl = distUrl('plugins/droid-contract.js');
+export const installationModuleUrl = distUrl('plugins/droid-installation.js');
+export const ioModuleUrl = distUrl('plugins/droid-io.js');
+const PLUGIN = { exportName: 'droidPlugin', moduleUrl: pluginModuleUrl };
 
 export function runProcess(command, args, env, cwd, input = '', shell = false) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      env: { ...process.env, ...env },
-      shell,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
-}
-
-export function runNode(args, env, cwd, input = '') {
-  return runProcess(process.execPath, args, env, cwd, input);
-}
-
-export function environment(fixture) {
-  return { HOME: fixture.homeDir, USERPROFILE: fixture.homeDir };
+  return baseProcess(command, args, env, cwd, input, { shell });
 }
 
 export function installConfig(fixture, overrides = {}) {
-  return {
-    agentName: 'droid',
-    orgId: 'org-1',
-    agentId: fixture.agentId,
-    privateKey: VALID_PRIVATE_KEY,
-    kid: 'kid-1',
-    token: 'token-1',
-    baseUrl: fixture.baseUrl,
-    guardScriptPath: fixture.guardScriptPath,
-    hookScriptPath: fixture.hookScriptPath,
-    ...overrides,
-  };
+  return baseInstallConfig('droid', fixture, overrides);
 }
 
-export async function runPlugin(fixture, method, argument) {
-  const source = `
-    import { droidPlugin } from ${JSON.stringify(pluginModuleUrl)};
-    const argument = JSON.parse(process.env.ELYDORA_TEST_ARGUMENT);
-    const result = await droidPlugin[process.env.ELYDORA_TEST_METHOD](argument);
-    if (result !== undefined) console.log(JSON.stringify(result));
-  `;
-  return runNode(
-    ['--input-type=module', '--eval', source],
-    {
-      ...environment(fixture),
-      ELYDORA_TEST_ARGUMENT: JSON.stringify(argument),
-      ELYDORA_TEST_METHOD: method,
-    },
-    fixture.workspaceDir,
-  );
+export function runPlugin(fixture, method, argument) {
+  return basePlugin(PLUGIN, fixture, method, argument, { cwd: fixture.workspaceDir });
 }
 
 export function runHook(command, fixture, input) {
+  const env = homeEnvironment(fixture);
   if (process.platform === 'win32') {
     return runProcess(
       'powershell.exe',
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
-      environment(fixture),
+      env,
       fixture.workspaceDir,
       input,
     );
   }
-  return runProcess('/bin/sh', ['-c', command], environment(fixture), fixture.workspaceDir, input);
-}
-
-export async function writeConfig(filePath, value) {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const source = typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`;
-  await writeFile(filePath, source, { mode: 0o600 });
-}
-
-async function writeOptional(filePath, value) {
-  if (value !== undefined) await writeConfig(filePath, value);
+  return runProcess('/bin/sh', ['-c', command], env, fixture.workspaceDir, input);
 }
 
 export async function createFixture({
@@ -111,50 +65,43 @@ export async function createFixture({
   projectSettings,
   projectLocalSettings,
 } = {}) {
-  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'elydora-droid-'));
-  const homeDir = path.join(rootDir, "home with spaces and 'quote %DROID%");
-  const workspaceDir = path.join(rootDir, 'workspace with spaces');
-  const factoryDir = path.join(homeDir, '.factory');
+  const base = await createFixtureRoot(
+    'elydora-droid-',
+    "home with spaces and 'quote %DROID%",
+    { agentId, projectName: 'workspace with spaces' },
+  );
+  const workspaceDir = base.projectDir;
+  const factoryDir = path.join(base.homeDir, '.factory');
   const rootPath = path.join(factoryDir, 'hooks.json');
   const legacyPath = path.join(factoryDir, 'hooks', 'hooks.json');
   const settingsPath = path.join(factoryDir, 'settings.json');
   const localSettingsPath = path.join(factoryDir, 'settings.local.json');
-  const agentDir = path.join(homeDir, '.elydora', agentId);
-  const guardScriptPath = path.join(agentDir, 'guard.js');
-  const hookScriptPath = path.join(agentDir, 'hook.js');
   const projectFactoryDir = path.join(workspaceDir, '.factory');
   const projectSettingsPath = path.join(projectFactoryDir, 'settings.json');
   const projectLocalSettingsPath = path.join(projectFactoryDir, 'settings.local.json');
   await mkdir(path.join(workspaceDir, '.git'), { recursive: true });
   await Promise.all([
-    writeOptional(rootPath, rootConfig),
-    writeOptional(legacyPath, legacyConfig),
-    writeOptional(settingsPath, settings),
-    writeOptional(localSettingsPath, localSettings),
-    writeOptional(projectSettingsPath, projectSettings),
-    writeOptional(projectLocalSettingsPath, projectLocalSettings),
+    writeOptionalJson(rootPath, rootConfig),
+    writeOptionalJson(legacyPath, legacyConfig),
+    writeOptionalJson(settingsPath, settings),
+    writeOptionalJson(localSettingsPath, localSettings),
+    writeOptionalJson(projectSettingsPath, projectSettings),
+    writeOptionalJson(projectLocalSettingsPath, projectLocalSettings),
   ]);
+  const { projectDir: _projectDir, ...fixture } = base;
   return {
-    agentDir,
-    agentId,
+    ...fixture,
     baseUrl,
     factoryDir,
-    guardScriptPath,
-    homeDir,
-    hookScriptPath,
     legacyPath,
     localSettingsPath,
     projectLocalSettingsPath,
     projectSettingsPath,
-    rootDir,
     rootPath,
     settingsPath,
     workspaceDir,
     install(overrides = {}) {
       return runPlugin(this, 'install', installConfig(this, overrides));
-    },
-    async close() {
-      await rm(rootDir, { recursive: true, force: true });
     },
   };
 }
@@ -207,32 +154,4 @@ export async function assertNoTransactionFiles(fixture) {
   const names = await readdir(fixture.rootDir, { recursive: true });
   const leaked = names.filter((name) => /\.(tmp|rollback)$/.test(name));
   if (leaked.length > 0) throw new Error(`Leaked transaction files: ${leaked.join(', ')}`);
-}
-
-export async function startApiServer() {
-  const requests = [];
-  const server = http.createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const raw = Buffer.concat(chunks).toString('utf-8');
-    requests.push({ method: request.method, url: request.url, raw });
-    response.writeHead(request.method === 'POST' ? 201 : 200, {
-      'Content-Type': 'application/json',
-    });
-    response.end(request.method === 'POST'
-      ? '{"operation":{"accepted":true}}'
-      : '{"agent":{"status":"active"}}');
-  });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    requests,
-    close: () => new Promise((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
-    }),
-  };
 }

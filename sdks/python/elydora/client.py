@@ -2,45 +2,61 @@
 
 from __future__ import annotations
 
-import time
 import warnings
-from typing import Any, Dict, Optional, Union
+from urllib.parse import quote
+from typing import Any, Dict, List, Optional, Union
 
 import requests
 
+from ._client_common import (
+    DEFAULT_BASE_URL,
+    GENESIS_CHAIN_HASH,
+    REQUEST_TIMEOUT_SECONDS,
+    admin_events_params,
+    api_token_body,
+    build_eor,
+    build_headers,
+    error_from_response,
+    export_body,
+    register_body,
+    without_none,
+)
 from ._retry import require_max_retries
 from ._sync_http import request_with_retries
-from .crypto import compute_chain_hash, compute_payload_hash, sign_eor
-from .errors import ElydoraError
 from .integration_types import require_integration_type
 from .types import (
     AuditQueryResponse,
     AuthLoginResponse,
     AuthRegisterResponse,
     CreateExportResponse,
+    DeepHealthResponse,
     DeleteAgentResponse,
     EOR,
+    FreezeAgentResponse,
     GetAgentResponse,
     GetEpochResponse,
     GetExportResponse,
     GetMeResponse,
     GetOperationResponse,
     HealthResponse,
-    IssueTokenResponse,
+    IntegrationType,
+    IssueApiTokenResponse,
     JWKSResponse,
+    ListAdminEventsResponse,
     ListAgentsResponse,
     ListEpochsResponse,
     ListExportsResponse,
+    ListMembersResponse,
+    ListWebhooksResponse,
     RegisterAgentRequest,
     RegisterAgentResponse,
+    RegisterWebhookResponse,
+    RotateApiTokenResponse,
     SubmitOperationResponse,
+    UnfreezeAgentResponse,
+    UpdateAgentResponse,
     VerifyOperationResponse,
 )
-from .utils import generate_nonce, generate_uuidv7
-
-# The genesis chain hash: base64url encoding of 32 zero bytes.
-# Must match the backend's GENESIS_CHAIN_HASH constant exactly.
-GENESIS_CHAIN_HASH = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 
 class ElydoraClient:
@@ -52,8 +68,8 @@ class ElydoraClient:
         private_key: Base64url-encoded 32-byte Ed25519 private key seed.
         base_url: API base URL.
         ttl_ms: Time-to-live for operations in milliseconds.
-        max_retries: Maximum number of retries on transient failures.
-        token: Optional bearer token for authenticated endpoints.
+        max_retries: Retries after the initial attempt on transient failures.
+        token: Optional API token for authenticated endpoints.
     """
 
     def __init__(
@@ -62,7 +78,7 @@ class ElydoraClient:
         agent_id: str,
         private_key: str,
         *,
-        base_url: str = "https://api.elydora.com",
+        base_url: str = DEFAULT_BASE_URL,
         ttl_ms: int = 30000,
         max_retries: int = 3,
         token: Optional[str] = None,
@@ -74,28 +90,15 @@ class ElydoraClient:
         self.ttl_ms = ttl_ms
         self.max_retries = require_max_retries(max_retries)
         self.token = token
-
         self._prev_chain_hash = GENESIS_CHAIN_HASH
-        self._kid = ""
+        self._kid = agent_id + "-key-1"
         self._session = requests.Session()
 
     def set_kid(self, kid: str) -> None:
-        """Set the key ID used for signing operations."""
         self._kid = kid
 
     def set_prev_chain_hash(self, prev_chain_hash: str) -> None:
-        """Set the previous chain hash for the next operation."""
         self._prev_chain_hash = prev_chain_hash
-
-    # -----------------------------------------------------------------
-    # Internal HTTP helpers
-    # -----------------------------------------------------------------
-
-    def _headers(self) -> Dict[str, str]:
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        return headers
 
     def _request(
         self,
@@ -104,49 +107,46 @@ class ElydoraClient:
         *,
         json_body: Any = None,
         params: Optional[Dict[str, str]] = None,
-        headers: Optional[Dict[str, str]] = None,
     ) -> Any:
-        url = f"{self.base_url}{path}"
-        hdrs = headers or self._headers()
-
         return request_with_retries(
             self._session,
             method,
-            url,
+            f"{self.base_url}{path}",
             path=path,
             max_retries=self.max_retries,
             response_handler=self._handle_response,
             json_body=json_body,
             params=params,
-            headers=hdrs,
+            headers=build_headers(self.token),
         )
+
+    def _get_public(self, path: str, *, accept_status: Optional[int] = None) -> Any:
+        response = self._session.get(f"{self.base_url}{path}", timeout=REQUEST_TIMEOUT_SECONDS)
+        if accept_status is not None and response.status_code == accept_status:
+            return response.json()
+        return self._handle_response(response)
 
     @staticmethod
     def _handle_response(resp: requests.Response) -> Any:
         if resp.status_code >= 400:
             try:
                 body = resp.json()
-            except Exception:
-                raise ElydoraError(
-                    code="INTERNAL_ERROR",
-                    message=resp.text or "Unknown error",
-                    status_code=resp.status_code,
-                )
-            err = body.get("error", {})
-            raise ElydoraError(
-                code=err.get("code", "INTERNAL_ERROR"),
-                message=err.get("message", resp.text),
-                request_id=err.get("request_id", ""),
-                details=err.get("details"),
-                status_code=resp.status_code,
-            )
+            except ValueError:
+                body = None
+            raise error_from_response(resp.status_code, body, resp.text)
         if resp.status_code == 204:
             return None
         return resp.json()
 
-    # -----------------------------------------------------------------
-    # Auth (static methods)
-    # -----------------------------------------------------------------
+    @staticmethod
+    def _post_json(url: str, body: Dict[str, Any]) -> Any:
+        response = requests.post(
+            url,
+            json=body,
+            headers=build_headers(None),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        return ElydoraClient._handle_response(response)
 
     @staticmethod
     def register(
@@ -156,93 +156,73 @@ class ElydoraClient:
         display_name: Optional[str] = None,
         org_name: Optional[str] = None,
     ) -> AuthRegisterResponse:
-        """Register a new user and organization.
-
-        .. deprecated::
-            Use Better Auth endpoints directly. See docs.
-        """
+        """Deprecated password registration; Console users sign in through Better Auth."""
         warnings.warn(
-            "ElydoraClient.register() is deprecated. Use Better Auth endpoints directly. See docs.",
+            "ElydoraClient.register() is deprecated. Use Better Auth endpoints directly.",
             DeprecationWarning,
             stacklevel=2,
         )
         url = f"{base_url.rstrip('/')}/v1/auth/register"
-        body: Dict[str, Any] = {"email": email, "password": password}
-        if display_name is not None:
-            body["display_name"] = display_name
-        if org_name is not None:
-            body["org_name"] = org_name
-        resp = requests.post(url, json=body, headers={"Content-Type": "application/json"}, timeout=30)
-        return ElydoraClient._handle_response(resp)
+        return ElydoraClient._post_json(url, register_body(email, password, display_name, org_name))
 
     @staticmethod
     def login(base_url: str, email: str, password: str) -> AuthLoginResponse:
-        """Authenticate and receive a session token.
-
-        .. deprecated::
-            Use Better Auth endpoints directly. See docs.
-        """
+        """Deprecated password login; Console users sign in through Better Auth."""
         warnings.warn(
-            "ElydoraClient.login() is deprecated. Use Better Auth endpoints directly. See docs.",
+            "ElydoraClient.login() is deprecated. Use Better Auth endpoints directly.",
             DeprecationWarning,
             stacklevel=2,
         )
         url = f"{base_url.rstrip('/')}/v1/auth/login"
-        body = {"email": email, "password": password}
-        resp = requests.post(url, json=body, headers={"Content-Type": "application/json"}, timeout=30)
-        return ElydoraClient._handle_response(resp)
+        return ElydoraClient._post_json(url, {"email": email, "password": password})
 
     def get_me(self) -> GetMeResponse:
-        """Get the current user's profile."""
         return self._request("GET", "/v1/auth/me")
 
-    def issue_token(self, ttl_seconds: Optional[int] = None) -> IssueTokenResponse:
-        """Issue an API token with an optional TTL."""
-        body: Dict[str, Any] = {}
-        if ttl_seconds is not None:
-            body["ttl_seconds"] = ttl_seconds
-        return self._request("POST", "/v1/auth/token", json_body=body)
+    def issue_api_token(self, ttl_seconds: Optional[int] = None) -> IssueApiTokenResponse:
+        return self._request("POST", "/v1/auth/token", json_body=api_token_body(ttl_seconds))
 
-    # -----------------------------------------------------------------
-    # Agent management
-    # -----------------------------------------------------------------
+    def issue_token(self, ttl_seconds: Optional[int] = None) -> IssueApiTokenResponse:
+        """Deprecated alias for issue_api_token()."""
+        warnings.warn(
+            "ElydoraClient.issue_token() is deprecated. Use issue_api_token().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.issue_api_token(ttl_seconds=ttl_seconds)
+
+    def rotate_api_token(self) -> RotateApiTokenResponse:
+        return self._request("POST", "/v1/auth/rotate", json_body={})
 
     def register_agent(self, request: RegisterAgentRequest) -> RegisterAgentResponse:
-        """Register a new agent with the organization."""
         require_integration_type(request.get("integration_type"))
         return self._request("POST", "/v1/agents/register", json_body=request)
 
     def get_agent(self, agent_id: str) -> GetAgentResponse:
-        """Retrieve agent details and keys."""
-        return self._request("GET", f"/v1/agents/{agent_id}")
-
-    def freeze_agent(self, agent_id: str, reason: str) -> None:
-        """Freeze an agent."""
-        self._request("POST", f"/v1/agents/{agent_id}/freeze", json_body={"reason": reason})
+        return self._request("GET", f"/v1/agents/{quote(agent_id, safe='')}")
 
     def list_agents(self) -> ListAgentsResponse:
-        """List all agents for the organization."""
         return self._request("GET", "/v1/agents")
 
-    def unfreeze_agent(self, agent_id: str, reason: str) -> None:
-        """Unfreeze an agent."""
-        self._request("POST", f"/v1/agents/{agent_id}/unfreeze", json_body={"reason": reason})
+    def freeze_agent(self, agent_id: str, reason: str) -> FreezeAgentResponse:
+        return self._request("POST", f"/v1/agents/{quote(agent_id, safe='')}/freeze", json_body={"reason": reason})
 
-    def delete_agent(self, agent_id: str) -> DeleteAgentResponse:
-        """Delete an agent."""
-        return self._request("DELETE", f"/v1/agents/{agent_id}")
+    def unfreeze_agent(self, agent_id: str, reason: str) -> UnfreezeAgentResponse:
+        return self._request("POST", f"/v1/agents/{quote(agent_id, safe='')}/unfreeze", json_body={"reason": reason})
 
-    def revoke_key(self, agent_id: str, kid: str, reason: str) -> None:
-        """Revoke an agent's key."""
-        self._request(
-            "POST",
-            f"/v1/agents/{agent_id}/revoke",
-            json_body={"kid": kid, "reason": reason},
+    def update_agent(self, agent_id: str, integration_type: IntegrationType) -> UpdateAgentResponse:
+        require_integration_type(integration_type)
+        return self._request(
+            "PATCH", f"/v1/agents/{quote(agent_id, safe='')}", json_body={"integration_type": integration_type}
         )
 
-    # -----------------------------------------------------------------
-    # Operations (CORE)
-    # -----------------------------------------------------------------
+    def delete_agent(self, agent_id: str) -> DeleteAgentResponse:
+        return self._request("DELETE", f"/v1/agents/{quote(agent_id, safe='')}")
+
+    def revoke_key(self, agent_id: str, kid: str, reason: str) -> None:
+        self._request(
+            "POST", f"/v1/agents/{quote(agent_id, safe='')}/revoke", json_body={"kid": kid, "reason": reason}
+        )
 
     def create_operation(
         self,
@@ -251,60 +231,30 @@ class ElydoraClient:
         action: Dict[str, Any],
         payload: Union[Dict[str, Any], str, None] = None,
     ) -> EOR:
-        """Build and sign an Elydora Operation Record (EOR).
-
-        This does NOT submit the operation to the server. Call submit_operation()
-        with the returned EOR to submit it.
-        """
-        operation_id = generate_uuidv7()
-        issued_at = int(time.time() * 1000)
-        nonce = generate_nonce()
-        payload_hash = compute_payload_hash(payload)
-        chain_hash = compute_chain_hash(
-            self._prev_chain_hash, payload_hash, operation_id, issued_at
+        """Build and sign an EOR locally; submit it with submit_operation()."""
+        eor, chain_hash = build_eor(
+            org_id=self.org_id,
+            agent_id=self.agent_id,
+            private_key=self.private_key,
+            kid=self._kid,
+            ttl_ms=self.ttl_ms,
+            prev_chain_hash=self._prev_chain_hash,
+            operation_type=operation_type,
+            subject=subject,
+            action=action,
+            payload=payload,
         )
-
-        eor: Dict[str, Any] = {
-            "op_version": "1.0",
-            "operation_id": operation_id,
-            "org_id": self.org_id,
-            "agent_id": self.agent_id,
-            "issued_at": issued_at,
-            "ttl_ms": self.ttl_ms,
-            "nonce": nonce,
-            "operation_type": operation_type,
-            "subject": subject,
-            "action": action,
-            "payload": payload,
-            "payload_hash": payload_hash,
-            "prev_chain_hash": self._prev_chain_hash,
-            "agent_pubkey_kid": self._kid,
-            "signature": "",
-        }
-
-        # Sign the EOR (signature field excluded from canonical form)
-        eor["signature"] = sign_eor(eor, self.private_key)
-
-        # Update chain state
         self._prev_chain_hash = chain_hash
-
-        return eor  # type: ignore[return-value]
+        return eor
 
     def submit_operation(self, eor: EOR) -> SubmitOperationResponse:
-        """Submit a signed EOR to the server."""
         return self._request("POST", "/v1/operations", json_body=eor)
 
     def get_operation(self, operation_id: str) -> GetOperationResponse:
-        """Retrieve an operation by ID."""
         return self._request("GET", f"/v1/operations/{operation_id}")
 
     def verify_operation(self, operation_id: str) -> VerifyOperationResponse:
-        """Verify an operation's integrity."""
-        return self._request("POST", f"/v1/operations/{operation_id}/verify")
-
-    # -----------------------------------------------------------------
-    # Audit
-    # -----------------------------------------------------------------
+        return self._request("POST", f"/v1/operations/{operation_id}/verify", json_body={})
 
     def query_audit(
         self,
@@ -317,39 +267,22 @@ class ElydoraClient:
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> AuditQueryResponse:
-        """Query the tamper-evident audit log."""
-        body: Dict[str, Any] = {}
-        if org_id is not None:
-            body["org_id"] = org_id
-        if agent_id is not None:
-            body["agent_id"] = agent_id
-        if operation_type is not None:
-            body["operation_type"] = operation_type
-        if start_time is not None:
-            body["start_time"] = start_time
-        if end_time is not None:
-            body["end_time"] = end_time
-        if cursor is not None:
-            body["cursor"] = cursor
-        if limit is not None:
-            body["limit"] = limit
+        body = without_none({
+            "org_id": org_id,
+            "agent_id": agent_id,
+            "operation_type": operation_type,
+            "start_time": start_time,
+            "end_time": end_time,
+            "cursor": cursor,
+            "limit": limit,
+        })
         return self._request("POST", "/v1/audit/query", json_body=body)
 
-    # -----------------------------------------------------------------
-    # Epochs
-    # -----------------------------------------------------------------
-
     def list_epochs(self) -> ListEpochsResponse:
-        """List all epochs for the organization."""
         return self._request("GET", "/v1/epochs")
 
     def get_epoch(self, epoch_id: str) -> GetEpochResponse:
-        """Retrieve an epoch root record."""
         return self._request("GET", f"/v1/epochs/{epoch_id}")
-
-    # -----------------------------------------------------------------
-    # Exports
-    # -----------------------------------------------------------------
 
     def create_export(
         self,
@@ -359,50 +292,49 @@ class ElydoraClient:
         agent_id: Optional[str] = None,
         operation_type: Optional[str] = None,
     ) -> CreateExportResponse:
-        """Create a compliance export job."""
-        body: Dict[str, Any] = {
-            "start_time": start_time,
-            "end_time": end_time,
-            "format": format,
-        }
-        if agent_id is not None:
-            body["agent_id"] = agent_id
-        if operation_type is not None:
-            body["operation_type"] = operation_type
+        body = export_body(start_time, end_time, format, agent_id, operation_type)
         return self._request("POST", "/v1/exports", json_body=body)
 
     def list_exports(self) -> ListExportsResponse:
-        """List all exports for the organization."""
         return self._request("GET", "/v1/exports")
 
     def get_export(self, export_id: str) -> GetExportResponse:
-        """Retrieve export status and download URL."""
         return self._request("GET", f"/v1/exports/{export_id}")
 
     def download_export(self, export_id: str) -> bytes:
-        """Download an export file as raw bytes."""
-        url = f"{self.base_url}/v1/exports/{export_id}/download"
-        resp = self._session.get(url, headers=self._headers(), timeout=30)
-        if resp.status_code >= 400:
-            self._handle_response(resp)
-        return resp.content
+        response = self._session.get(
+            f"{self.base_url}/v1/exports/{export_id}/download",
+            headers=build_headers(self.token),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status_code >= 400:
+            self._handle_response(response)
+        return response.content
 
-    # -----------------------------------------------------------------
-    # JWKS
-    # -----------------------------------------------------------------
+    def list_webhooks(self) -> ListWebhooksResponse:
+        return self._request("GET", "/v1/webhooks")
+
+    def register_webhook(
+        self, endpoint_url: str, events: List[str], secret: str
+    ) -> RegisterWebhookResponse:
+        body = {"endpoint_url": endpoint_url, "events": events, "secret": secret}
+        return self._request("POST", "/v1/webhooks", json_body=body)
+
+    def delete_webhook(self, webhook_id: str) -> None:
+        self._request("DELETE", f"/v1/webhooks/{webhook_id}")
+
+    def list_members(self) -> ListMembersResponse:
+        return self._request("GET", "/v1/members")
+
+    def list_admin_events(self, limit: Optional[int] = None) -> ListAdminEventsResponse:
+        return self._request("GET", "/v1/admin/events", params=admin_events_params(limit))
 
     def get_jwks(self) -> JWKSResponse:
-        """Retrieve the platform JWKS (public, no auth required)."""
-        url = f"{self.base_url}/.well-known/elydora/jwks.json"
-        resp = self._session.get(url, timeout=30)
-        return self._handle_response(resp)
-
-    # -----------------------------------------------------------------
-    # Health
-    # -----------------------------------------------------------------
+        return self._get_public("/.well-known/elydora/jwks.json")
 
     def health(self) -> HealthResponse:
-        """Check API health (public, no auth required)."""
-        url = f"{self.base_url}/v1/health"
-        resp = self._session.get(url, timeout=30)
-        return self._handle_response(resp)
+        return self._get_public("/v1/health")
+
+    def deep_health(self) -> DeepHealthResponse:
+        """503 carries the degraded report, not an error."""
+        return self._get_public("/v1/health/deep", accept_status=503)

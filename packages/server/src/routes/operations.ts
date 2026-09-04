@@ -1,6 +1,4 @@
-/**
- * Operation routes — submit, retrieve, and verify signed operation records.
- */
+/** Operation routes: submit, retrieve, and verify signed operation records. */
 
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';
@@ -13,7 +11,7 @@ import * as operationService from '../services/operation-service.js';
 const operations = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 // ---------------------------------------------------------------------------
-// POST /v1/operations — Submit a signed EOR
+// POST /v1/operations: Submit a signed EOR
 // ---------------------------------------------------------------------------
 // Operation submission uses the EOR's embedded signature for authentication
 // rather than a Bearer token. The agent authenticates via its Ed25519 signature.
@@ -47,7 +45,7 @@ operations.post(
 );
 
 // ---------------------------------------------------------------------------
-// GET /v1/operations/:operation_id — Retrieve an operation
+// GET /v1/operations/:operation_id: Retrieve an operation
 // ---------------------------------------------------------------------------
 operations.get(
   '/:operation_id',
@@ -65,7 +63,7 @@ operations.get(
 );
 
 // ---------------------------------------------------------------------------
-// POST /v1/operations/:operation_id/verify — Verify operation integrity
+// POST /v1/operations/:operation_id/verify: Verify operation integrity
 // ---------------------------------------------------------------------------
 operations.post(
   '/:operation_id/verify',

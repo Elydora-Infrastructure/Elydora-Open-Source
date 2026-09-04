@@ -17,15 +17,6 @@ type jsoncEditor struct {
 	label  string
 }
 
-func standardizeJSONC(source []byte, label string, allowTrailingCommas bool) ([]byte, error) {
-	value, err := parseJSONC(source, label, allowTrailingCommas)
-	if err != nil {
-		return nil, err
-	}
-	value.Standardize()
-	return value.Pack(), nil
-}
-
 func parseJSONC(source []byte, label string, allowTrailingCommas bool) (hujson.Value, error) {
 	value, err := hujson.Parse(source)
 	if err != nil {
@@ -95,6 +86,16 @@ func rejectDuplicateJSONCKeys(value *hujson.Value, label, location string) error
 		}
 	}
 	return nil
+}
+
+func decodeStrictJSONObject(source []byte, label string) (map[string]any, error) {
+	if !json.Valid(source) {
+		var value any
+		if err := json.Unmarshal(source, &value); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", label, err)
+		}
+	}
+	return decodeJSONCObject(source, label, false)
 }
 
 func decodeJSONCObject(source []byte, label string, allowTrailingCommas bool) (map[string]any, error) {
@@ -291,4 +292,12 @@ func jsonPointer(path []any) string {
 		}
 	}
 	return pointer.String()
+}
+
+func cloneJSONObject(value map[string]any) map[string]any {
+	clone := make(map[string]any, len(value))
+	for key, item := range value {
+		clone[key] = item
+	}
+	return clone
 }

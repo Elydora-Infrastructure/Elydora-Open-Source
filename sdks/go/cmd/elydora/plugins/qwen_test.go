@@ -153,7 +153,7 @@ func legacyQwenGroupForTest(
 		"matcher": "*",
 		"hooks": []any{map[string]any{
 			"type":    "command",
-			"command": buildQwenCommand(nodePath, scriptPath),
+			"command": buildShellCommand(nodePath, scriptPath),
 			"shell":   qwenExpectedShell(),
 			"timeout": qwenHookTimeout,
 		}},

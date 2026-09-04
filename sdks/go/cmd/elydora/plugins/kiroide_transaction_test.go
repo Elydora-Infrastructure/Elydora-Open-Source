@@ -20,7 +20,7 @@ func TestKiroIdeRollbackRestoresRuntimeWorkspaceAndLegacySources(t *testing.T) {
 		legacyKiroIdeGoDocument(fixture, kiroIdeTestAgentID),
 	)
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameKiroIdePath(source, fixture.legacyPath) &&
+		if sameManagedPath(source, fixture.legacyPath) &&
 			strings.HasSuffix(destination, ".rollback") {
 			return errors.New("injected Kiro IDE legacy cleanup failure")
 		}
@@ -320,7 +320,7 @@ func TestKiroIdeInstallSurvivesAdversarialWorkspaceLinkSwap(t *testing.T) {
 	}
 	swapped := false
 	fixture.plugin.rename = func(source, destination string) error {
-		if !swapped && sameKiroIdePath(destination, fixture.configPath) &&
+		if !swapped && sameManagedPath(destination, fixture.configPath) &&
 			strings.HasSuffix(source, ".tmp") {
 			swapped = true
 			backup := kiroDirectory + ".original"

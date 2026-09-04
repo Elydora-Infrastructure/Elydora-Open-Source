@@ -1,10 +1,4 @@
-/**
- * Audit service — business logic for querying the tamper-evident audit log.
- *
- * Builds dynamic SQL queries with optional filters (org_id, agent_id,
- * operation_type, time range) and supports cursor-based pagination for
- * efficient traversal of large result sets.
- */
+/** Audit service: business logic for querying the tamper-evident audit log. */
 
 import type { Operation, AuditQueryRequest, AuditQueryResponse } from '../shared/index.js';
 import { DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT } from '../shared/index.js';

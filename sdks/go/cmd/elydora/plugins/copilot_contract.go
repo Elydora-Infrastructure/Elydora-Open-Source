@@ -5,19 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 )
 
 const (
-	copilotAgentKey        = "copilot"
-	copilotGuardScript     = "guard.js"
-	copilotAuditScript     = "hook.js"
-	copilotConfigFile      = "elydora-audit.json"
-	copilotHookTimeout     = float64(10)
-	copilotLegacyTimeout   = float64(5)
-	copilotPOSIXApostrophe = `'"'"'`
+	copilotAgentKey      = "copilot"
+	copilotGuardScript   = "guard.js"
+	copilotAuditScript   = "hook.js"
+	copilotConfigFile    = "elydora-audit.json"
+	copilotHookTimeout   = float64(10)
+	copilotLegacyTimeout = float64(5)
 )
 
 var copilotManagedEvents = []struct {
@@ -61,23 +59,19 @@ type copilotRenderedDocument struct {
 	remove   bool
 }
 
-type copilotRuntimeContract struct {
-	agentID   string
-	guardPath string
-	auditPath string
-}
+type copilotRuntimeContract = managedRuntimeContract
 
-type copilotManagedEntry struct {
-	agentID    string
-	scriptPath string
-}
+type copilotManagedEntry = managedScriptReference
 
-func cloneCopilotObject(value map[string]any) map[string]any {
-	clone := make(map[string]any, len(value))
-	for key, item := range value {
-		clone[key] = item
+func copilotManagedEntryForHandler(
+	handler map[string]any,
+	scriptName string,
+) (*copilotManagedEntry, error) {
+	scriptPath, managed := copilotManagedScriptPath(handler)
+	if !managed {
+		return nil, nil
 	}
-	return clone
+	return resolveManagedScript(scriptPath, scriptName)
 }
 
 func cloneCopilotHooks(source copilotHooks) copilotHooks {
@@ -90,107 +84,13 @@ func cloneCopilotHooks(source copilotHooks) copilotHooks {
 	return clone
 }
 
-func sameCopilotPath(left, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if absolute, err := filepath.Abs(left); err == nil {
-		left = absolute
-	}
-	if absolute, err := filepath.Abs(right); err == nil {
-		right = absolute
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameCopilotAgentID(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func sameCopilotFileName(left, right string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
-func quoteCopilotPowerShell(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-}
-
 func buildCopilotHandler(nodePath, scriptPath string) map[string]any {
 	return map[string]any{
 		"type":       "command",
-		"bash":       quotePOSIXArgument(nodePath) + " " + quotePOSIXArgument(scriptPath),
-		"powershell": "& " + quoteCopilotPowerShell(nodePath) + " " + quoteCopilotPowerShell(scriptPath) + "; exit $LASTEXITCODE",
+		"bash":       posixSource(nodePath, scriptPath),
+		"powershell": powerShellSource(nodePath, scriptPath),
 		"timeoutSec": copilotHookTimeout,
 	}
-}
-
-func readCopilotPOSIXArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '\'' {
-		return "", start, false
-	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); {
-		if strings.HasPrefix(command[index:], copilotPOSIXApostrophe) {
-			value.WriteByte('\'')
-			index += len(copilotPOSIXApostrophe)
-			continue
-		}
-		if command[index] == '\'' {
-			return value.String(), index + 1, true
-		}
-		value.WriteByte(command[index])
-		index++
-	}
-	return "", start, false
-}
-
-func readCopilotPowerShellArgument(command string, start int) (string, int, bool) {
-	if start >= len(command) || command[start] != '\'' {
-		return "", start, false
-	}
-	var value strings.Builder
-	for index := start + 1; index < len(command); index++ {
-		if command[index] != '\'' {
-			value.WriteByte(command[index])
-			continue
-		}
-		if index+1 < len(command) && command[index+1] == '\'' {
-			value.WriteByte('\'')
-			index++
-			continue
-		}
-		return value.String(), index + 1, true
-	}
-	return "", start, false
-}
-
-func parseCopilotBash(command string) (string, string, bool) {
-	executable, next, ok := readCopilotPOSIXArgument(command, 0)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := readCopilotPOSIXArgument(command, next+1)
-	return executable, script, ok && end == len(command)
-}
-
-func parseCopilotPowerShell(command string) (string, string, bool) {
-	if !strings.HasPrefix(command, "& ") {
-		return "", "", false
-	}
-	executable, next, ok := readCopilotPowerShellArgument(command, 2)
-	if !ok || next >= len(command) || command[next] != ' ' {
-		return "", "", false
-	}
-	script, end, ok := readCopilotPowerShellArgument(command, next+1)
-	return executable, script, ok && command[end:] == "; exit $LASTEXITCODE"
 }
 
 func parseCopilotLegacyCommand(command string) (string, bool) {
@@ -211,11 +111,6 @@ func parseCopilotLegacyCommand(command string) (string, bool) {
 	return script, script != ""
 }
 
-func isCopilotNodeExecutable(path string) bool {
-	name := filepath.Base(path)
-	return name == "node" || strings.EqualFold(name, "node.exe")
-}
-
 func copilotManagedScriptPath(handler map[string]any) (string, bool) {
 	if len(handler) != 4 || handler["type"] != "command" {
 		return "", false
@@ -226,11 +121,11 @@ func copilotManagedScriptPath(handler map[string]any) (string, bool) {
 		return "", false
 	}
 	if handler["timeoutSec"] == copilotHookTimeout {
-		bashNode, bashScript, bashParsed := parseCopilotBash(bash)
-		psNode, psScript, psParsed := parseCopilotPowerShell(powershell)
+		bashNode, bashScript, bashParsed := parsePOSIXCommand(bash)
+		psNode, psScript, psParsed := parsePowerShellSource(powershell)
 		if bashParsed && psParsed && filepath.IsAbs(bashNode) && filepath.IsAbs(bashScript) &&
-			isCopilotNodeExecutable(bashNode) && sameCopilotPath(bashNode, psNode) &&
-			sameCopilotPath(bashScript, psScript) {
+			isNodeExecutable(bashNode) && sameManagedPath(bashNode, psNode) &&
+			sameManagedPath(bashScript, psScript) {
 			return bashScript, true
 		}
 	}
@@ -238,30 +133,6 @@ func copilotManagedScriptPath(handler map[string]any) (string, bool) {
 		return "", false
 	}
 	return parseCopilotLegacyCommand(bash)
-}
-
-func copilotManagedEntryForHandler(
-	handler map[string]any,
-	scriptName string,
-) (*copilotManagedEntry, error) {
-	scriptPath, managed := copilotManagedScriptPath(handler)
-	if !managed || !filepath.IsAbs(scriptPath) ||
-		!sameCopilotFileName(filepath.Base(scriptPath), scriptName) {
-		return nil, nil
-	}
-	runtimeRoot, err := AgentRuntimeRoot()
-	if err != nil {
-		return nil, err
-	}
-	agentDirectory := filepath.Dir(scriptPath)
-	if !sameCopilotPath(filepath.Dir(agentDirectory), runtimeRoot) {
-		return nil, nil
-	}
-	agentID := filepath.Base(agentDirectory)
-	if agentID == "" || agentID == "." || agentID == ".." {
-		return nil, nil
-	}
-	return &copilotManagedEntry{agentID: agentID, scriptPath: scriptPath}, nil
 }
 
 func removeManagedCopilotHooks(
@@ -277,7 +148,7 @@ func removeManagedCopilotHooks(
 				return nil, err
 			}
 			remove := entry != nil &&
-				(agentID == "" || sameCopilotAgentID(entry.agentID, agentID))
+				(agentID == "" || sameManagedAgentID(entry.agentID, agentID))
 			if !remove {
 				kept = append(kept, handler)
 			}
@@ -361,7 +232,7 @@ func renderCopilotDocument(
 			document: document, changed: true, remove: true,
 		}, nil
 	}
-	root := cloneCopilotObject(document.root)
+	root := cloneJSONObject(document.root)
 	root["version"] = float64(1)
 	if len(hooks) == 0 {
 		delete(root, "hooks")
@@ -387,13 +258,6 @@ func renderCopilotDocument(
 	}, nil
 }
 
-func copilotEntryKey(agentID string) string {
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(agentID)
-	}
-	return agentID
-}
-
 func copilotManagedEntries(
 	handlers []map[string]any,
 	scriptName string,
@@ -405,7 +269,7 @@ func copilotManagedEntries(
 			return nil, err
 		}
 		if entry != nil {
-			key := copilotEntryKey(entry.agentID)
+			key := managedReferenceKey(entry.agentID)
 			result[key] = append(result[key], *entry)
 		}
 	}
@@ -438,7 +302,7 @@ func copilotRuntimeContracts(hooks copilotHooks) ([]copilotRuntimeContract, erro
 		success := successes[key]
 		failure := failures[key]
 		if len(guard) != 1 || len(success) != 1 || len(failure) != 1 ||
-			!sameCopilotPath(success[0].scriptPath, failure[0].scriptPath) {
+			!sameManagedPath(success[0].scriptPath, failure[0].scriptPath) {
 			continue
 		}
 		contracts = append(contracts, copilotRuntimeContract{

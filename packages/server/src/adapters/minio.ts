@@ -1,10 +1,4 @@
-/**
- * MinIO / S3-compatible object storage adapter implementing the ObjectStore interface.
- *
- * Uses the AWS SDK v3 S3 client configured with a custom endpoint for MinIO.
- * Responses are buffered in memory so that both streaming (body) and random
- * access (json/text) are available on the returned ObjectStoreObject.
- */
+/** MinIO / S3-compatible object storage adapter implementing the ObjectStore interface. */
 
 import {
   S3Client,
@@ -64,7 +58,7 @@ export class MinioAdapter implements ObjectStore {
     } else if (body instanceof Uint8Array) {
       bodyData = body;
     } else {
-      // Web ReadableStream — collect into buffer
+      // Web ReadableStream: collect into buffer
       const chunks: Uint8Array[] = [];
       const reader = body.getReader();
       for (;;) {

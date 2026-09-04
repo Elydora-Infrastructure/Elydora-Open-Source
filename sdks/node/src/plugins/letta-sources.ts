@@ -9,13 +9,12 @@ import {
   type LettaDocument,
   type LettaDocumentKind,
 } from './letta-config.js';
+import { hasCode, MAX_SOURCE_BYTES, pathKey, samePath } from './common.js';
 import {
   inspectPhysicalDirectory,
   readPhysicalFile,
   type FileSnapshot,
 } from './managed-files.js';
-
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 export interface LettaSourcePrecondition {
   readonly filePath: string;
@@ -37,15 +36,6 @@ export interface LettaSources {
   readonly projectActive: boolean;
   readonly disableControl: LettaDisableControl;
   readonly preconditions: readonly LettaSourcePrecondition[];
-}
-
-function comparisonPath(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-}
-
-function hasCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 async function canonicalPath(filePath: string): Promise<string> {
@@ -93,7 +83,7 @@ function deduplicatePreconditions(
 ): LettaSourcePrecondition[] {
   const result = new Map<string, LettaSourcePrecondition>();
   for (const value of values) {
-    const key = comparisonPath(value.filePath);
+    const key = pathKey(value.filePath);
     if (!result.has(key)) result.set(key, value);
   }
   return [...result.values()];
@@ -123,7 +113,7 @@ export async function readLettaSources(): Promise<LettaSources> {
   const projectDirectory = path.join(workspace, '.letta');
   await inspectPhysicalDirectory(homeDirectory, 'Letta Code home directory');
   await inspectPhysicalDirectory(globalDirectory, 'Letta Code global configuration directory');
-  if (comparisonPath(projectDirectory) !== comparisonPath(globalDirectory)) {
+  if (!samePath(projectDirectory, globalDirectory)) {
     await inspectPhysicalDirectory(projectDirectory, 'Letta Code project configuration directory');
   }
   const globalPath = path.join(globalDirectory, 'settings.json');
@@ -133,7 +123,7 @@ export async function readLettaSources(): Promise<LettaSources> {
     canonicalPath(workspace),
     canonicalPath(homeDirectory),
   ]);
-  const projectActive = comparisonPath(canonicalWorkspace) !== comparisonPath(canonicalHome);
+  const projectActive = !samePath(canonicalWorkspace, canonicalHome);
   const global = await readDocument('global', globalPath);
   const project = projectActive
     ? await readDocument('project', projectPath)

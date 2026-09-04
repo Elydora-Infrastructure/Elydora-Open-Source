@@ -249,7 +249,7 @@ func TestCodexInstallRollsBackAllFilesOnHooksCommitFailure(t *testing.T) {
 	source := []byte(`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"keep"}]}]}}`)
 	fixture := prepareCodexFixture(t, string(source))
 	fixture.plugin.rename = func(source, destination string) error {
-		if sameCodexPath(destination, fixture.configPath) {
+		if sameManagedPath(destination, fixture.configPath) {
 			return errors.New("injected Codex hooks commit failure")
 		}
 		return os.Rename(source, destination)

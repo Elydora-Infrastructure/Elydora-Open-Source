@@ -1,6 +1,4 @@
-/**
- * Epoch routes — retrieve epoch root records with optional TSA anchors.
- */
+/** Epoch routes: retrieve epoch root records with optional TSA anchors. */
 
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';
@@ -14,7 +12,7 @@ const epochs = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 epochs.use('/*', authMiddleware);
 
 // ---------------------------------------------------------------------------
-// GET /v1/epochs — List all epochs for the organization
+// GET /v1/epochs: List all epochs for the organization
 // ---------------------------------------------------------------------------
 epochs.get('/', requireRole('readonly_investigator'), async (c) => {
   const orgId = c.get('org_id');
@@ -24,7 +22,7 @@ epochs.get('/', requireRole('readonly_investigator'), async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /v1/epochs/:epoch_id — Retrieve an epoch root
+// GET /v1/epochs/:epoch_id: Retrieve an epoch root
 // ---------------------------------------------------------------------------
 epochs.get(
   '/:epoch_id',

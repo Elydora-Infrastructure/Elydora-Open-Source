@@ -2,18 +2,17 @@ import os from 'node:os';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { parse as parseDotenv } from 'dotenv';
+import { MAX_SOURCE_BYTES, pathKey, samePath } from './common.js';
 import {
   createQwenDocument,
   parseQwenDocument,
-  parseQwenJsoncObject,
   qwenDocumentLabel,
   qwenSourceLabel,
   type QwenDocument,
   type QwenDocumentKind,
 } from './qwen-config.js';
 import { readPhysicalFile, type FileSnapshot } from './managed-files.js';
-
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
+import { parseCommentedJsonObject } from './strict-json.js';
 const HOME_ENV_KEYS = ['QWEN_HOME', 'QWEN_RUNTIME_DIR'] as const;
 
 export interface QwenSourcePrecondition {
@@ -94,7 +93,7 @@ async function resolveQwenRouting(): Promise<RoutingResult> {
 
   const readCandidate = async (filePath: string): Promise<void> => {
     const resolved = path.resolve(filePath);
-    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    const key = pathKey(resolved);
     if (visited.has(key)) return;
     visited.add(key);
     const snapshot = await readPhysicalFile(resolved, 'Qwen Code home environment');
@@ -172,13 +171,8 @@ async function canonicalPath(filePath: string): Promise<string> {
   }
 }
 
-function comparisonPath(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-}
-
 function isWithin(child: string, parent: string): boolean {
-  const relative = path.relative(comparisonPath(parent), comparisonPath(child));
+  const relative = path.relative(pathKey(parent), pathKey(child));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
@@ -202,7 +196,7 @@ async function workspaceTrust(
     original: snapshot,
   };
   if (!snapshot) return { trusted: true, precondition };
-  const rules = parseQwenJsoncObject(snapshot.contents, `Qwen Code trusted folders at ${filePath}`);
+  const rules = parseCommentedJsonObject(snapshot.contents, `Qwen Code trusted folders at ${filePath}`);
   for (const [rulePath, level] of Object.entries(rules)) {
     if (!['TRUST_FOLDER', 'TRUST_PARENT', 'DO_NOT_TRUST'].includes(String(level))) {
       throw new Error(`Qwen Code trusted folders has invalid trust level for "${rulePath}"`);
@@ -217,7 +211,7 @@ async function workspaceTrust(
   }
   for (const [rulePath, level] of Object.entries(rules)) {
     if (level === 'DO_NOT_TRUST'
-      && comparisonPath(workspace) === comparisonPath(await canonicalPath(rulePath))) {
+      && samePath(workspace, await canonicalPath(rulePath))) {
       return { trusted: false, precondition };
     }
   }
@@ -256,7 +250,7 @@ function deduplicatePreconditions(
 ): QwenSourcePrecondition[] {
   const result = new Map<string, QwenSourcePrecondition>();
   for (const value of values) {
-    const key = comparisonPath(value.filePath);
+    const key = pathKey(value.filePath);
     if (!result.has(key)) result.set(key, value);
   }
   return [...result.values()];
@@ -276,7 +270,7 @@ export async function readQwenSources(): Promise<QwenSources> {
     canonicalPath(process.cwd()),
     canonicalPath(os.homedir()),
   ]);
-  const workspaceActive = comparisonPath(canonicalWorkspace) !== comparisonPath(canonicalHome);
+  const workspaceActive = !samePath(canonicalWorkspace, canonicalHome);
   const workspace = workspaceActive
     ? await readDocument('workspace', workspacePath)
     : createQwenDocument('workspace', workspacePath);

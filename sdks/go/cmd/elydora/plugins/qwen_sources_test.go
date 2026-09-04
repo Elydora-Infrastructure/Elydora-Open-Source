@@ -101,12 +101,12 @@ func TestQwenRoutingReadsDiscoveredHomeEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve Qwen routing: %v", err)
 	}
-	if !sameQwenPath(routing.qwenHome, discovered) {
+	if !sameManagedPath(routing.qwenHome, discovered) {
 		t.Fatalf("Qwen home = %s", routing.qwenHome)
 	}
 	found := false
 	for _, condition := range routing.preconditions {
-		found = found || sameQwenPath(condition.filePath, discoveredEnv)
+		found = found || sameManagedPath(condition.filePath, discoveredEnv)
 	}
 	if !found {
 		t.Fatalf("discovered environment is absent from preconditions: %#v", routing.preconditions)
@@ -127,7 +127,7 @@ func TestQwenRoutingSkipsDotenvWhenBothEnvironmentValuesExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve Qwen routing: %v", err)
 	}
-	if !sameQwenPath(routing.qwenHome, explicit) || len(routing.preconditions) != 0 {
+	if !sameManagedPath(routing.qwenHome, explicit) || len(routing.preconditions) != 0 {
 		t.Fatalf("routing = %#v", routing)
 	}
 }

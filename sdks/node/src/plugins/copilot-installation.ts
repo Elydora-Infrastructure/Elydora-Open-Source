@@ -6,8 +6,8 @@ import {
   GUARD_SCRIPT,
   type CopilotSources,
   type RenderedDocument,
-  samePath,
 } from './copilot-contract.js';
+import { MAX_SOURCE_BYTES, samePath } from './common.js';
 import { requireHooksEnabled } from './copilot-io.js';
 import {
   commitManagedInstallation,
@@ -26,11 +26,6 @@ import {
 const DISPLAY_NAME = 'GitHub Copilot CLI';
 const DIRECTORY_LABEL = 'GitHub Copilot hooks directory';
 const SOURCE_LABEL = 'GitHub Copilot hook source';
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
-
-export type CopilotRuntimePaths = ManagedRuntimePaths;
-export type PreparedCopilotInstallation = PreparedManagedInstallation;
-export type { RenameFile };
 
 function hookLocations(sources: CopilotSources) {
   return [sources.user, ...(sources.legacy ? [sources.legacy] : [])].map((document) => ({
@@ -42,7 +37,7 @@ function hookLocations(sources: CopilotSources) {
 export async function preflightCopilotInstallation(
   config: InstallConfig,
   sources: CopilotSources,
-): Promise<CopilotRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   requireHooksEnabled(sources);
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
@@ -63,7 +58,7 @@ export async function prepareCopilotInstallation(
   config: InstallConfig,
   sources: CopilotSources,
   rendered: readonly RenderedDocument[],
-): Promise<PreparedCopilotInstallation> {
+): Promise<PreparedManagedInstallation> {
   await preflightCopilotInstallation(config, sources);
   const documents = installationDocuments(sources, rendered);
   const prepared = await prepareManagedInstallation({
@@ -107,7 +102,7 @@ export async function prepareCopilotInstallation(
 }
 
 export async function commitCopilotInstallation(
-  prepared: PreparedCopilotInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

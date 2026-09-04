@@ -1,10 +1,9 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { hasCode, MAX_SOURCE_BYTES } from './common.js';
 import { inspectPhysicalDirectory, readPhysicalFile, type FileSnapshot } from './managed-files.js';
 import { parseStrictJsoncObject, type JsonObject } from './strict-json.js';
-
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 interface PolicyLocation {
   readonly filePath: string;
@@ -35,10 +34,6 @@ export interface DroidPolicyState {
   readonly hooksDisabled?: boolean;
   readonly hooksDisabledBy?: DroidPolicyOrigin;
   readonly preconditions: readonly DroidPolicyPrecondition[];
-}
-
-function hasCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 function optionalBoolean(root: JsonObject, field: string, label: string): boolean | undefined {

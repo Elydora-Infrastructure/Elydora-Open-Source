@@ -1,5 +1,14 @@
 import os from 'node:os';
 import path from 'node:path';
+import { sameAgentId, samePath } from './common.js';
+import {
+  encodedWindowsCommand,
+  isNodeExecutable,
+  parseEncodedWindowsCommand,
+  parseLegacyWindowsCommand,
+  parsePosixCommand,
+  posixSource,
+} from './shell-command.js';
 import { isObject, parseStrictJsonObject, type JsonObject } from './strict-json.js';
 
 export const AGENT_KEY = 'codex';
@@ -33,140 +42,14 @@ export interface RuntimeContract {
   readonly auditPath: string;
 }
 
-interface ParsedArgument {
-  readonly value: string;
-  readonly next: number;
-}
-
-function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-function sameAgentId(left: string, right: string): boolean {
-  return process.platform === 'win32'
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right;
-}
-
-function quotePosix(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-function quotePowerShell(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-function windowsPowerShellPath(): string {
-  const configuredRoot = process.platform === 'win32' ? process.env.SystemRoot : undefined;
-  const systemRoot = configuredRoot
-    && path.win32.isAbsolute(configuredRoot)
-    && !/["%\r\n]/.test(configuredRoot)
-    ? configuredRoot
-    : 'C:\\Windows';
-  return path.win32.join(
-    systemRoot,
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe',
-  );
-}
-
-function windowsCommand(scriptPath: string): string {
-  const source = `& ${quotePowerShell(process.execPath)} ${quotePowerShell(scriptPath)}; exit $LASTEXITCODE`;
-  const encoded = Buffer.from(source, 'utf16le').toString('base64');
-  return `"${windowsPowerShellPath()}" -NoLogo -NoProfile -NonInteractive -EncodedCommand ${encoded}`;
-}
-
 export function buildHandler(scriptPath: string, statusMessage: string): JsonObject {
   return {
     type: 'command',
-    command: `${quotePosix(process.execPath)} ${quotePosix(scriptPath)}`,
-    commandWindows: windowsCommand(scriptPath),
+    command: posixSource(scriptPath),
+    commandWindows: encodedWindowsCommand(scriptPath),
     timeout: HOOK_TIMEOUT_SECONDS,
     statusMessage,
   };
-}
-
-function readPosixArgument(command: string, start: number): ParsedArgument | undefined {
-  if (command[start] !== "'") return undefined;
-  const apostrophe = `'"'"'`;
-  let value = '';
-  for (let index = start + 1; index < command.length;) {
-    if (command.startsWith(apostrophe, index)) {
-      value += "'";
-      index += apostrophe.length;
-      continue;
-    }
-    if (command[index] === "'") return { value, next: index + 1 };
-    value += command[index];
-    index += 1;
-  }
-  return undefined;
-}
-
-function parsePosixCommand(command: unknown): readonly [string, string] | undefined {
-  if (typeof command !== 'string') return undefined;
-  const executable = readPosixArgument(command, 0);
-  if (!executable || command[executable.next] !== ' ') return undefined;
-  const script = readPosixArgument(command, executable.next + 1);
-  if (!script || script.next !== command.length) return undefined;
-  return [executable.value, script.value];
-}
-
-function readPowerShellArgument(command: string, start: number): ParsedArgument | undefined {
-  if (command[start] !== "'") return undefined;
-  let value = '';
-  for (let index = start + 1; index < command.length; index += 1) {
-    if (command[index] !== "'") {
-      value += command[index];
-      continue;
-    }
-    if (command[index + 1] === "'") {
-      value += "'";
-      index += 1;
-      continue;
-    }
-    return { value, next: index + 1 };
-  }
-  return undefined;
-}
-
-function parsePowerShellSource(source: string): readonly [string, string] | undefined {
-  if (!source.startsWith('& ')) return undefined;
-  const executable = readPowerShellArgument(source, 2);
-  if (!executable || source[executable.next] !== ' ') return undefined;
-  const script = readPowerShellArgument(source, executable.next + 1);
-  if (!script || source.slice(script.next) !== '; exit $LASTEXITCODE') return undefined;
-  return [executable.value, script.value];
-}
-
-function parseWindowsCommand(command: unknown): readonly [string, string] | undefined {
-  if (typeof command !== 'string') return undefined;
-  const match = /^"([^"\r\n]+)" -NoLogo -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/]+={0,2})$/.exec(command);
-  if (!match
-    || !path.win32.isAbsolute(match[1])
-    || path.win32.basename(match[1]).toLowerCase() !== 'powershell.exe') return undefined;
-  const encoded = match[2];
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return undefined;
-  const buffer = Buffer.from(encoded, 'base64');
-  if (buffer.toString('base64') !== encoded || buffer.length % 2 !== 0) return undefined;
-  return parsePowerShellSource(buffer.toString('utf16le'));
-}
-
-function parseLegacyWindowsCommand(command: unknown): readonly [string, string] | undefined {
-  if (typeof command !== 'string') return undefined;
-  const match = /^"([^"\r\n]+)" "([^"\r\n]+)"$/.exec(command);
-  return match ? [match[1], match[2]] : undefined;
-}
-
-function isNodeExecutable(filePath: string): boolean {
-  const basename = path.basename(filePath);
-  return basename === 'node' || basename.toLowerCase() === 'node.exe';
 }
 
 function exactHandlerKeys(handler: JsonObject): boolean {
@@ -179,8 +62,11 @@ function managedScriptPath(handler: JsonObject, statusMessage: string): string |
     || handler.type !== 'command'
     || handler.timeout !== HOOK_TIMEOUT_SECONDS
     || handler.statusMessage !== statusMessage) return undefined;
+  if (typeof handler.command !== 'string' || typeof handler.commandWindows !== 'string') {
+    return undefined;
+  }
   const posix = parsePosixCommand(handler.command);
-  const windows = parseWindowsCommand(handler.commandWindows)
+  const windows = parseEncodedWindowsCommand(handler.commandWindows)
     ?? parseLegacyWindowsCommand(handler.commandWindows);
   if (!posix || !windows
     || !path.isAbsolute(posix[0])

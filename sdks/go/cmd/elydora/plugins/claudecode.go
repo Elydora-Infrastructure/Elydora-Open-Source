@@ -10,8 +10,7 @@ type ClaudeCodePlugin struct {
 	rename renameFunc
 }
 
-// ManagesGuardRuntime reports that Claude Code commits its provider guard with
-// the audit runtime and user settings document.
+// ManagesGuardRuntime reports that the guard is committed with the audit runtime.
 func (p *ClaudeCodePlugin) ManagesGuardRuntime() bool {
 	return true
 }
@@ -73,13 +72,14 @@ func (p *ClaudeCodePlugin) Install(config InstallConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := writeClaudeChanges(
+	if err := writeManagedChanges(
 		changes,
 		"Install Claude Code hooks",
 		p.rename,
 		paths.runtimeRoot,
 		paths.agentDirectory,
 		filepath.Dir(document.filePath),
+		"Claude Code configuration directory",
 	); err != nil {
 		return err
 	}
@@ -105,13 +105,14 @@ func (p *ClaudeCodePlugin) Uninstall(agentID string) error {
 	if err != nil {
 		return err
 	}
-	return writeClaudeChanges(
+	return writeManagedChanges(
 		[]*fileChange{change},
 		"Uninstall Claude Code hooks",
 		p.rename,
 		"",
 		"",
 		filepath.Dir(document.filePath),
+		"Claude Code configuration directory",
 	)
 }
 

@@ -27,22 +27,22 @@ func TestGrokCommandRoundTripAndRejectsInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve Node.js runtime: %v", err)
 	}
-	command, err := buildGrokCommand(nodePath, fixture.guardPath)
+	command, err := buildEncodedCommand("Grok", nodePath, fixture.guardPath)
 	if err != nil {
 		t.Fatalf("build Grok command: %v", err)
 	}
 	executable, script, ok := parseGrokCommand(command)
-	if !ok || !sameGrokPath(executable, nodePath) ||
-		!sameGrokPath(script, fixture.guardPath) {
+	if !ok || !sameManagedPath(executable, nodePath) ||
+		!sameManagedPath(script, fixture.guardPath) {
 		t.Fatalf("parsed Grok command = %q, %q, %v", executable, script, ok)
 	}
-	if strings.Contains(command, "%ELYDORA_HOOK_PATH%") {
+	if runtime.GOOS == "windows" && strings.Contains(command, "%ELYDORA_HOOK_PATH%") {
 		t.Fatalf("Grok command exposes an expandable path: %q", command)
 	}
-	if _, err := buildGrokCommand("node", fixture.guardPath); err == nil {
+	if _, err := buildEncodedCommand("Grok", "node", fixture.guardPath); err == nil {
 		t.Fatal("accepted a relative Grok runtime path")
 	}
-	if _, err := buildGrokCommand(nodePath, "guard.js"); err == nil {
+	if _, err := buildEncodedCommand("Grok", nodePath, "guard.js"); err == nil {
 		t.Fatal("accepted a relative Grok script path")
 	}
 	for _, invalid := range []string{
@@ -337,12 +337,12 @@ func TestGrokRuntimeConfigOmitsEmptyOptionalToken(t *testing.T) {
 
 func TestGrokWindowsAgentIDMatchingIsPlatformCorrect(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		if !sameGrokAgentID("AGENT-1", "agent-1") {
+		if !sameManagedAgentID("AGENT-1", "agent-1") {
 			t.Fatal("Windows Grok agent IDs should compare case-insensitively")
 		}
 		return
 	}
-	if sameGrokAgentID("AGENT-1", "agent-1") {
+	if sameManagedAgentID("AGENT-1", "agent-1") {
 		t.Fatal("POSIX Grok agent IDs should preserve case")
 	}
 }

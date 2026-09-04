@@ -33,8 +33,8 @@ func TestGeminiCommandRoundTripAndRejectsInjection(t *testing.T) {
 		t.Fatalf("build Gemini command: %v", err)
 	}
 	executable, script, ok := parseGeminiCommand(command)
-	if !ok || !sameGeminiPath(executable, nodePath) ||
-		!sameGeminiPath(script, fixture.guardPath) {
+	if !ok || !sameManagedPath(executable, nodePath) ||
+		!sameManagedPath(script, fixture.guardPath) {
 		t.Fatalf("parsed Gemini command = %q, %q, %v", executable, script, ok)
 	}
 	if runtime.GOOS == "windows" && (strings.Contains(command, "%GEMINI_CWD%") ||
@@ -425,12 +425,12 @@ func TestGeminiRuntimeConfigOmitsEmptyOptionalToken(t *testing.T) {
 
 func TestGeminiAgentIDMatchingIsPlatformCorrect(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		if !sameGeminiAgentID("AGENT-1", "agent-1") {
+		if !sameManagedAgentID("AGENT-1", "agent-1") {
 			t.Fatal("Windows Gemini agent IDs should compare case-insensitively")
 		}
 		return
 	}
-	if sameGeminiAgentID("AGENT-1", "agent-1") {
+	if sameManagedAgentID("AGENT-1", "agent-1") {
 		t.Fatal("POSIX Gemini agent IDs should preserve case")
 	}
 }

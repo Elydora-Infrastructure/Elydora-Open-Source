@@ -1,10 +1,4 @@
-/**
- * Audit routes — query the tamper-evident audit log.
- *
- * Per the OpenAPI spec, audit queries use POST /v1/audit/query with
- * filter parameters in the request body. This avoids URL length limits
- * and supports complex filter expressions.
- */
+/** Audit routes: query the tamper-evident audit log. */
 
 import { Hono } from 'hono';
 import type { Env, AppVariables } from '../types.js';
@@ -19,7 +13,7 @@ const audit = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 audit.use('/*', authMiddleware);
 
 // ---------------------------------------------------------------------------
-// POST /v1/audit/query — Query the audit log
+// POST /v1/audit/query: Query the audit log
 // ---------------------------------------------------------------------------
 audit.post(
   '/query',

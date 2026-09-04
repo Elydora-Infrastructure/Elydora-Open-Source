@@ -9,8 +9,8 @@ import {
   buildWrapper,
   type ClineHookFile,
   runtimeContract,
-  sameAgentId,
 } from './cline-contract.js';
+import { sameAgentId } from './common.js';
 import {
   commitManagedInstallation,
   preflightManagedInstallation,
@@ -28,10 +28,6 @@ import {
 const DISPLAY_NAME = 'Cline';
 const DIRECTORY_LABEL = 'Cline hooks directory';
 
-export type ClineRuntimePaths = ManagedRuntimePaths;
-export type PreparedClineInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
 function hookLocations(files: readonly ClineHookFile[]) {
   return files.map((file) => ({
     directoryLabel: DIRECTORY_LABEL,
@@ -42,7 +38,7 @@ function hookLocations(files: readonly ClineHookFile[]) {
 export async function preflightClineInstallation(
   config: InstallConfig,
   files: readonly ClineHookFile[],
-): Promise<ClineRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: hookLocations(files),
@@ -54,7 +50,7 @@ export async function prepareClineInstallation(
   config: InstallConfig,
   guardFile: ClineHookFile,
   auditFile: ClineHookFile,
-): Promise<PreparedClineInstallation> {
+): Promise<PreparedManagedInstallation> {
   const paths = await preflightClineInstallation(config, [guardFile, auditFile]);
   const guardMetadata = buildMetadata('guard', config.agentId, paths.guardPath);
   const auditMetadata = buildMetadata('audit', config.agentId, paths.auditPath);
@@ -86,7 +82,7 @@ export async function prepareClineInstallation(
 }
 
 export async function commitClineInstallation(
-  prepared: PreparedClineInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

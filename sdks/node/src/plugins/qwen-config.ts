@@ -1,25 +1,15 @@
-import {
-  applyEdits,
-  modify,
-  parse,
-  parseTree,
-  printParseErrorCode,
-  type FormattingOptions,
-  type JSONPath,
-  type Node,
-  type ParseError,
-} from 'jsonc-parser';
+import type { JSONPath } from 'jsonc-parser';
 import type { FileSnapshot } from './managed-files.js';
+import { changeJsonc } from './jsonc-edit.js';
 import {
   MANAGED_EVENTS,
   managedQwenRemovals,
   readQwenHooks,
-  type JsonObject,
   type ManagedQwenEvent,
   type QwenGroup,
   type QwenHooks,
-  isObject,
 } from './qwen-contract.js';
+import { isObject, parseCommentedJsonObject, type JsonObject } from './strict-json.js';
 
 export const QWEN_OWNED_FILE_MARKER = '// Managed by Elydora';
 
@@ -53,50 +43,6 @@ interface DocumentOptions {
   readonly snapshot?: FileSnapshot;
 }
 
-function rejectDuplicateKeys(
-  node: Node | undefined,
-  label: string,
-  location: string[] = [],
-): void {
-  if (!node) return;
-  if (node.type === 'object') {
-    const keys = new Set<string>();
-    for (const property of node.children ?? []) {
-      const key = String(property.children?.[0]?.value);
-      const childLocation = [...location, key];
-      if (keys.has(key)) {
-        throw new Error(`${label} contains duplicate field "${childLocation.join('.')}"`);
-      }
-      keys.add(key);
-      rejectDuplicateKeys(property.children?.[1], label, childLocation);
-    }
-    return;
-  }
-  if (node.type === 'array') {
-    for (const child of node.children ?? []) rejectDuplicateKeys(child, label, location);
-  }
-}
-
-export function parseQwenJsoncObject(raw: string, label: string): JsonObject {
-  const errors: ParseError[] = [];
-  const value: unknown = parse(raw, errors, {
-    allowTrailingComma: false,
-    disallowComments: false,
-  });
-  if (errors.length > 0) {
-    const details = errors
-      .map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`)
-      .join(', ');
-    throw new Error(`Failed to parse ${label}: ${details}`);
-  }
-  if (!isObject(value)) throw new Error(`${label} must contain a JSON object`);
-  rejectDuplicateKeys(parseTree(raw, [], {
-    allowTrailingComma: false,
-    disallowComments: false,
-  }), label);
-  return value;
-}
-
 export function qwenSourceLabel(kind: QwenDocumentKind): string {
   switch (kind) {
     case 'system-defaults': return 'Qwen Code system defaults';
@@ -122,7 +68,7 @@ function readFolderTrustEnabled(root: JsonObject, label: string): boolean | unde
 
 export function parseQwenDocument(options: DocumentOptions): QwenDocument {
   const label = `${qwenSourceLabel(options.kind)} at ${options.filePath}`;
-  const root = parseQwenJsoncObject(options.raw, label);
+  const root = parseCommentedJsonObject(options.raw, label);
   if (root.disableAllHooks !== undefined && typeof root.disableAllHooks !== 'boolean') {
     throw new Error(`${label} field "disableAllHooks" must be a boolean`);
   }
@@ -150,28 +96,6 @@ export function createQwenDocument(
   });
 }
 
-function formatting(raw: string): FormattingOptions {
-  const indentation = /\r?\n([ \t]+)\S/.exec(raw)?.[1];
-  const insertSpaces = !indentation?.includes('\t');
-  return {
-    eol: raw.includes('\r\n') ? '\r\n' : '\n',
-    insertSpaces,
-    tabSize: insertSpaces ? Math.max(1, indentation?.length ?? 2) : 1,
-  };
-}
-
-function change(
-  raw: string,
-  jsonPath: JSONPath,
-  value: unknown,
-  isArrayInsertion = false,
-): string {
-  return applyEdits(raw, modify(raw, jsonPath, value, {
-    formattingOptions: formatting(raw),
-    isArrayInsertion,
-  }));
-}
-
 function currentDocument(document: QwenDocument, raw: string): QwenDocument {
   return parseQwenDocument({
     kind: document.kind,
@@ -195,25 +119,25 @@ function removeManagedEntries(
     for (const removal of eventRemovals) {
       const groupPath: JSONPath = ['hooks', event, removal.groupIndex];
       if (removal.removeGroup) {
-        raw = change(raw, groupPath, undefined);
+        raw = changeJsonc(raw, groupPath, undefined);
         continue;
       }
       for (const handlerIndex of [...removal.handlerIndexes].sort(
         (left, right) => right - left,
       )) {
-        raw = change(raw, [...groupPath, 'hooks', handlerIndex], undefined);
+        raw = changeJsonc(raw, [...groupPath, 'hooks', handlerIndex], undefined);
       }
     }
     if (eventRemovals.length > 0) {
       const current = currentDocument(document, raw);
       if ((current.hooks[event] ?? []).length === 0) {
-        raw = change(raw, ['hooks', event], undefined);
+        raw = changeJsonc(raw, ['hooks', event], undefined);
       }
     }
   }
   const current = currentDocument(document, raw);
   if (current.hasHooksContainer && Object.keys(current.hooks).length === 0) {
-    raw = change(raw, ['hooks'], undefined);
+    raw = changeJsonc(raw, ['hooks'], undefined);
   }
   return raw;
 }
@@ -226,9 +150,9 @@ function appendGroup(
 ): string {
   const current = currentDocument(document, raw);
   if (current.hooks[event]) {
-    return change(raw, ['hooks', event, current.hooks[event].length], group, true);
+    return changeJsonc(raw, ['hooks', event, current.hooks[event].length], group, true);
   }
-  return change(raw, ['hooks', event], [group]);
+  return changeJsonc(raw, ['hooks', event], [group]);
 }
 
 export function renderQwenDocument(

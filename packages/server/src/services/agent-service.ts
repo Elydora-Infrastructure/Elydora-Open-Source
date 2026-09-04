@@ -1,9 +1,4 @@
-/**
- * Agent service — business logic for agent lifecycle management.
- *
- * Handles registration, lookup, freezing, and key revocation. All
- * administrative mutations are recorded as admin_events for audit.
- */
+/** Agent service: business logic for agent lifecycle management. */
 
 import type {
   Agent,

@@ -27,10 +27,6 @@ const DISPLAY_NAME = 'Kiro CLI';
 const V2_DIRECTORY_LABEL = 'Kiro CLI agents directory';
 const V3_DIRECTORY_LABEL = 'Kiro CLI global hooks directory';
 
-export type KiroCliRuntimePaths = ManagedRuntimePaths;
-export type PreparedKiroCliInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
 function hookLocations(sources: KiroCliSources) {
   return [
     { directoryLabel: V2_DIRECTORY_LABEL, filePath: sources.paths.v2Path },
@@ -41,7 +37,7 @@ function hookLocations(sources: KiroCliSources) {
 export async function preflightKiroCliInstallation(
   config: InstallConfig,
   sources: KiroCliSources,
-): Promise<KiroCliRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: hookLocations(sources),
@@ -54,7 +50,7 @@ export async function prepareKiroCliInstallation(
   sources: KiroCliSources,
   v2: RenderedKiroCliV2Document,
   v3: RenderedKiroIdeDocument,
-): Promise<PreparedKiroCliInstallation> {
+): Promise<PreparedManagedInstallation> {
   if (v2.next === undefined || v3.next === undefined) {
     throw new Error('Kiro CLI installation requires both v2 and v3 hook documents');
   }
@@ -83,7 +79,7 @@ export async function prepareKiroCliInstallation(
 }
 
 export async function commitKiroCliInstallation(
-  prepared: PreparedKiroCliInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

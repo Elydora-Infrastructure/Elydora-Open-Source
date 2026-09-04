@@ -22,18 +22,10 @@ const DISPLAY_NAME = 'Augment Code CLI';
 const SETTINGS_DIRECTORY_LABEL = 'Auggie configuration directory';
 const SETTINGS_LABEL = 'Auggie user settings';
 
-export type AugmentRuntimePaths = ManagedRuntimePaths;
-export type PreparedAugmentInstallation = PreparedManagedInstallation;
-export type { RenameFile };
-
-export function augmentRuntimePaths(config: InstallConfig): AugmentRuntimePaths {
-  return managedRuntimePaths(config, AGENT_KEY, GUARD_SCRIPT, AUDIT_SCRIPT);
-}
-
 export async function preflightAugmentInstallation(
   config: InstallConfig,
   settingsPath: string,
-): Promise<AugmentRuntimePaths> {
+): Promise<ManagedRuntimePaths> {
   return preflightManagedInstallation({
     agentKey: AGENT_KEY,
     hookLocations: [{ directoryLabel: SETTINGS_DIRECTORY_LABEL, filePath: settingsPath }],
@@ -44,13 +36,13 @@ export async function preflightAugmentInstallation(
 export async function prepareAugmentInstallation(
   config: InstallConfig,
   rendered: RenderedAugmentDocument,
-): Promise<PreparedAugmentInstallation> {
+): Promise<PreparedManagedInstallation> {
   if (!rendered.changed && rendered.document.raw === undefined) {
     throw new Error('Auggie hook installation did not produce a settings document');
   }
   const settingsSource = rendered.next ?? rendered.document.raw;
   if (settingsSource === undefined) throw new Error('Auggie hook settings are missing');
-  const paths = augmentRuntimePaths(config);
+  const paths = managedRuntimePaths(config, AGENT_KEY, GUARD_SCRIPT, AUDIT_SCRIPT);
   return prepareManagedInstallation({
     agentKey: AGENT_KEY,
     displayName: DISPLAY_NAME,
@@ -78,7 +70,7 @@ export async function prepareAugmentInstallation(
 }
 
 export async function commitAugmentInstallation(
-  prepared: PreparedAugmentInstallation,
+  prepared: PreparedManagedInstallation,
   renameFile?: RenameFile,
 ): Promise<void> {
   await commitManagedInstallation(prepared, renameFile);

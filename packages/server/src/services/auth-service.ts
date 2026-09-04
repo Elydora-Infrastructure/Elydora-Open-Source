@@ -1,10 +1,4 @@
-/**
- * Auth service — password hashing and user profile retrieval.
- *
- * Authentication is handled by Better Auth (see lib/auth.ts).
- * This service provides password utilities for legacy PBKDF2 hash
- * verification and the getMe profile query.
- */
+/** Auth service: password hashing and user profile retrieval. */
 
 import { AppError } from '../middleware/error-handler.js';
 import type { RbacRole } from '../shared/index.js';

@@ -240,14 +240,7 @@ func writeCopilotChanges(
 	agentDirectory string,
 	preconditions []filePrecondition,
 ) error {
-	hasChanges := false
-	for _, change := range changes {
-		if change != nil {
-			hasChanges = true
-			break
-		}
-	}
-	if !hasChanges {
+	if !hasFileChanges(changes) {
 		return writeChanges(changes, label, rename, preconditions...)
 	}
 	if agentDirectory != "" {
