@@ -93,7 +93,7 @@ export default function OperationDetailCard({ operation, receipt, payload }: Ope
         )}
       </div>
 
-      {/* Payload — what the operation actually did */}
+      {/* Payload: what the operation did */}
       {payload && (
         <div className="border border-border bg-surface p-4 sm:p-6 relative">
           <span className="crosshair ch-tl" />

@@ -8,7 +8,8 @@ Web dashboard for the Elydora Responsibility Protocol. Provides agent management
 - **Language:** TypeScript 5.7
 - **UI:** React 19, Tailwind CSS 4
 - **Data Fetching:** SWR 2.3
-- **Deployment:** Cloudflare Pages (static export)
+- **i18n:** i18next with English and Simplified Chinese
+- **Deployment:** Docker image running the Next.js standalone server
 
 ## Project Structure
 
@@ -16,7 +17,7 @@ Web dashboard for the Elydora Responsibility Protocol. Provides agent management
 src/
 ├── app/
 │   ├── layout.tsx                    # Root layout with AppShell
-│   ├── page.tsx                      # Dashboard — stats, recent operations, quick actions
+│   ├── page.tsx                      # Dashboard: stats, recent operations, quick actions
 │   ├── globals.css                   # Theme variables, global styles
 │   ├── agents/
 │   │   ├── page.tsx                  # Agent list, search, registration
@@ -33,6 +34,8 @@ src/
 │   │   └── page.tsx                  # Audit log query builder
 │   ├── login/page.tsx                # Login form
 │   ├── register/page.tsx             # Registration form
+│   ├── settings/                     # Organization settings
+│   ├── global-error.tsx              # Root error boundary
 │   └── jwks/page.tsx                 # Public key display
 ├── components/
 │   ├── AppShell.tsx                  # Main layout wrapper with sidebar
@@ -43,6 +46,8 @@ src/
 │   ├── EpochDetailClient.tsx         # Epoch proof and verification
 │   ├── ChainVisualization.tsx        # Merkle chain visualization
 │   ├── VerificationChecklist.tsx     # Proof verification UI
+│   ├── I18nProvider.tsx              # Locale provider
+│   ├── agent-registration/           # Registration flow components
 │   └── ui/
 │       ├── PageHeader.tsx            # Page title and breadcrumbs
 │       ├── DataTable.tsx             # Sortable, paginated table
@@ -50,12 +55,17 @@ src/
 │       ├── SearchInput.tsx           # Search/filter input
 │       ├── StatusBadge.tsx           # Status indicator
 │       ├── CopyButton.tsx            # Copy-to-clipboard
+│       ├── LanguageDropdown.tsx      # Locale switcher
 │       └── Sidebar.tsx               # Navigation sidebar
+├── features/
+│   └── agent-registration/           # Install instructions and credential handling
+├── i18n/                             # en and zh message catalogs
 ├── lib/
 │   ├── api.ts                        # Typed REST client for all endpoints
 │   ├── auth.tsx                      # Auth context and hooks
 │   └── hooks.ts                      # SWR data-fetching hooks
 └── shared/                           # Shared types (@elydora/shared)
+e2e/                                  # Playwright specs
 ```
 
 ## Getting Started
@@ -90,20 +100,17 @@ Runs at `http://localhost:3000` with Turbopack.
 npm run build
 ```
 
-Produces a static export in `out/`. A post-build script removes stale `_redirects` files.
+Produces a Next.js standalone server in `.next/standalone`.
 
 ### Deployment
 
-```bash
-npm run deploy
-```
+The root `docker-compose.yml` builds this package with `packages/console/Dockerfile` and serves it on port 3000. The image runs `node server.js` from the standalone output.
 
-Deploys the `out/` directory to Cloudflare Pages.
-
-### Type Checking
+### Checks
 
 ```bash
-npm run typecheck
+npm run typecheck   # tsc --noEmit
+npm run test:e2e    # Playwright specs in e2e/
 ```
 
 ## Pages
@@ -122,3 +129,4 @@ npm run typecheck
 | `/login` | Login |
 | `/register` | Register account and organization |
 | `/jwks` | Display server public keys in JWK format |
+| `/settings` | Organization settings |

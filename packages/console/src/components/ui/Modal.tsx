@@ -45,7 +45,7 @@ export default function Modal({
     };
   }, [isOpen]);
 
-  // Keydown listener — uses ref so it never changes identity
+  // Keydown listener uses a ref for stable identity
   useEffect(() => {
     if (!isOpen) return;
 

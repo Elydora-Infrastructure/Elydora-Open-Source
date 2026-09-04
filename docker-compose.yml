@@ -77,29 +77,14 @@ services:
   # DB migrate: applies packages/server/migrations
   # ============================================================
   db-migrate:
-    image: postgres:16-alpine
+    build:
+      context: ./packages/server
+      dockerfile: Dockerfile
+    command: ["node", "dist/migrate.js"]
+    env_file: .env
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:-elydora-secret-change-me}
-    volumes:
-      - ./packages/server/migrations:/migrations:ro,z
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        set -e
-        PSQL="psql -h postgres -U ${POSTGRES_USER:-elydora} -d ${POSTGRES_DB:-elydora}"
-        for file in /migrations/*.sql; do
-          version=$$(basename "$$file" | cut -d_ -f1 | sed 's/^0*//')
-          applied=$$($$PSQL -tAX -c "SELECT 1 FROM schema_versions WHERE version = $$version" 2>/dev/null || true)
-          if [ "$$applied" = "1" ]; then
-            echo "Skipping $$file (already applied)"
-            continue
-          fi
-          echo "Applying $$file"
-          $$PSQL -v ON_ERROR_STOP=1 -f "$$file"
-        done
 
   api:
     build:

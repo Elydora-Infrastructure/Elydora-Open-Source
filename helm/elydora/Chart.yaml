@@ -1,6 +1,6 @@
 apiVersion: v2
 name: elydora
-description: Elydora — Open-source AI accountability and compliance platform
+description: Open-source AI accountability and compliance platform for Elydora
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
